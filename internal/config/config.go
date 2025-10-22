@@ -126,6 +126,9 @@ type CharacterCfg struct {
 		UseTeleport                  bool   `yaml:"useTeleport"`
 		ClearPathDist                int    `yaml:"clearPathDist"`
 		ShouldHireAct2MercFrozenAura bool   `yaml:"shouldHireAct2MercFrozenAura"`
+		UseExtraBuffs                bool   `yaml:"useExtraBuffs"`
+		BuffOnNewArea                bool   `yaml:"buffOnNewArea"`
+		BuffAfterWP                  bool   `yaml:"buffAfterWP"`
 		BerserkerBarb                struct {
 			FindItemSwitch              bool `yaml:"find_item_switch"`
 			SkipPotionPickupInTravincal bool `yaml:"skip_potion_pickup_in_travincal"`
@@ -197,6 +200,9 @@ type CharacterCfg struct {
 			OpenChests        bool `yaml:"openChests"`
 			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
 		} `yaml:"ancient_tunnels"`
+		Summoner struct {
+			KillFireEye bool `yaml:"killFireEye"`
+		} `yaml:"summoner"`
 		DrifterCavern struct {
 			OpenChests        bool `yaml:"openChests"`
 			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
@@ -217,6 +223,7 @@ type CharacterCfg struct {
 		Tristram struct {
 			ClearPortal       bool `yaml:"clearPortal"`
 			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
+			OnlyFarmRejuvs    bool `yaml:"onlyFarmRejuvs"`
 		} `yaml:"tristram"`
 		Nihlathak struct {
 			ClearArea bool `yaml:"clearArea"`

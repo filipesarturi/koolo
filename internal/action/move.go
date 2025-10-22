@@ -273,6 +273,11 @@ func MoveToArea(dst area.ID) error {
 		}
 	}
 
+	// apply buffs after entering a new area if configured
+	if ctx.CharacterCfg.Character.BuffOnNewArea {
+		Buff()
+	}
+
 	event.Send(event.InteractedTo(event.Text(ctx.Name, ""), int(dst), event.InteractionTypeEntrance))
 	return nil
 }

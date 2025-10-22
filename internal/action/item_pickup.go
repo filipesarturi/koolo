@@ -321,13 +321,7 @@ func GetItemsToPickup(maxDistance int) []data.Item {
 	// Remove blacklisted items from the list, we don't want to pick them up
 	filteredItems := make([]data.Item, 0, len(itemsToPickup))
 	for _, itm := range itemsToPickup {
-		isBlacklisted := false
-		for _, blacklistedItem := range ctx.CurrentGame.BlacklistedItems {
-			if itm.UnitID == blacklistedItem.UnitID {
-				isBlacklisted = true
-				break
-			}
-		}
+		isBlacklisted := IsBlacklisted(itm)
 		if !isBlacklisted {
 			filteredItems = append(filteredItems, itm)
 		}
@@ -371,7 +365,7 @@ func shouldBePickedUp(i data.Item) bool {
 	// stay away of that
 	// Leaving it for now, but can probably be removed due to the auto MinGoldPickupThreshold in leveling config
 	_, isLevelingChar := ctx.Char.(context.LevelingCharacter)
-	if isLevelingChar && ctx.Data.PlayerUnit.TotalPlayerGold() < 2000 && i.Name != "Gold" {
+	if isLevelingChar && IsLowGold() && i.Name != "Gold" {
 		return true
 	}
 
@@ -392,10 +386,21 @@ func shouldBePickedUp(i data.Item) bool {
 
 	// Blacklist item if it exceeds quantity limits according to pickit rules
 	if doesExceedQuantity(matchedRule) {
-		ctx.CurrentGame.BlacklistedItems = append(ctx.CurrentGame.BlacklistedItems, i)
-		ctx.Logger.Debug(fmt.Sprintf("Blacklisted item %s (UnitID: %d) because it exceeds quantity limits defined in pickit.", i.Name, i.UnitID))
+		if !IsBlacklisted(i) {
+			ctx.CurrentGame.BlacklistedItems = append(ctx.CurrentGame.BlacklistedItems, i)
+			ctx.Logger.Debug(fmt.Sprintf("Blacklisted item %s (UnitID: %d) because it exceeds quantity limits defined in pickit.", i.Name, i.UnitID))
+		}
 		return false // Do not pick up the item if it exceeds quantity
 	}
 
 	return true
+}
+
+func IsBlacklisted(itm data.Item) bool {
+	for _, blacklisted := range context.Get().CurrentGame.BlacklistedItems {
+		if itm.ID == blacklisted.ID {
+			return true
+		}
+	}
+	return false
 }
