@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -264,6 +265,24 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 					door, found := ctx.Data.Objects.FindByID(door.ID)
 					return found && !door.Selectable
 				})
+			} else if chest, found := ctx.PathFinder.GetClosestChest(ctx.Data.PlayerUnit.Position, true); found {
+				if !interactIfCloseEnough(*chest) {
+					continue
+				}
+			} else if grave, found := ctx.Data.Objects.FindOne(object.HoleAnim); found {
+				if !interactIfCloseEnough(grave) {
+					continue
+				}
+			} else if !opts.ignoreShrines {
+				shrine, found := ctx.PathFinder.GetClosestShrine(ctx.Data.PlayerUnit.Position, 10.0)
+
+				if !found {
+					continue
+				}
+
+				if !interactIfCloseEnough(*shrine) {
+					continue
+				}
 			}
 		}
 
@@ -298,4 +317,27 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		//Perform the movement
 		ctx.PathFinder.MoveThroughPath(path, walkDuration)
 	}
+}
+
+func interactIfCloseEnough(object data.Object) bool {
+	if !object.Selectable {
+		return false
+	}
+
+	ctx := context.Get()
+
+	if utils.CalculateDistance(ctx.Data.PlayerUnit.Position, object.Position) > 5.0 {
+		return false
+	}
+
+	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, object.Position) {
+		return false
+	}
+
+	err := InteractObject(object, func() bool {
+		obj, found := ctx.Data.Objects.FindByID(object.ID)
+		return !found || !obj.Selectable
+	})
+
+	return err == nil
 }
