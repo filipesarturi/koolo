@@ -246,8 +246,10 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		}
 
 		if blocked {
+			canTeleport := ctx.Data.CanTeleport()
+
 			//First check if there's a destructible nearby
-			if obj, found := ctx.PathFinder.GetClosestDestructible(ctx.Data.PlayerUnit.Position); found {
+			if obj, found := ctx.PathFinder.GetClosestDestructible(ctx.Data.PlayerUnit.Position); found && !canTeleport {
 				if !obj.Selectable {
 					// Already destroyed, move on
 					continue
@@ -258,7 +260,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 				ctx.HID.Click(game.LeftButton, x, y)
 
 				time.Sleep(time.Millisecond * 100)
-			} else if door, found := ctx.PathFinder.GetClosestDoor(ctx.Data.PlayerUnit.Position); found {
+			} else if door, found := ctx.PathFinder.GetClosestDoor(ctx.Data.PlayerUnit.Position); found && !canTeleport {
 				//There's a door really close, try to open it
 				doorToOpen := *door
 				InteractObject(doorToOpen, func() bool {
