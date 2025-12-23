@@ -5,10 +5,12 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/hectorgimenez/koolo/internal/config"
 )
 
 func KillAllClientHandles() error {
-	cmd := exec.Command("./tools/handle64.exe", "-accepteula", "-nobanner", "-a", "-v", "-p", "d2r.exe", "Check For Other Instances")
+	cmd := exec.Command(config.ToolsPath+"/handle64.exe", "-accepteula", "-nobanner", "-a", "-v", "-p", "d2r.exe", "Check For Other Instances")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	stdout, err := cmd.Output()
 	if err != nil && !strings.Contains(string(stdout), "No matching handles found.") {
@@ -23,7 +25,7 @@ func KillAllClientHandles() error {
 			if strings.Contains(line, "Check For Other Instances") {
 				cols := strings.Split(line, ",") // 0: process, 1: pid, 2: type, 3: handle, 4: name
 
-				cmd = exec.Command("./tools/handle64.exe", "-accepteula", "-nobanner", "-p", fmt.Sprintf("%s", cols[1]), "-c", cols[3], "-y")
+				cmd = exec.Command(config.ToolsPath+"/handle64.exe", "-accepteula", "-nobanner", "-p", fmt.Sprintf("%s", cols[1]), "-c", cols[3], "-y")
 				cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 				stdout, err = cmd.Output()
 				if err != nil {

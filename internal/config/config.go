@@ -32,6 +32,8 @@ var (
 	Characters      map[string]*CharacterCfg
 	Version         = "dev"
 	MapClientBinary = "koolo-map.exe" // Default fallback, overridden at build time
+	BasePath        = ".."            // Base path for config directory, overridden at build time (relative to bin/)
+	ToolsPath       = "../tools"      // Path to tools directory, overridden at build time (relative to bin/)
 )
 
 type KooloCfg struct {
@@ -463,7 +465,7 @@ func Load() error {
 		return fmt.Errorf("error getting current working directory: %w", err)
 	}
 
-	kooloPath := getAbsPath("config/koolo.yaml")
+	kooloPath := getAbsPath(BasePath + "/config/koolo.yaml")
 	r, err := os.Open(kooloPath)
 	if err != nil {
 		return fmt.Errorf("error loading koolo.yaml: %w", err)
@@ -475,7 +477,7 @@ func Load() error {
 		return fmt.Errorf("error reading config %s: %w", kooloPath, err)
 	}
 
-	configDir := getAbsPath("config")
+	configDir := getAbsPath(BasePath + "/config")
 	entries, err := os.ReadDir(configDir)
 	if err != nil {
 		return fmt.Errorf("error reading config directory %s: %w", configDir, err)
@@ -488,7 +490,7 @@ func Load() error {
 
 		charCfg := CharacterCfg{}
 
-		charConfigPath := getAbsPath(filepath.Join("config", entry.Name(), "config.yaml"))
+		charConfigPath := getAbsPath(filepath.Join(BasePath, "config", entry.Name(), "config.yaml"))
 		r, err = os.Open(charConfigPath)
 		if err != nil {
 			return fmt.Errorf("error loading config.yaml: %w", err)
@@ -511,12 +513,12 @@ func Load() error {
 		if Koolo.CentralizedPickitPath != "" && charCfg.UseCentralizedPickit {
 			if _, err := os.Stat(Koolo.CentralizedPickitPath); os.IsNotExist(err) {
 				utils.ShowDialog("Error loading pickit rules for "+entry.Name(), "The centralized pickit path does not exist: "+Koolo.CentralizedPickitPath+"\nPlease check your Koolo settings.\nFalling back to local pickit.")
-				pickitPath = getAbsPath(filepath.Join("config", entry.Name(), "pickit")) + "\\"
+				pickitPath = getAbsPath(filepath.Join(BasePath, "config", entry.Name(), "pickit")) + "\\"
 			} else {
 				pickitPath = Koolo.CentralizedPickitPath + "\\"
 			}
 		} else {
-			pickitPath = getAbsPath(filepath.Join("config", entry.Name(), "pickit")) + "\\"
+			pickitPath = getAbsPath(filepath.Join(BasePath, "config", entry.Name(), "pickit")) + "\\"
 		}
 
 		rules, err := nip.ReadDir(pickitPath)
@@ -585,11 +587,11 @@ func CreateFromTemplate(name string) error {
 		return errors.New("name cannot be empty")
 	}
 
-	if _, err := os.Stat("config/" + name); !os.IsNotExist(err) {
+	if _, err := os.Stat(BasePath + "/config/" + name); !os.IsNotExist(err) {
 		return errors.New("configuration with that name already exists")
 	}
 
-	err := cp.Copy("config/template", "config/"+name)
+	err := cp.Copy(BasePath+"/config/template", BasePath+"/config/"+name)
 	if err != nil {
 		return fmt.Errorf("error copying template: %w", err)
 	}
@@ -614,7 +616,7 @@ func ValidateAndSaveConfig(config KooloCfg) error {
 		return fmt.Errorf("error parsing koolo config: %w", err)
 	}
 
-	err = os.WriteFile("config/koolo.yaml", text, 0644)
+	err = os.WriteFile(BasePath+"/config/koolo.yaml", text, 0644)
 	if err != nil {
 		return fmt.Errorf("error writing koolo config: %w", err)
 	}
@@ -623,7 +625,7 @@ func ValidateAndSaveConfig(config KooloCfg) error {
 }
 
 func SaveSupervisorConfig(supervisorName string, config *CharacterCfg) error {
-	filePath := filepath.Join("config", supervisorName, "config.yaml")
+	filePath := filepath.Join(BasePath, "config", supervisorName, "config.yaml")
 	d, err := yaml.Marshal(config)
 	config.Validate()
 	if err != nil {
@@ -666,9 +668,9 @@ func getAbsPath(relPath string) string {
 
 func getLevelingNipFiles(charCfg *CharacterCfg, entryName string) []string {
 	var nips []string
-	levelingPickitPath := getAbsPath(filepath.Join("config", entryName, "pickit_leveling"))
-	levelingBuildPath := getAbsPath(filepath.Join("config", "template", "builds_leveling"))
-	levelingPickitTemplatePath := getAbsPath(filepath.Join("config", "template", "pickit_leveling"))
+	levelingPickitPath := getAbsPath(filepath.Join(BasePath, "config", entryName, "pickit_leveling"))
+	levelingBuildPath := getAbsPath(filepath.Join(BasePath, "config", "template", "builds_leveling"))
+	levelingPickitTemplatePath := getAbsPath(filepath.Join(BasePath, "config", "template", "pickit_leveling"))
 	classBuildFile := filepath.Join(levelingBuildPath, charCfg.Character.Class+".json")
 
 	if jsonData, err := utils.GetJsonData(classBuildFile); err == nil {

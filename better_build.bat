@@ -168,14 +168,17 @@ for /f "delims=" %%b in ('powershell -Command "Get-Date -Format 'o'"') do set "B
 :: Generate unique identifier for map client binary
 for /f "delims=" %%c in ('powershell -Command "[guid]::NewGuid().ToString()"') do set "MAP_CLIENT_ID=%%c"
 
-:: Set the expected output executable path
-set "OUTPUT_EXE=build\%BUILD_ID%.exe"
+:: Set the expected output paths (isolated structure)
+set "OUTPUT_EXE=build\bin\%BUILD_ID%.exe"
 set "MAP_CLIENT_EXE=%MAP_CLIENT_ID%.exe"
+
+:: Create bin directory if it doesn't exist
+if not exist "build\bin" mkdir "build\bin"
 
 :: Build an obfuscated Koolo binary
 call :print_step "Compiling Obfuscated Koolo executable"
 (
-    garble -literals=false -seed=random build -a -trimpath -tags static --ldflags "-s -w -H windowsgui -X 'main.buildID=%BUILD_ID%' -X 'main.buildTime=%BUILD_TIME%' -X 'main.mapClientBinary=%MAP_CLIENT_EXE%' -X 'github.com/hectorgimenez/koolo/internal/config.Version=%VERSION%'" -o "%OUTPUT_EXE%" ./cmd/koolo 2>&1
+    garble -literals=false -seed=random build -a -trimpath -tags static --ldflags "-s -w -H windowsgui -X 'main.buildID=%BUILD_ID%' -X 'main.buildTime=%BUILD_TIME%' -X 'main.mapClientBinary=%MAP_CLIENT_EXE%' -X 'main.basePath=..' -X 'main.toolsPath=../tools' -X 'github.com/hectorgimenez/koolo/internal/config.Version=%VERSION%'" -o "%OUTPUT_EXE%" ./cmd/koolo 2>&1
 ) > garble.log
 set "GARBLE_EXIT_CODE=!errorlevel!"
 
@@ -198,7 +201,7 @@ if exist "%STATIC_BUILD_DIR%" (
 
 :: Check if the executable was actually created
 if exist "%OUTPUT_EXE%" (
-    call :print_success "Successfully built obfuscated executable: %BUILD_ID%.exe"
+    call :print_success "Successfully built obfuscated executable: bin\%BUILD_ID%.exe"
 ) else (
     call :print_error "Failed to build Koolo binary - executable was not created"
     echo.
@@ -213,7 +216,7 @@ if exist "%OUTPUT_EXE%" (
     call :pause_and_exit 1
 )
 
-:: Handle tools folder first
+:: Handle tools folder (separate from bin/)
 call :print_header "Handling Tools"
 if exist build\tools (
     call :print_step "Removing existing tools folder"
@@ -224,7 +227,7 @@ if exist build\tools (
         call :pause_and_exit 1
     )
 )
-call :print_step "Copying tools folder"
+call :print_step "Copying tools folder to build\tools"
 xcopy /q /E /I /y tools build\tools > nul
 if !errorlevel! neq 0 (
     call :print_error "Failed to copy tools folder"
@@ -245,7 +248,7 @@ if exist "build\tools\koolo-map.exe" (
     call :print_error "koolo-map.exe not found in tools folder"
     call :pause_and_exit 1
 )
-call :print_success "Tools folder successfully copied"
+call :print_success "Tools folder successfully set up (isolated from executable)"
 
 :: Handle Settings.json
 call :print_header "Handling Configuration Files"

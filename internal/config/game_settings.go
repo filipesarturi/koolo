@@ -34,7 +34,7 @@ func ReplaceGameSettings(modName string) error {
 		}
 	}
 
-	return cp.Copy("config/Settings.json", modSettingsPath)
+	return cp.Copy(BasePath+"/config/Settings.json", modSettingsPath)
 }
 
 func InstallMod() error {
