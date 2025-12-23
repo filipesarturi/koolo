@@ -27,8 +27,9 @@ import (
 )
 
 var (
-	buildID   string
-	buildTime string
+	buildID         string
+	buildTime       string
+	mapClientBinary string
 )
 
 // wrapWithRecover wraps a function with panic recovery logic
@@ -50,6 +51,11 @@ func main() {
 
 	_ = buildID
 	_ = buildTime
+
+	// Set the map client binary name if provided at build time
+	if mapClientBinary != "" {
+		config.MapClientBinary = mapClientBinary
+	}
 
 	err := config.Load()
 	if err != nil {

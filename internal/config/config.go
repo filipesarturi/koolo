@@ -27,10 +27,11 @@ import (
 )
 
 var (
-	cfgMux     sync.RWMutex
-	Koolo      *KooloCfg
-	Characters map[string]*CharacterCfg
-	Version    = "dev"
+	cfgMux          sync.RWMutex
+	Koolo           *KooloCfg
+	Characters      map[string]*CharacterCfg
+	Version         = "dev"
+	MapClientBinary = "koolo-map.exe" // Default fallback, overridden at build time
 )
 
 type KooloCfg struct {

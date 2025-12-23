@@ -165,14 +165,17 @@ call :print_info "Building %VERSION%"
 :: Generate unique build identifiers
 for /f "delims=" %%a in ('powershell -Command "[guid]::NewGuid().ToString()"') do set "BUILD_ID=%%a"
 for /f "delims=" %%b in ('powershell -Command "Get-Date -Format 'o'"') do set "BUILD_TIME=%%b"
+:: Generate unique identifier for map client binary
+for /f "delims=" %%c in ('powershell -Command "[guid]::NewGuid().ToString()"') do set "MAP_CLIENT_ID=%%c"
 
 :: Set the expected output executable path
 set "OUTPUT_EXE=build\%BUILD_ID%.exe"
+set "MAP_CLIENT_EXE=%MAP_CLIENT_ID%.exe"
 
 :: Build an obfuscated Koolo binary
 call :print_step "Compiling Obfuscated Koolo executable"
 (
-    garble -literals=false -seed=random build -a -trimpath -tags static --ldflags "-s -w -H windowsgui -X 'main.buildID=%BUILD_ID%' -X 'main.buildTime=%BUILD_TIME%' -X 'github.com/hectorgimenez/koolo/internal/config.Version=%VERSION%'" -o "%OUTPUT_EXE%" ./cmd/koolo 2>&1
+    garble -literals=false -seed=random build -a -trimpath -tags static --ldflags "-s -w -H windowsgui -X 'main.buildID=%BUILD_ID%' -X 'main.buildTime=%BUILD_TIME%' -X 'main.mapClientBinary=%MAP_CLIENT_EXE%' -X 'github.com/hectorgimenez/koolo/internal/config.Version=%VERSION%'" -o "%OUTPUT_EXE%" ./cmd/koolo 2>&1
 ) > garble.log
 set "GARBLE_EXIT_CODE=!errorlevel!"
 
@@ -227,6 +230,19 @@ if !errorlevel! neq 0 (
     call :print_error "Failed to copy tools folder"
     call :check_folder_permissions "tools"
     call :check_folder_permissions "build"
+    call :pause_and_exit 1
+)
+:: Rename koolo-map.exe to obfuscated name
+call :print_step "Obfuscating koolo-map.exe to %MAP_CLIENT_EXE%"
+if exist "build\tools\koolo-map.exe" (
+    move /y "build\tools\koolo-map.exe" "build\tools\%MAP_CLIENT_EXE%" > nul
+    if !errorlevel! neq 0 (
+        call :print_error "Failed to rename koolo-map.exe"
+        call :pause_and_exit 1
+    )
+    call :print_success "koolo-map.exe renamed to %MAP_CLIENT_EXE%"
+) else (
+    call :print_error "koolo-map.exe not found in tools folder"
     call :pause_and_exit 1
 )
 call :print_success "Tools folder successfully copied"
