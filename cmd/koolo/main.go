@@ -131,8 +131,8 @@ func main() {
 			height = 720
 		}
 
-		w, err := gowebview.New(&gowebview.Config{URL: "http://localhost:8087", WindowConfig: &gowebview.WindowConfig{
-			Title: "Koolo",
+		w, err := gowebview.New(&gowebview.Config{URL: "http://localhost:8022", WindowConfig: &gowebview.WindowConfig{
+			Title: "Ameno",
 			Size: &gowebview.Point{
 				X: int64(float64(width) * displayScale),
 				Y: int64(float64(height) * displayScale),
@@ -220,7 +220,7 @@ func main() {
 
 	g.Go(wrapWithRecover(logger, func() error {
 		defer cancel()
-		return srv.Listen(8087)
+		return srv.Listen(8022)
 	}))
 
 	g.Go(wrapWithRecover(logger, func() error {
