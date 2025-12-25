@@ -156,9 +156,10 @@ func main() {
 			handle := w.Window() // Get native Windows handle
 			user32 := syscall.NewLazyDLL("user32.dll")
 			getWindowRect := user32.NewProc("GetWindowRect")
+			isIconic := user32.NewProc("IsIconic")
 			type RECT struct{ Left, Top, Right, Bottom int32 }
 
-			ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
 
 			for {
@@ -166,18 +167,25 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+					// Check if minimized (IsIconic returns non-zero if minimized)
+					minimized, _, _ := isIconic.Call(handle)
+					if minimized != 0 {
+						continue
+					}
+
 					var rect RECT
 					ret, _, _ := getWindowRect.Call(handle, uintptr(unsafe.Pointer(&rect)))
 					if ret != 0 {
-						// Calculate current logical dimensions
 						curW := int(float64(rect.Right-rect.Left) / displayScale)
 						curH := int(float64(rect.Bottom-rect.Top) / displayScale)
 
-						// Only save if the size has actually changed
-						if curW != config.Koolo.WindowWidth || curH != config.Koolo.WindowHeight {
-							config.Koolo.WindowWidth = curW
-							config.Koolo.WindowHeight = curH
-							config.ValidateAndSaveConfig(*config.Koolo) // Save to koolo.yaml
+						// Check if size is valid and has changed
+						if curW > 100 && curH > 100 {
+							if curW != config.Koolo.WindowWidth || curH != config.Koolo.WindowHeight {
+								config.Koolo.WindowWidth = curW
+								config.Koolo.WindowHeight = curH
+								config.ValidateAndSaveConfig(*config.Koolo)
+							}
 						}
 					}
 				}
