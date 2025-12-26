@@ -543,6 +543,22 @@
                 </fieldset>
             </article>
 
+            <!-- Telekinesis Options (HID-based, safe) -->
+            <article style="margin-top: 20px; background-color: #e8f5e9; padding: 15px; border: 4px solid #4caf50;">
+                <header><strong>🔮 TELEKINESIS (Sorceress)</strong></header>
+                <p style="font-size: 0.9em; color: #666;">
+                    Uses Telekinesis skill to interact with objects and pick up potions/gold from distance.
+                    <strong>Safe to use</strong> - simulates mouse clicks, no packet injection.
+                    Requires Telekinesis skill and keybinding assigned.
+                </p>
+                <fieldset class="grid">
+                    <label>
+                        <input type="checkbox" name="characterUseTelekinesis" {{ if .Config.Character.UseTelekinesis }}checked{{ end }}/>
+                        Enable Telekinesis for interactions (waypoints, chests, shrines, portals, potions, gold)
+                    </label>
+                </fieldset>
+            </article>
+
             <fieldset class="grid">
                 <label style="width: auto;">
                     <div id="useExtraBuffsDistContainer" class="conditional-field" {{ if .Config.Character.UseExtraBuffs }}style="display: none;"{{ end }}>

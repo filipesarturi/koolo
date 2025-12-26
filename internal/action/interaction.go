@@ -8,12 +8,17 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/event"
 	"github.com/hectorgimenez/koolo/internal/game"
+	"github.com/hectorgimenez/koolo/internal/pather"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
+
+const telekinesisRange = 20 // Telekinesis effective range
 
 func InteractNPC(npc npc.ID) error {
 	ctx := context.Get()
@@ -52,42 +57,76 @@ func InteractObject(o data.Object, isCompletedFn func() bool) error {
 
 	startingArea := ctx.Data.PlayerUnit.Area
 
-	pos := o.Position
-	distFinish := step.DistanceToFinishMoving
-	if ctx.Data.PlayerUnit.Area == area.RiverOfFlame && o.IsWaypoint() {
-		pos = data.Position{X: 7800, Y: 5919}
-		o.ID = 0
-		// Special case for seals: we cant teleport directly to center. Interaction range is bigger then DistanceToFinishMoving so we modify it
-	} else if strings.Contains(o.Desc().Name, "Seal") {
-		distFinish = 10
-	}
+	// Check if Telekinesis can be used for this object
+	canUseTK := canUseTelekinesisForObject(o)
+	currentDistance := pather.DistanceFromPoint(ctx.Data.PlayerUnit.Position, o.Position)
 
-	var err error
-	for range 5 {
-		if o.IsWaypoint() && !ctx.Data.AreaData.Area.IsTown() {
-			err = MoveToCoords(pos)
-			if err != nil {
-				continue
-			}
-		} else {
-			err = step.MoveTo(pos, step.WithDistanceToFinish(distFinish), step.WithIgnoreMonsters())
-			if err != nil {
-				continue
-			}
-		}
-
-		err = step.InteractObject(o, isCompletedFn)
-		if err != nil {
-			continue
-		}
-		break
-	}
-
-	if err != nil {
-		ctx.Logger.Debug("InteractObject step.InteractObject returned error",
+	// If Telekinesis is available and we're already in range, skip movement
+	if canUseTK && currentDistance <= telekinesisRange {
+		ctx.Logger.Debug("Using Telekinesis from current position",
 			"object", o.Name,
-			"error", err)
-		return err
+			"distance", currentDistance,
+		)
+		// Directly interact without moving
+		var err error
+		for range 5 {
+			err = step.InteractObject(o, isCompletedFn)
+			if err != nil {
+				continue
+			}
+			break
+		}
+		if err != nil {
+			ctx.Logger.Debug("InteractObject with Telekinesis failed",
+				"object", o.Name,
+				"error", err)
+			return err
+		}
+	} else {
+		// Normal movement-based interaction
+		pos := o.Position
+		distFinish := step.DistanceToFinishMoving
+
+		// If Telekinesis is available, only move close enough for TK range
+		if canUseTK {
+			distFinish = telekinesisRange - 2 // Stop a bit before max range for safety
+		}
+
+		if ctx.Data.PlayerUnit.Area == area.RiverOfFlame && o.IsWaypoint() {
+			pos = data.Position{X: 7800, Y: 5919}
+			o.ID = 0
+			// Special case for seals: we cant teleport directly to center. Interaction range is bigger then DistanceToFinishMoving so we modify it
+		} else if strings.Contains(o.Desc().Name, "Seal") {
+			distFinish = 10
+		}
+
+		var err error
+		for range 5 {
+			if o.IsWaypoint() && !ctx.Data.AreaData.Area.IsTown() && !canUseTK {
+				err = MoveToCoords(pos)
+				if err != nil {
+					continue
+				}
+			} else {
+				err = step.MoveTo(pos, step.WithDistanceToFinish(distFinish), step.WithIgnoreMonsters())
+				if err != nil {
+					continue
+				}
+			}
+
+			err = step.InteractObject(o, isCompletedFn)
+			if err != nil {
+				continue
+			}
+			break
+		}
+
+		if err != nil {
+			ctx.Logger.Debug("InteractObject step.InteractObject returned error",
+				"object", o.Name,
+				"error", err)
+			return err
+		}
 	}
 
 	// Refresh game data to get the final area state after interaction
@@ -124,6 +163,40 @@ func InteractObject(o data.Object, isCompletedFn func() bool) error {
 	}
 
 	return nil
+}
+
+// canUseTelekinesisForObject checks if Telekinesis can be used for the given object
+func canUseTelekinesisForObject(obj data.Object) bool {
+	ctx := context.Get()
+
+	// Check if Telekinesis is enabled in config
+	if !ctx.CharacterCfg.Character.UseTelekinesis {
+		return false
+	}
+
+	// Check if character has Telekinesis skill
+	if ctx.Data.PlayerUnit.Skills[skill.Telekinesis].Level == 0 {
+		return false
+	}
+
+	// Check if Telekinesis has a keybinding (required for HID interaction)
+	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
+		return false
+	}
+
+	// Check if object is a valid Telekinesis target
+	// Includes: waypoints, chests, shrines, stash, portals, and Diablo seals
+	if obj.IsWaypoint() || obj.IsChest() || obj.IsSuperChest() || obj.IsShrine() ||
+		obj.IsPortal() || obj.IsRedPortal() || obj.Name == object.Bank {
+		return true
+	}
+
+	// Check for Diablo seals (Chaos Sanctuary)
+	if strings.Contains(obj.Desc().Name, "Seal") {
+		return true
+	}
+
+	return false
 }
 
 func InteractObjectByID(id data.UnitID, isCompletedFn func() bool) error {

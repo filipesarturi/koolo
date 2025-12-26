@@ -1444,6 +1444,7 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 	if sections.General {
 		cfg.Character.StashToShared = values.Has("characterStashToShared")
 		cfg.Character.UseTeleport = values.Has("characterUseTeleport")
+		cfg.Character.UseTelekinesis = values.Has("characterUseTelekinesis")
 		cfg.Character.UseExtraBuffs = values.Has("characterUseExtraBuffs")
 
 		// Game Settings (General)
@@ -1952,6 +1953,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Character.StashToShared = r.Form.Has("characterStashToShared")
 		cfg.Character.UseTeleport = r.Form.Has("characterUseTeleport")
+		cfg.Character.UseTelekinesis = r.Form.Has("characterUseTelekinesis")
 		cfg.Character.UseExtraBuffs = r.Form.Has("characterUseExtraBuffs")
 		cfg.Character.UseSwapForBuffs = r.Form.Has("useSwapForBuffs")
 		cfg.Character.BuffOnNewArea = r.Form.Has("characterBuffOnNewArea")

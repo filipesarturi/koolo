@@ -257,6 +257,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const state = {
             characterUseExtraBuffs: boolVal('characterUseExtraBuffs'),
             characterUseTeleport: boolVal('characterUseTeleport'),
+            characterUseTelekinesis: boolVal('characterUseTelekinesis'),
             characterStashToShared: boolVal('characterStashToShared'),
             useCentralizedPickit: boolVal('useCentralizedPickit'),
             interactWithShrines: boolVal('interactWithShrines'),

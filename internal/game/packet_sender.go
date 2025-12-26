@@ -72,6 +72,16 @@ func (ps *PacketSender) TelekinesisInteraction(objectGID data.UnitID) error {
 	return nil
 }
 
+// TelekinesisPickup sends packet 0x0D to pick up items using telekinesis (right-click skill on entity)
+// Use cases: picking up potions, gold from distance (Sorceress only)
+// Requires Telekinesis to be selected as right-click skill before calling
+func (ps *PacketSender) TelekinesisPickup(itemID data.UnitID) error {
+	if err := ps.SendPacket(packet.NewCastSkillEntityRight(itemID).GetPayload()); err != nil {
+		return fmt.Errorf("failed to send telekinesis pickup packet: %w", err)
+	}
+	return nil
+}
+
 // CastSkillAtLocation sends packet 0x0C to cast a skill at a specific location
 // Use cases: Blizzard, Meteor, Frozen Orb, or any location-targeted skill
 // Useful for faster/more precise casting than HID mouse clicks

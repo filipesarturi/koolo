@@ -8,6 +8,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -16,9 +17,11 @@ import (
 )
 
 const (
-	clickDelay    = 25 * time.Millisecond
-	spiralDelay   = 25 * time.Millisecond
-	pickupTimeout = 3 * time.Second
+	clickDelay                   = 25 * time.Millisecond
+	spiralDelay                  = 25 * time.Millisecond
+	pickupTimeout                = 3 * time.Second
+	telekinesisPickupMaxRange    = 20 // Telekinesis range for item pickup
+	telekinesisPickupMaxAttempts = 3
 )
 
 var (
@@ -33,6 +36,12 @@ func PickupItem(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
 	ctx.SetLastStep("PickupItem")
 
+	// Check if Telekinesis can be used for this item (potions and gold)
+	if canUseTelekinesisForItem(it) {
+		ctx.Logger.Debug("Attempting item pickup via Telekinesis", "item", it.Desc().Name)
+		return PickupItemTelekinesis(it, itemPickupAttempt)
+	}
+
 	// Check if packet casting is enabled for item pickup
 	if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
 		ctx.Logger.Debug("Attempting item pickup via packet method")
@@ -40,6 +49,127 @@ func PickupItem(it data.Item, itemPickupAttempt int) error {
 	}
 
 	// Use mouse-based pickup (original implementation)
+	return PickupItemMouse(it, itemPickupAttempt)
+}
+
+// canUseTelekinesisForItem checks if Telekinesis can be used to pick up this item
+func canUseTelekinesisForItem(it data.Item) bool {
+	ctx := context.Get()
+
+	// Check if Telekinesis is enabled in config
+	if !ctx.CharacterCfg.Character.UseTelekinesis {
+		return false
+	}
+
+	// Check if character has Telekinesis skill
+	if ctx.Data.PlayerUnit.Skills[skill.Telekinesis].Level == 0 {
+		return false
+	}
+
+	// Check if Telekinesis has a keybinding (required for HID interaction)
+	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
+		return false
+	}
+
+	// Telekinesis works on: potions (healing, mana, rejuv) and gold
+	if it.IsPotion() || it.Name == "Gold" {
+		return true
+	}
+
+	return false
+}
+
+// PickupItemTelekinesis uses Telekinesis skill via HID to pick up items from distance
+// This method uses mouse simulation instead of packets for safety
+func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
+	ctx := context.Get()
+	ctx.SetLastStep("PickupItemTelekinesis")
+
+	// Wait for the character to finish casting or moving
+	waitingStartTime := time.Now()
+	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || ctx.Data.PlayerUnit.Mode == mode.Running || ctx.Data.PlayerUnit.Mode == mode.Walking || ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
+		if time.Since(waitingStartTime) > 2*time.Second {
+			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting")
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+		ctx.RefreshGameData()
+	}
+
+	// Check distance - Telekinesis has limited range
+	distance := ctx.PathFinder.DistanceFromMe(it.Position)
+	if distance > telekinesisPickupMaxRange {
+		ctx.Logger.Debug("Item too far for Telekinesis pickup, falling back to normal pickup",
+			"item", it.Desc().Name,
+			"distance", distance,
+		)
+		if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
+			return PickupItemPacket(it, itemPickupAttempt)
+		}
+		return PickupItemMouse(it, itemPickupAttempt)
+	}
+
+	// Validate line of sight
+	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
+		return ErrNoLOSToItem
+	}
+
+	// Get Telekinesis keybinding
+	tkKb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
+	if !found {
+		ctx.Logger.Debug("Telekinesis keybinding not found, falling back to normal pickup")
+		return PickupItemMouse(it, itemPickupAttempt)
+	}
+
+	// Select Telekinesis as right skill via HID
+	ctx.HID.PressKeyBinding(tkKb)
+	utils.Sleep(80)
+
+	targetItem := it
+
+	for attempt := 0; attempt < telekinesisPickupMaxAttempts; attempt++ {
+		ctx.PauseIfNotPriority()
+		ctx.RefreshGameData()
+
+		// Check if item still exists
+		_, exists := findItemOnGround(targetItem.UnitID)
+		if !exists {
+			ctx.Logger.Info(fmt.Sprintf("Picked up (Telekinesis): %s [%s]", targetItem.Desc().Name, targetItem.Quality.ToString()))
+			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
+			return nil
+		}
+
+		// Calculate screen position for the item
+		screenX, screenY := ctx.PathFinder.GameCoordsToScreenCords(targetItem.Position.X, targetItem.Position.Y)
+
+		ctx.Logger.Debug("Using Telekinesis to pick up item via HID",
+			"item", targetItem.Desc().Name,
+			"distance", ctx.PathFinder.DistanceFromMe(targetItem.Position),
+		)
+
+		// Move mouse to item and right-click (Telekinesis)
+		ctx.HID.MovePointer(screenX, screenY)
+		utils.Sleep(50)
+		ctx.HID.Click(game.RightButton, screenX, screenY)
+
+		// Wait for pickup to complete
+		utils.Sleep(350)
+
+		// Check if item was picked up
+		ctx.RefreshGameData()
+		_, stillExists := findItemOnGround(targetItem.UnitID)
+		if !stillExists {
+			ctx.Logger.Info(fmt.Sprintf("Picked up (Telekinesis): %s [%s]", targetItem.Desc().Name, targetItem.Quality.ToString()))
+			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
+			return nil
+		}
+	}
+
+	// Telekinesis failed, fallback to normal pickup
+	ctx.Logger.Debug("Telekinesis pickup failed after max attempts, falling back to normal pickup")
+	if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
+		return PickupItemPacket(it, itemPickupAttempt)
+	}
 	return PickupItemMouse(it, itemPickupAttempt)
 }
 

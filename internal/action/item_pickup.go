@@ -10,12 +10,15 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/event"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
+
+const telekinesisItemPickupRange = 20 // Telekinesis range for item pickup
 
 func itemFitsInventory(i data.Item) bool {
 	invMatrix := context.Get().Data.Inventory.Matrix()
@@ -210,34 +213,55 @@ outer:
 				ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Area cleared in %v. Attempt %d", time.Since(pickupStartTime), attempt))
 			}
 
-			// Calculate position to move to based on attempt number
-			pickupPosition := itemToPickup.Position
-			moveDistance := 3
-			if attempt > 1 {
-				switch attempt {
-				case 2:
-					pickupPosition = data.Position{X: itemToPickup.Position.X + moveDistance, Y: itemToPickup.Position.Y - 1}
-				case 3:
-					pickupPosition = data.Position{X: itemToPickup.Position.X - moveDistance, Y: itemToPickup.Position.Y + 1}
-				case 4:
-					pickupPosition = data.Position{X: itemToPickup.Position.X + moveDistance + 2, Y: itemToPickup.Position.Y - 3}
-				case 5:
-					MoveToCoords(ctx.PathFinder.BeyondPosition(ctx.Data.PlayerUnit.Position, itemToPickup.Position, 4), step.WithIgnoreItems())
-				}
-			}
-
+			// Check if Telekinesis can be used for this item
+			canUseTK := canUseTelekinesisForItemPickup(itemToPickup)
 			distance := ctx.PathFinder.DistanceFromMe(itemToPickup.Position)
-			if distance >= 7 || attempt > 1 {
-				distanceToFinish := max(4-attempt, 2)
+
+			// If Telekinesis is available and we're in range, skip movement
+			if canUseTK && distance <= telekinesisItemPickupRange && attempt == 1 {
 				if debugPickit {
-					ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Moving to coordinates X:%d Y:%d (distance: %d, distToFinish: %d). Attempt %d", pickupPosition.X, pickupPosition.Y, distance, distanceToFinish, attempt))
+					ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Using Telekinesis from current position (distance: %d). Attempt %d", distance, attempt))
 				}
-				if err := MoveToCoords(pickupPosition, step.WithDistanceToFinish(distanceToFinish), step.WithIgnoreItems()); err != nil {
-					lastError = err
-					continue
+				// Skip movement, go directly to pickup
+			} else {
+				// Calculate position to move to based on attempt number
+				pickupPosition := itemToPickup.Position
+				moveDistance := 3
+				if attempt > 1 {
+					switch attempt {
+					case 2:
+						pickupPosition = data.Position{X: itemToPickup.Position.X + moveDistance, Y: itemToPickup.Position.Y - 1}
+					case 3:
+						pickupPosition = data.Position{X: itemToPickup.Position.X - moveDistance, Y: itemToPickup.Position.Y + 1}
+					case 4:
+						pickupPosition = data.Position{X: itemToPickup.Position.X + moveDistance + 2, Y: itemToPickup.Position.Y - 3}
+					case 5:
+						MoveToCoords(ctx.PathFinder.BeyondPosition(ctx.Data.PlayerUnit.Position, itemToPickup.Position, 4), step.WithIgnoreItems())
+					}
 				}
-				if debugPickit {
-					ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Move completed in %v. Attempt %d", time.Since(pickupStartTime), attempt))
+
+				// For Telekinesis, only move if beyond TK range
+				minDistanceForMove := 7
+				if canUseTK {
+					minDistanceForMove = telekinesisItemPickupRange
+				}
+
+				if distance >= minDistanceForMove || attempt > 1 {
+					distanceToFinish := max(4-attempt, 2)
+					// If using Telekinesis, stop at TK range instead of close
+					if canUseTK && attempt == 1 {
+						distanceToFinish = telekinesisItemPickupRange - 2
+					}
+					if debugPickit {
+						ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Moving to coordinates X:%d Y:%d (distance: %d, distToFinish: %d). Attempt %d", pickupPosition.X, pickupPosition.Y, distance, distanceToFinish, attempt))
+					}
+					if err := MoveToCoords(pickupPosition, step.WithDistanceToFinish(distanceToFinish), step.WithIgnoreItems()); err != nil {
+						lastError = err
+						continue
+					}
+					if debugPickit {
+						ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Move completed in %v. Attempt %d", time.Since(pickupStartTime), attempt))
+					}
 				}
 			}
 
@@ -525,5 +549,32 @@ func IsBlacklisted(itm data.Item) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// canUseTelekinesisForItemPickup checks if Telekinesis can be used to pick up this item
+func canUseTelekinesisForItemPickup(it data.Item) bool {
+	ctx := context.Get()
+
+	// Check if Telekinesis is enabled in config
+	if !ctx.CharacterCfg.Character.UseTelekinesis {
+		return false
+	}
+
+	// Check if character has Telekinesis skill
+	if ctx.Data.PlayerUnit.Skills[skill.Telekinesis].Level == 0 {
+		return false
+	}
+
+	// Check if Telekinesis has a keybinding (required for HID interaction)
+	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
+		return false
+	}
+
+	// Telekinesis works on: potions (healing, mana, rejuv) and gold
+	if it.IsPotion() || it.Name == "Gold" {
+		return true
+	}
+
 	return false
 }
