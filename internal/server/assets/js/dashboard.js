@@ -104,6 +104,8 @@ function createCharacterCard(key) {
                         <span class="co-area">Area</span>
                         <span class="co-dot"> • </span>
                         <span class="co-ping">—</span>
+                        <span class="co-dot"> • </span>
+                        <span class="co-players">—</span>
                         <div class="co-xp" title="">
                             <div class="xp-bar" style="height:6px;background:#2b2f36;border-radius:4px;overflow:hidden;width:50px;display:inline-block;vertical-align:middle;">
                                 <div class="xp-bar-fill" style="height:100%;width:0;background:linear-gradient(90deg,#6aa0ff,#3a7bff);"></div>
@@ -616,6 +618,7 @@ function updateCharacterOverview(card, ui, status) {
   const diffEl = card.querySelector(".co-difficulty");
   const areaEl = card.querySelector(".co-area");
   const pingEl = card.querySelector(".co-ping");
+  const playersEl = card.querySelector(".co-players");
   const lifeEl = card.querySelector(".co-life");
   const manaEl = card.querySelector(".co-mana");
   const mfEl = card.querySelector(".co-mf");
@@ -631,6 +634,7 @@ function updateCharacterOverview(card, ui, status) {
     if (diffEl) diffEl.textContent = "—";
     if (areaEl) areaEl.textContent = "—";
     if (pingEl) pingEl.textContent = "—";
+    if (playersEl) playersEl.textContent = "—";
     if (lifeEl) lifeEl.textContent = "Life: —";
     if (manaEl) manaEl.textContent = "Mana: —";
     if (mfEl) mfEl.textContent = "MF: —";
@@ -826,6 +830,8 @@ function updateCharacterOverview(card, ui, status) {
   const diff = titleCase(ui.Difficulty || "");
   const area = ui.Area || "";
   const ping = ui.Ping ?? 0;
+  const playerCount = ui.PlayerCount ?? 0;
+  const maxPlayers = ui.MaxPlayers ?? 8;
   const life = ui.Life ?? 0;
   const maxLife = ui.MaxLife ?? 0;
   const mana = ui.Mana ?? 0;
@@ -857,6 +863,7 @@ function updateCharacterOverview(card, ui, status) {
   if (diffEl) diffEl.textContent = `${diff}`;
   if (areaEl) areaEl.textContent = `${area}`;
   if (pingEl) pingEl.textContent = `${ping}ms`;
+  if (playersEl) playersEl.textContent = `Players: ${playerCount}/${maxPlayers}`;
   if (lifeEl) lifeEl.textContent = `Life: ${life}/${maxLife}`;
   if (manaEl) manaEl.textContent = `Mana: ${mana}/${maxMana}`;
   if (mfEl) mfEl.textContent = `MF: ${mf}%`;

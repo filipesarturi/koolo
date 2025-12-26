@@ -134,6 +134,8 @@ type CharacterOverview struct {
 	Difficulty      string
 	Area            string
 	Ping            int
+	PlayerCount     int // Current number of players in the game
+	MaxPlayers      int // Maximum players allowed (8 in D2R)
 	Life            int
 	MaxLife         int
 	Mana            int

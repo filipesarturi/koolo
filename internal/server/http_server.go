@@ -596,6 +596,8 @@ func (s *HttpServer) getStatusData() IndexData {
 				Difficulty:      diffStr,
 				Area:            areaStr,
 				Ping:            data.Game.Ping,
+				PlayerCount:     len(data.Roster),
+				MaxPlayers:      config.GetLobbyMaxPlayers(),
 				Life:            life,
 				MaxLife:         maxLife,
 				Mana:            mana,
@@ -607,7 +609,6 @@ func (s *HttpServer) getStatusData() IndexData {
 				ColdResist:      cr,
 				LightningResist: lr,
 				PoisonResist:    pr,
-				PlayerCount:     len(data.Roster),
 			}
 		}
 

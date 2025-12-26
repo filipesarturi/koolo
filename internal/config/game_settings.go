@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -61,4 +62,28 @@ func GetCurrentDisplayScale() float64 {
 	dpiX := win.GetDeviceCaps(hDC, win.LOGPIXELSX)
 
 	return float64(dpiX) / 96.0
+}
+
+// GetLobbyMaxPlayers reads the "Lobby Max Players" value from Settings.json
+// Returns 8 as default if the file cannot be read or the value is not found
+func GetLobbyMaxPlayers() int {
+	settingsFile := BasePath + "/config/Settings.json"
+
+	data, err := os.ReadFile(settingsFile)
+	if err != nil {
+		return 8 // Default value
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return 8 // Default value
+	}
+
+	if maxPlayers, ok := settings["Lobby Max Players"]; ok {
+		if val, ok := maxPlayers.(float64); ok {
+			return int(val)
+		}
+	}
+
+	return 8 // Default value
 }
