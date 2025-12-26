@@ -1465,6 +1465,7 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			cfg.Character.UseSwapForBuffs = values.Has("useSwapForBuffs")
 			cfg.Character.BuffOnNewArea = values.Has("characterBuffOnNewArea")
 			cfg.Character.BuffAfterWP = values.Has("characterBuffAfterWP")
+			cfg.Character.MoveToSafePositionForBuff = values.Has("moveToSafePositionForBuff")
 
 			// Process ClearPathDist - only relevant when teleport is disabled
 			if !cfg.Character.UseTeleport {
@@ -1955,6 +1956,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Character.UseSwapForBuffs = r.Form.Has("useSwapForBuffs")
 		cfg.Character.BuffOnNewArea = r.Form.Has("characterBuffOnNewArea")
 		cfg.Character.BuffAfterWP = r.Form.Has("characterBuffAfterWP")
+		cfg.Character.MoveToSafePositionForBuff = r.Form.Has("moveToSafePositionForBuff")
 
 		// Process ClearPathDist - only relevant when teleport is disabled
 		if !cfg.Character.UseTeleport {

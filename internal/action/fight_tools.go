@@ -153,6 +153,136 @@ func ShouldSwitchTarget(targetID data.UnitID, targetMonster data.Monster, lastLi
 	return false
 }
 
+// FindSafePositionForBuff finds a safe position away from all monsters for buffing.
+// It searches in a circle around the player for walkable positions that are
+// at least minSafeDistance away from any monster.
+// Returns the best position found and true if successful, or empty position and false if not.
+func FindSafePositionForBuff(minSafeDistance int, maxSearchDistance int) (data.Position, bool) {
+	ctx := context.Get()
+	playerPos := ctx.Data.PlayerUnit.Position
+
+	// If there are no monsters nearby, current position is safe
+	closestMonsterDist := GetDistanceFromClosestEnemy(playerPos, ctx.Data.Monsters)
+	if closestMonsterDist >= float64(minSafeDistance) {
+		return playerPos, true
+	}
+
+	// Generate candidate positions in a circle around the player
+	candidatePositions := []data.Position{}
+
+	// Find direction away from the closest monster
+	var closestMonster data.Monster
+	minDist := math.MaxFloat64
+	for _, monster := range ctx.Data.Monsters.Enemies() {
+		if monster.Stats[stat.Life] <= 0 {
+			continue
+		}
+		dist := float64(pather.DistanceFromPoint(playerPos, monster.Position))
+		if dist < minDist {
+			minDist = dist
+			closestMonster = monster
+		}
+	}
+
+	// Try positions in the opposite direction from the closest monster first
+	if minDist < math.MaxFloat64 {
+		vectorX := playerPos.X - closestMonster.Position.X
+		vectorY := playerPos.Y - closestMonster.Position.Y
+
+		length := math.Sqrt(float64(vectorX*vectorX + vectorY*vectorY))
+		if length > 0 {
+			for distance := minSafeDistance; distance <= maxSearchDistance; distance += 3 {
+				normalizedX := int(float64(vectorX) / length * float64(distance))
+				normalizedY := int(float64(vectorY) / length * float64(distance))
+
+				for offsetX := -2; offsetX <= 2; offsetX++ {
+					for offsetY := -2; offsetY <= 2; offsetY++ {
+						candidatePos := data.Position{
+							X: playerPos.X + normalizedX + offsetX,
+							Y: playerPos.Y + normalizedY + offsetY,
+						}
+
+						if ctx.Data.AreaData.IsWalkable(candidatePos) {
+							candidatePositions = append(candidatePositions, candidatePos)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Generate positions in a full circle for more options
+	for angle := 0; angle < 360; angle += 15 {
+		radians := float64(angle) * math.Pi / 180
+
+		for distance := minSafeDistance; distance <= maxSearchDistance; distance += 3 {
+			dx := int(math.Cos(radians) * float64(distance))
+			dy := int(math.Sin(radians) * float64(distance))
+
+			candidatePos := data.Position{
+				X: playerPos.X + dx,
+				Y: playerPos.Y + dy,
+			}
+
+			if ctx.Data.AreaData.IsWalkable(candidatePos) {
+				candidatePositions = append(candidatePositions, candidatePos)
+			}
+		}
+	}
+
+	if len(candidatePositions) == 0 {
+		return data.Position{}, false
+	}
+
+	// Evaluate candidate positions - find the one with maximum distance from monsters
+	type scoredPosition struct {
+		pos   data.Position
+		score float64
+	}
+
+	scoredPositions := []scoredPosition{}
+
+	for _, pos := range candidatePositions {
+		// Check if we can path to this position
+		_, _, pathFound := ctx.PathFinder.GetPath(pos)
+		if !pathFound {
+			continue
+		}
+
+		// Calculate minimum distance to any monster from this position
+		minMonsterDist := GetDistanceFromClosestEnemy(pos, ctx.Data.Monsters)
+
+		// Skip positions that are too close to monsters
+		if minMonsterDist < float64(minSafeDistance) {
+			continue
+		}
+
+		// Distance from player (prefer closer positions to minimize travel time)
+		distanceFromPlayer := pather.DistanceFromPoint(pos, playerPos)
+
+		// Score: prioritize safety (distance from monsters) but also consider travel time
+		score := minMonsterDist*2.0 - float64(distanceFromPlayer)*0.5
+
+		scoredPositions = append(scoredPositions, scoredPosition{
+			pos:   pos,
+			score: score,
+		})
+	}
+
+	// Sort by score (highest first)
+	sort.Slice(scoredPositions, func(i, j int) bool {
+		return scoredPositions[i].score > scoredPositions[j].score
+	})
+
+	if len(scoredPositions) > 0 {
+		ctx.Logger.Debug(fmt.Sprintf("Found safe buff position at distance %.2f from nearest monster",
+			GetDistanceFromClosestEnemy(scoredPositions[0].pos, ctx.Data.Monsters)))
+		return scoredPositions[0].pos, true
+	}
+
+	return data.Position{}, false
+}
+
 func FindSafePosition(targetMonster data.Monster, dangerDistance int, safeDistance int, minAttackDistance int, maxAttackDistance int) (data.Position, bool) {
 	ctx := context.Get()
 	playerPos := ctx.Data.PlayerUnit.Position

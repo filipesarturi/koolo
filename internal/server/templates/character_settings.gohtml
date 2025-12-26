@@ -559,6 +559,9 @@
                             <label>
                                 <input type="checkbox" id="useSwapForBuffs" name="useSwapForBuffs" {{ if .Config.Character.UseSwapForBuffs }}checked{{ end }}>ClassBuffs from SwapHand
                             </label>
+                            <label>
+                                <input type="checkbox" id="moveToSafePositionForBuff" name="moveToSafePositionForBuff" {{ if .Config.Character.MoveToSafePositionForBuff }}checked{{ end }}>Move to safe position before buff
+                            </label>
                             <hr/>
                             <div class="input-info">Enable additional buffing for all runs.</div>
                         </div>

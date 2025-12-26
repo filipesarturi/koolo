@@ -74,6 +74,7 @@ character:
   useExtraBuffs: false # If true, bot will enable the extra buffs functionality
   buffOnNewArea: false # If true, bot will apply buffs when entering a new area
   buffAfterWP: false # If true, bot will apply buffs after using a waypoint
+  moveToSafePositionForBuff: true # If true, bot will move to a safe position (away from monsters) before buffing
   barb_leveling:
     use_howl: true # Use Howl skill to scare away monsters
     howl_cooldown: 8 # Cooldown in seconds between Howl casts

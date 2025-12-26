@@ -15,10 +15,10 @@ import (
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
-// BuffIfRequired keeps the original behavior:
+// BuffIfRequired checks if rebuff is needed and moves to a safe position before buffing.
 // - checks if rebuff is needed,
 // - skips town,
-// - avoids buffing when monsters are too close.
+// - if monsters are nearby and MoveToSafePositionForBuff is enabled, moves to a safe position first before buffing.
 func BuffIfRequired() {
 	ctx := context.Get()
 
@@ -26,16 +26,50 @@ func BuffIfRequired() {
 		return
 	}
 
-	// Don't buff if we have 2 or more monsters close to the character.
-	// Don't merge with the previous if, because we want to avoid this
-	// expensive check if we don't need to buff.
+	const (
+		safeDistanceForBuff = 20 // Minimum distance from monsters to safely buff
+		maxSearchDistance   = 35 // Maximum distance to search for a safe position
+	)
+
+	// Check if MoveToSafePositionForBuff is enabled in config
+	moveToSafePosition := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.MoveToSafePositionForBuff
+
+	// Check if there are monsters close to the character
 	closeMonsters := 0
 	for _, m := range ctx.Data.Monsters {
-		if ctx.PathFinder.DistanceFromMe(m.Position) < 15 {
+		if ctx.PathFinder.DistanceFromMe(m.Position) < safeDistanceForBuff {
 			closeMonsters++
 		}
-		// cheaper to check here and end function if say first 2 already < 15
-		// so no need to compute the rest
+		if closeMonsters >= 1 {
+			break
+		}
+	}
+
+	// If monsters are nearby and feature is enabled, try to find and move to a safe position first
+	if closeMonsters > 0 && moveToSafePosition {
+		ctx.Logger.Debug("Monsters nearby, searching for safe position to buff...")
+
+		safePos, found := FindSafePositionForBuff(safeDistanceForBuff, maxSearchDistance)
+		if found && safePos != ctx.Data.PlayerUnit.Position {
+			ctx.Logger.Debug("Moving to safe position for buffing",
+				slog.Int("x", safePos.X),
+				slog.Int("y", safePos.Y))
+
+			// Move to the safe position before buffing
+			err := MoveToCoords(safePos)
+			if err != nil {
+				ctx.Logger.Debug("Failed to move to safe buff position, will try to buff anyway",
+					slog.String("error", err.Error()))
+			}
+
+			// Refresh data after moving
+			ctx.RefreshGameData()
+		} else if !found {
+			ctx.Logger.Debug("No safe position found for buffing, skipping buff this time")
+			return
+		}
+	} else if closeMonsters > 0 && !moveToSafePosition {
+		// Feature disabled, use old behavior: don't buff if 2+ monsters nearby
 		if closeMonsters >= 2 {
 			return
 		}

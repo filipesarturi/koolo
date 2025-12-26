@@ -182,6 +182,7 @@ type CharacterCfg struct {
 		UseSwapForBuffs              bool   `yaml:"use_swap_for_buffs"`
 		BuffOnNewArea                bool   `yaml:"buffOnNewArea"`
 		BuffAfterWP                  bool   `yaml:"buffAfterWP"`
+		MoveToSafePositionForBuff    bool   `yaml:"moveToSafePositionForBuff"`
 		BerserkerBarb                struct {
 			FindItemSwitch              bool `yaml:"find_item_switch"`
 			SkipPotionPickupInTravincal bool `yaml:"skip_potion_pickup_in_travincal"`
