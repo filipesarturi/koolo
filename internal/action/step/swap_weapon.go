@@ -35,7 +35,7 @@ func swapWeapon(toCTA bool) error {
 	attempts := 0
 
 	for {
-		// Check timeout
+		// Check timeout first
 		if time.Now().After(timeout) || attempts >= maxAttempts {
 			ctx.Logger.Warn("Weapon swap timeout reached",
 				"toCTA", toCTA,
@@ -45,7 +45,10 @@ func swapWeapon(toCTA bool) error {
 		}
 
 		// Pause the execution if the priority is not the same as the execution priority
-		ctx.PauseIfNotPriority()
+		// Use timeout version to prevent infinite blocking
+		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
+			ctx.Logger.Debug("Priority wait timeout in weapon swap, continuing...")
+		}
 
 		// Refresh game data to get current skill state
 		ctx.RefreshGameData()

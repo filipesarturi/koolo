@@ -22,7 +22,7 @@ const (
 	maxInteractionAttempts          = 5
 	portalSyncDelay                 = 200
 	maxPortalSyncAttempts           = 15
-	telekinesisMaxInteractionRange  = 20 // Telekinesis has a range of ~20 units
+	telekinesisMaxInteractionRange  = 15 // Telekinesis effective range (conservative to ensure reliability)
 	telekinesisInteractionAttempts  = 3
 )
 

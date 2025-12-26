@@ -228,6 +228,29 @@ func (s *Status) PauseIfNotPriority() {
 		time.Sleep(time.Millisecond * 10)
 	}
 }
+
+// PauseIfNotPriorityWithTimeout is like PauseIfNotPriority but with a maximum wait time.
+// Returns true if priority was acquired, false if timeout was reached.
+func (s *Status) PauseIfNotPriorityWithTimeout(timeout time.Duration) bool {
+	// This prevents bot from trying to move when loading screen is shown.
+	if s.Data.OpenMenus.LoadingScreen {
+		time.Sleep(time.Millisecond * 5)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for s.Priority != s.ExecutionPriority {
+		if s.ExecutionPriority == PriorityStop {
+			panic("Bot is stopped")
+		}
+
+		if time.Now().After(deadline) {
+			return false // Timeout reached
+		}
+
+		time.Sleep(time.Millisecond * 10)
+	}
+	return true
+}
 func (ctx *Context) WaitForGameToLoad() {
 	for ctx.Data.OpenMenus.LoadingScreen {
 		time.Sleep(100 * time.Millisecond)

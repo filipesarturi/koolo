@@ -41,7 +41,7 @@ var midRunes = map[item.Name]bool{
 	"GulRune": true,
 }
 
-const telekinesisItemPickupRange = 20 // Telekinesis range for item pickup
+const telekinesisItemPickupRange = 15 // Telekinesis range for item pickup (conservative to ensure reliability)
 
 func itemFitsInventory(i data.Item) bool {
 	invMatrix := context.Get().Data.Inventory.Matrix()
@@ -109,6 +109,7 @@ func ItemPickup(maxDistance int) error {
 	const maxItemTooFarAttempts = 5                             // Additional retries specifically for "item too far"
 	const totalMaxAttempts = maxRetries + maxItemTooFarAttempts // Combined total attempts
 	const debugPickit = false
+	const globalPickupTimeout = 60 * time.Second                // Global timeout to prevent infinite loops
 
 	// If we're already picking items, skip it
 	if ctx.CurrentGame.IsPickingItems {
@@ -121,6 +122,9 @@ func ItemPickup(maxDistance int) error {
 		ctx.SetPickingItems(false)
 	}()
 
+	// Global timeout to prevent the function from running forever
+	globalStartTime := time.Now()
+
 	// Track how many times we tried to "clean inventory in town" for a specific ground UnitID
 	// to avoid infinite town-loops when an item will never fit due to charm layout, etc.
 	townCleanupByUnitID := map[data.UnitID]int{}
@@ -128,7 +132,18 @@ func ItemPickup(maxDistance int) error {
 
 outer:
 	for {
-		ctx.PauseIfNotPriority()
+		// Check global timeout to prevent infinite loops
+		if time.Since(globalStartTime) > globalPickupTimeout {
+			ctx.Logger.Warn("ItemPickup global timeout reached, aborting pickup cycle",
+				"elapsed", time.Since(globalStartTime),
+			)
+			return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+		}
+
+		// Use timeout version to prevent infinite blocking in multi-bot scenarios
+		if !ctx.PauseIfNotPriorityWithTimeout(5 * time.Second) {
+			ctx.Logger.Debug("Priority wait timeout in ItemPickup, continuing...")
+		}
 
 		// Inventory state can drift while moving/clearing. Refresh before deciding what "fits".
 		ctx.RefreshInventory()

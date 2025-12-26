@@ -18,7 +18,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
-const telekinesisRange = 20 // Telekinesis effective range
+const telekinesisRange = 15 // Telekinesis effective range (conservative to ensure reliability)
 
 func InteractNPC(npc npc.ID) error {
 	ctx := context.Get()

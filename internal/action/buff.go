@@ -2,6 +2,7 @@ package action
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -13,6 +14,15 @@ import (
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/utils"
+)
+
+// Track weapon swap failures to prevent infinite rebuff loops
+var (
+	weaponSwapFailures     = make(map[string]int)    // per-character failure count
+	lastSwapFailureTime    = make(map[string]time.Time)
+	weaponSwapFailuresMu   sync.Mutex
+	maxSwapFailures        = 3                       // max failures before cooldown
+	swapFailureCooldown    = 60 * time.Second        // cooldown after max failures
 )
 
 // BuffIfRequired checks if rebuff is needed and moves to a safe position before buffing.
@@ -124,8 +134,8 @@ func Buff() {
 		}
 	}
 
-	// --- CTA buffs (unchanged) ---
-	buffCTA()
+	// --- CTA buffs ---
+	ctaBuffsApplied := buffCTA()
 
 	// --- Post-CTA class buffs (with optional weapon swap) ---
 
@@ -156,14 +166,26 @@ func Buff() {
 			}
 		}
 
-		ctx.Logger.Debug("Post CTA Buffing...")
-		for _, kb := range postKeys {
+		ctx.Logger.Debug("Post CTA Buffing...", slog.Int("buffCount", len(postKeys)))
+		buffTimeout := time.Now().Add(10 * time.Second) // Timeout for all post-CTA buffs
+		for i, kb := range postKeys {
+			// Check timeout to prevent hanging
+			if time.Now().After(buffTimeout) {
+				ctx.Logger.Warn("Post CTA buffing timeout reached, skipping remaining buffs",
+					slog.Int("completed", i),
+					slog.Int("total", len(postKeys)),
+				)
+				break
+			}
+
+			ctx.Logger.Debug("Casting post-CTA buff", slog.Int("index", i+1), slog.Int("total", len(postKeys)))
 			utils.Sleep(100)
 			ctx.HID.PressKeyBinding(kb)
 			utils.Sleep(180)
 			ctx.HID.Click(game.RightButton, 640, 340)
 			utils.Sleep(100)
 		}
+		ctx.Logger.Debug("Post CTA Buffing completed")
 
 		// If we swapped, make sure we go back to main weapon.
 		if swappedForBuffs {
@@ -175,17 +197,28 @@ func Buff() {
 	}
 
 	utils.PingSleep(utils.Light, 200)
-	buffsSuccessful := true
+
+	// Check if CTA buffs were successfully applied
+	ctaBuffsDetected := true
 	if ctaFound(*ctx.Data) {
 		if !ctx.Data.PlayerUnit.States.HasState(state.Battleorders) ||
 			!ctx.Data.PlayerUnit.States.HasState(state.Battlecommand) {
-			buffsSuccessful = false
-			ctx.Logger.Warn("CTA buffs not detected after buffing, not updating LastBuffAt")
+			ctaBuffsDetected = false
+			ctx.Logger.Warn("CTA buffs not detected after buffing")
 		}
 	}
 
-	if buffsSuccessful {
-		ctx.LastBuffAt = time.Now()
+	// Always update LastBuffAt to prevent infinite rebuff loops
+	// Even if buffs failed, we wait before trying again
+	ctx.LastBuffAt = time.Now()
+
+	if !ctaBuffsApplied || !ctaBuffsDetected {
+		ctx.Logger.Debug("Buff cycle completed with issues",
+			"ctaBuffsApplied", ctaBuffsApplied,
+			"ctaBuffsDetected", ctaBuffsDetected,
+		)
+	} else {
+		ctx.Logger.Debug("Buff cycle completed successfully")
 	}
 }
 
@@ -234,53 +267,95 @@ func IsRebuffRequired() bool {
 
 // buffCTA handles the CTA weapon set: swap, cast BC/BO, swap back.
 // This is kept exactly as in the original implementation.
-func buffCTA() {
+// Returns true if CTA buffs were successfully applied, false otherwise.
+func buffCTA() bool {
 	ctx := context.Get()
 	ctx.SetLastAction("buffCTA")
 
-	if ctaFound(*ctx.Data) {
-		ctx.Logger.Debug("CTA found: swapping weapon and casting Battle Command / Battle Orders")
-
-		// Swap weapon only in case we don't have the CTA already equipped
-		// (for example chicken previous game during buff stage).
-		if _, found := ctx.Data.PlayerUnit.Skills[skill.BattleCommand]; !found {
-			if err := step.SwapToCTA(); err != nil {
-				ctx.Logger.Warn("Failed to swap to CTA, skipping CTA buffs", "error", err)
-				return
-			}
-			utils.PingSleep(utils.Light, 150)
-		}
-
-		// Refresh data after swap to ensure we have current keybindings
-		ctx.RefreshGameData()
-
-		// Cast Battle Command
-		if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleCommand); found {
-			ctx.HID.PressKeyBinding(kb)
-			utils.Sleep(180)
-			ctx.HID.Click(game.RightButton, 300, 300)
-			utils.Sleep(100)
-		} else {
-			ctx.Logger.Warn("BattleCommand keybinding not found on CTA")
-		}
-
-		// Cast Battle Orders
-		if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleOrders); found {
-			ctx.HID.PressKeyBinding(kb)
-			utils.Sleep(180)
-			ctx.HID.Click(game.RightButton, 300, 300)
-			utils.Sleep(100)
-		} else {
-			ctx.Logger.Warn("BattleOrders keybinding not found on CTA")
-		}
-
-		utils.PingSleep(utils.Light, 400)
-
-		// Always try to swap back to main weapon
-		if err := step.SwapToMainWeapon(); err != nil {
-			ctx.Logger.Warn("Failed to swap back to main weapon", "error", err)
-		}
+	if !ctaFound(*ctx.Data) {
+		return true // No CTA, nothing to do
 	}
+
+	// Check if we're in cooldown due to repeated swap failures
+	weaponSwapFailuresMu.Lock()
+	failures := weaponSwapFailures[ctx.Name]
+	lastFailure := lastSwapFailureTime[ctx.Name]
+	weaponSwapFailuresMu.Unlock()
+
+	if failures >= maxSwapFailures && time.Since(lastFailure) < swapFailureCooldown {
+		ctx.Logger.Debug("Skipping CTA buffs due to repeated weapon swap failures",
+			"failures", failures,
+			"cooldownRemaining", swapFailureCooldown-time.Since(lastFailure),
+		)
+		return false
+	}
+
+	// Reset failure count if cooldown has passed
+	if failures >= maxSwapFailures && time.Since(lastFailure) >= swapFailureCooldown {
+		weaponSwapFailuresMu.Lock()
+		weaponSwapFailures[ctx.Name] = 0
+		weaponSwapFailuresMu.Unlock()
+	}
+
+	ctx.Logger.Debug("CTA found: swapping weapon and casting Battle Command / Battle Orders")
+
+	// Swap weapon only in case we don't have the CTA already equipped
+	// (for example chicken previous game during buff stage).
+	if _, found := ctx.Data.PlayerUnit.Skills[skill.BattleCommand]; !found {
+		if err := step.SwapToCTA(); err != nil {
+			ctx.Logger.Warn("Failed to swap to CTA, skipping CTA buffs", "error", err)
+			recordSwapFailure(ctx.Name)
+			return false
+		}
+		utils.PingSleep(utils.Light, 150)
+	}
+
+	// Refresh data after swap to ensure we have current keybindings
+	ctx.RefreshGameData()
+
+	// Cast Battle Command
+	if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleCommand); found {
+		ctx.HID.PressKeyBinding(kb)
+		utils.Sleep(180)
+		ctx.HID.Click(game.RightButton, 300, 300)
+		utils.Sleep(100)
+	} else {
+		ctx.Logger.Warn("BattleCommand keybinding not found on CTA")
+	}
+
+	// Cast Battle Orders
+	if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleOrders); found {
+		ctx.HID.PressKeyBinding(kb)
+		utils.Sleep(180)
+		ctx.HID.Click(game.RightButton, 300, 300)
+		utils.Sleep(100)
+	} else {
+		ctx.Logger.Warn("BattleOrders keybinding not found on CTA")
+	}
+
+	utils.PingSleep(utils.Light, 400)
+
+	// Always try to swap back to main weapon
+	if err := step.SwapToMainWeapon(); err != nil {
+		ctx.Logger.Warn("Failed to swap back to main weapon", "error", err)
+		recordSwapFailure(ctx.Name)
+		return false
+	}
+
+	// Clear failure count on success
+	weaponSwapFailuresMu.Lock()
+	weaponSwapFailures[ctx.Name] = 0
+	weaponSwapFailuresMu.Unlock()
+
+	return true
+}
+
+// recordSwapFailure records a weapon swap failure for cooldown tracking
+func recordSwapFailure(name string) {
+	weaponSwapFailuresMu.Lock()
+	defer weaponSwapFailuresMu.Unlock()
+	weaponSwapFailures[name]++
+	lastSwapFailureTime[name] = time.Now()
 }
 
 // ctaFound checks if the player has a CTA-like item equipped (providing both BO and BC as NonClassSkill).

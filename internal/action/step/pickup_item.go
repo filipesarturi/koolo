@@ -20,7 +20,7 @@ const (
 	clickDelay                   = 25 * time.Millisecond
 	spiralDelay                  = 25 * time.Millisecond
 	pickupTimeout                = 3 * time.Second
-	telekinesisPickupMaxRange    = 20 // Telekinesis range for item pickup
+	telekinesisPickupMaxRange    = 15 // Telekinesis range for item pickup (conservative to ensure reliability)
 	telekinesisPickupMaxAttempts = 3
 )
 
@@ -86,12 +86,18 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
 	ctx.SetLastStep("PickupItemTelekinesis")
 
+	const telekinesisTimeout = 10 * time.Second // Maximum time for this function
+	startTime := time.Now()
+
 	// Wait for the character to finish casting or moving
 	waitingStartTime := time.Now()
 	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || ctx.Data.PlayerUnit.Mode == mode.Running || ctx.Data.PlayerUnit.Mode == mode.Walking || ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
 		if time.Since(waitingStartTime) > 2*time.Second {
 			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting")
 			break
+		}
+		if time.Since(startTime) > telekinesisTimeout {
+			return fmt.Errorf("telekinesis pickup timeout after %v", telekinesisTimeout)
 		}
 		time.Sleep(25 * time.Millisecond)
 		ctx.RefreshGameData()
@@ -129,7 +135,15 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	targetItem := it
 
 	for attempt := 0; attempt < telekinesisPickupMaxAttempts; attempt++ {
-		ctx.PauseIfNotPriority()
+		// Check timeout
+		if time.Since(startTime) > telekinesisTimeout {
+			return fmt.Errorf("telekinesis pickup timeout after %v", telekinesisTimeout)
+		}
+
+		// Use timeout version to prevent infinite blocking
+		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
+			ctx.Logger.Debug("Priority wait timeout in telekinesis pickup, continuing...")
+		}
 		ctx.RefreshGameData()
 
 		// Check if item still exists
@@ -176,6 +190,10 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 
 func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
+	ctx.SetLastStep("PickupItemMouse")
+
+	const mousePickupTimeout = 15 * time.Second // Maximum time for this function
+	funcStartTime := time.Now()
 
 	// Wait for the character to finish casting or moving before proceeding.
 	// We'll use a local timeout to prevent an indefinite wait.
@@ -184,6 +202,9 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		if time.Since(waitingStartTime) > 2*time.Second {
 			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting, proceeding anyway.")
 			break
+		}
+		if time.Since(funcStartTime) > mousePickupTimeout {
+			return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
 		}
 		time.Sleep(25 * time.Millisecond)
 		ctx.RefreshGameData()
@@ -235,7 +256,15 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	startTime := time.Now()
 
 	for {
-		ctx.PauseIfNotPriority()
+		// Check global function timeout
+		if time.Since(funcStartTime) > mousePickupTimeout {
+			return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
+		}
+
+		// Use timeout version to prevent infinite blocking
+		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
+			ctx.Logger.Debug("Priority wait timeout in mouse pickup, continuing...")
+		}
 		ctx.RefreshGameData()
 
 		// Periodic monster check
