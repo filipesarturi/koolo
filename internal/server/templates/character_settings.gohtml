@@ -449,12 +449,24 @@
                         Use centralized pickit
                     </label>
                     <label>
-                        <input type="checkbox" name="interactWithShrines" {{ if .Config.Game.InteractWithShrines }}checked{{ end }}/>
+                        <input type="checkbox" name="interactWithShrines" id="interactWithShrines" {{ if .Config.Game.InteractWithShrines }}checked{{ end }}/>
                         Interact with shrines
                     </label>
                     <label>
-                        <input type="checkbox" name="interactWithChests" {{ if .Config.Game.InteractWithChests }}checked{{ end }}/>
+                        <input type="checkbox" name="interactWithChests" id="interactWithChests" {{ if .Config.Game.InteractWithChests }}checked{{ end }}/>
                         Interact with chests
+                    </label>
+                </fieldset>
+                <fieldset class="grid" id="clearAreaBeforeShrineContainer" {{ if not .Config.Game.InteractWithShrines }}style="display: none;"{{ end }}>
+                    <label>
+                        <input type="checkbox" name="clearAreaBeforeShrine" {{ if .Config.Game.ClearAreaBeforeShrine }}checked{{ end }}/>
+                        Clear area before interacting with shrines
+                    </label>
+                </fieldset>
+                <fieldset class="grid" id="clearAreaBeforeChestContainer" {{ if not .Config.Game.InteractWithChests }}style="display: none;"{{ end }}>
+                    <label>
+                        <input type="checkbox" name="clearAreaBeforeChest" {{ if .Config.Game.ClearAreaBeforeChest }}checked{{ end }}/>
+                        Clear area before opening chests
                     </label>
                 </fieldset>
                 <fieldset class="grid">

@@ -607,6 +607,7 @@ func (s *HttpServer) getStatusData() IndexData {
 				ColdResist:      cr,
 				LightningResist: lr,
 				PoisonResist:    pr,
+				PlayerCount:     len(data.Roster),
 			}
 		}
 
@@ -1452,7 +1453,9 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		cfg.Game.UseCainIdentify = values.Has("useCainIdentify")
 		cfg.Game.DisableIdentifyTome = values.Get("game.disableIdentifyTome") == "on"
 		cfg.Game.InteractWithShrines = values.Has("interactWithShrines")
+		cfg.Game.ClearAreaBeforeShrine = values.Has("clearAreaBeforeShrine")
 		cfg.Game.InteractWithChests = values.Has("interactWithChests")
+		cfg.Game.ClearAreaBeforeChest = values.Has("clearAreaBeforeChest")
 		if v := values.Get("stopLevelingAt"); v != "" {
 			cfg.Game.StopLevelingAt, _ = strconv.Atoi(v)
 		}
@@ -2202,7 +2205,9 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Game.UseCainIdentify = r.Form.Has("useCainIdentify")
 		cfg.Game.DisableIdentifyTome = r.PostFormValue("game.disableIdentifyTome") == "on"
 		cfg.Game.InteractWithShrines = r.Form.Has("interactWithShrines")
+		cfg.Game.ClearAreaBeforeShrine = r.Form.Has("clearAreaBeforeShrine")
 		cfg.Game.InteractWithChests = r.Form.Has("interactWithChests")
+		cfg.Game.ClearAreaBeforeChest = r.Form.Has("clearAreaBeforeChest")
 		cfg.Game.StopLevelingAt, _ = strconv.Atoi(r.Form.Get("stopLevelingAt"))
 		cfg.Game.IsNonLadderChar = r.Form.Has("isNonLadderChar")
 

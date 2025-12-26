@@ -575,6 +575,16 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 		if distanceToTarget <= finishMoveDist || (adjustMinDist && distanceToTarget <= finishMoveDist*2) {
 			if shrine.ID != 0 && targetPosition == shrine.Position {
 				//Handle shrine if any
+				// Clear enemies around the shrine before interacting if enabled
+				if ctx.CharacterCfg.Game.ClearAreaBeforeShrine {
+					shrineClearRadius := 15
+					if enemyFound, _ := IsAnyEnemyAroundPosition(shrine.Position, shrineClearRadius); enemyFound {
+						if err := ClearAreaAroundPosition(shrine.Position, shrineClearRadius); err != nil {
+							ctx.Logger.Warn("Failed to clear area around shrine", slog.Any("error", err))
+						}
+					}
+				}
+
 				if err := InteractObject(shrine, func() bool {
 					obj, found := ctx.Data.Objects.FindByID(shrine.ID)
 					return found && !obj.Selectable
@@ -586,6 +596,16 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				continue
 			} else if chest.ID != 0 && targetPosition == chest.Position {
 				//Handle chest if any
+				// Clear enemies around the chest before opening if enabled
+				if ctx.CharacterCfg.Game.ClearAreaBeforeChest {
+					chestClearRadius := 15
+					if enemyFound, _ := IsAnyEnemyAroundPosition(chest.Position, chestClearRadius); enemyFound {
+						if err := ClearAreaAroundPosition(chest.Position, chestClearRadius); err != nil {
+							ctx.Logger.Warn("Failed to clear area around chest", slog.Any("error", err))
+						}
+					}
+				}
+
 				if err := InteractObject(chest, func() bool {
 					obj, found := ctx.Data.Objects.FindByID(chest.ID)
 					return found && !obj.Selectable

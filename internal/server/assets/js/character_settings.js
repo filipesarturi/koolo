@@ -174,6 +174,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const useExtraBuffsDistContainer = document.getElementById('useExtraBuffsDistContainer');
     const clearPathDistInput = document.getElementById('clearPathDist');
     const clearPathDistValue = document.getElementById('clearPathDistValue');
+    const interactWithChestsCheckbox = document.getElementById('interactWithChests');
+    const clearAreaBeforeChestContainer = document.getElementById('clearAreaBeforeChestContainer');
+    const interactWithShrinesCheckbox = document.getElementById('interactWithShrines');
+    const clearAreaBeforeShrineContainer = document.getElementById('clearAreaBeforeShrineContainer');
 
     const classBuildMapping = {
         amazon: [
@@ -373,6 +377,24 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
     }
+    function toggleClearAreaBeforeChestVisibility() {
+        if (interactWithChestsCheckbox && clearAreaBeforeChestContainer) {
+            if (interactWithChestsCheckbox.checked) {
+                clearAreaBeforeChestContainer.style.display = 'block';
+            } else {
+                clearAreaBeforeChestContainer.style.display = 'none';
+            }
+        }
+    }
+    function toggleClearAreaBeforeShrineVisibility() {
+        if (interactWithShrinesCheckbox && clearAreaBeforeShrineContainer) {
+            if (interactWithShrinesCheckbox.checked) {
+                clearAreaBeforeShrineContainer.style.display = 'block';
+            } else {
+                clearAreaBeforeShrineContainer.style.display = 'none';
+            }
+        }
+    }
 
     // Update the displayed value when the slider changes
     function updateClearPathValue() {
@@ -416,6 +438,20 @@ document.addEventListener('DOMContentLoaded', function () {
         useExtraBuffsCheckbox.addEventListener('change', toggleUseExtraBuffsVisibility);
         // Initialize visibility
         toggleUseExtraBuffsVisibility();
+    }
+
+    // Set up event listeners for interact with chests
+    if (interactWithChestsCheckbox) {
+        interactWithChestsCheckbox.addEventListener('change', toggleClearAreaBeforeChestVisibility);
+        // Initialize visibility
+        toggleClearAreaBeforeChestVisibility();
+    }
+
+    // Set up event listeners for interact with shrines
+    if (interactWithShrinesCheckbox) {
+        interactWithShrinesCheckbox.addEventListener('change', toggleClearAreaBeforeShrineVisibility);
+        // Initialize visibility
+        toggleClearAreaBeforeShrineVisibility();
     }
 
     if (clearPathDistInput) {

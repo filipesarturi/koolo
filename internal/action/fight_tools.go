@@ -43,6 +43,23 @@ func IsAnyEnemyAroundPlayer(radius int) (bool, data.Monster) {
 	return false, data.Monster{}
 }
 
+// IsAnyEnemyAroundPosition checks if there are any enemies around a specific position
+func IsAnyEnemyAroundPosition(pos data.Position, radius int) (bool, data.Monster) {
+	ctx := context.Get()
+	for _, monster := range ctx.Data.Monsters.Enemies() {
+		if monster.Stats[stat.Life] <= 0 {
+			continue
+		}
+
+		distance := pather.DistanceFromPoint(pos, monster.Position)
+		if distance <= radius {
+			return true, monster
+		}
+	}
+
+	return false, data.Monster{}
+}
+
 // ShouldSwitchTarget checks if we've lost line of sight to the target for too long,
 // or if there are no more alive monsters in the area.
 // Returns true if we should abandon the current target and find a new one

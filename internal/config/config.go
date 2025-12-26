@@ -269,12 +269,14 @@ type CharacterCfg struct {
 	} `yaml:"character"`
 
 	Game struct {
-		MinGoldPickupThreshold int                   `yaml:"minGoldPickupThreshold"`
-		UseCainIdentify        bool                  `yaml:"useCainIdentify"`
-		DisableIdentifyTome    bool                  `yaml:"disableIdentifyTome"`
-		InteractWithShrines    bool                  `yaml:"interactWithShrines"`
-		InteractWithChests     bool                  `yaml:"interactWithChests"`
-		StopLevelingAt         int                   `yaml:"stopLevelingAt"`
+		MinGoldPickupThreshold   int                   `yaml:"minGoldPickupThreshold"`
+		UseCainIdentify          bool                  `yaml:"useCainIdentify"`
+		DisableIdentifyTome      bool                  `yaml:"disableIdentifyTome"`
+		InteractWithShrines      bool                  `yaml:"interactWithShrines"`
+		ClearAreaBeforeShrine    bool                  `yaml:"clearAreaBeforeShrine"`
+		InteractWithChests       bool                  `yaml:"interactWithChests"`
+		ClearAreaBeforeChest     bool                  `yaml:"clearAreaBeforeChest"`
+		StopLevelingAt           int                   `yaml:"stopLevelingAt"`
 		IsNonLadderChar        bool                  `yaml:"isNonLadderChar"`
 		ClearTPArea            bool                  `yaml:"clearTPArea"`
 		Difficulty             difficulty.Difficulty `yaml:"difficulty"`
