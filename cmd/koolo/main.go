@@ -116,6 +116,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error starting local server: %s", err.Error())
 	}
+	eventListener.Register(srv.HandleRunewordHistory)
 
 	g.Go(wrapWithRecover(logger, func() error {
 		defer cancel()
@@ -200,16 +201,24 @@ func main() {
 
 	// Discord Bot initialization
 	if config.Koolo.Discord.Enabled {
-		discordBot, err := discord.NewBot(config.Koolo.Discord.Token, config.Koolo.Discord.ChannelID, manager)
+		discordBot, err := discord.NewBot(
+			config.Koolo.Discord.Token,
+			config.Koolo.Discord.ChannelID,
+			manager,
+			config.Koolo.Discord.UseWebhook,
+			config.Koolo.Discord.WebhookURL,
+		)
 		if err != nil {
 			logger.Error("Discord could not been initialized", slog.Any("error", err))
 			return
 		}
 
 		eventListener.Register(discordBot.Handle)
-		g.Go(wrapWithRecover(logger, func() error {
-			return discordBot.Start(ctx)
-		}))
+		if !config.Koolo.Discord.UseWebhook {
+			g.Go(wrapWithRecover(logger, func() error {
+				return discordBot.Start(ctx)
+			}))
+		}
 	}
 
 	// Telegram Bot initialization
