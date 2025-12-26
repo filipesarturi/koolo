@@ -143,12 +143,17 @@ func Buff() {
 	if len(postKeys) > 0 {
 		// Read our new toggle from config:
 		useSwapForBuffs := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseSwapForBuffs
+		swappedForBuffs := false
 
 		// Optionally swap to offhand (CTA / buff weapon) before class buffs.
 		if useSwapForBuffs {
 			ctx.Logger.Debug("Using weapon swap for class buff skills")
-			step.SwapToCTA()
-			utils.PingSleep(utils.Light, 400)
+			if err := step.SwapToCTA(); err != nil {
+				ctx.Logger.Warn("Failed to swap to offhand for buffs, using main weapon", "error", err)
+			} else {
+				swappedForBuffs = true
+				utils.PingSleep(utils.Light, 400)
+			}
 		}
 
 		ctx.Logger.Debug("Post CTA Buffing...")
@@ -161,9 +166,11 @@ func Buff() {
 		}
 
 		// If we swapped, make sure we go back to main weapon.
-		if useSwapForBuffs {
+		if swappedForBuffs {
 			utils.PingSleep(utils.Light, 400)
-			step.SwapToMainWeapon()
+			if err := step.SwapToMainWeapon(); err != nil {
+				ctx.Logger.Warn("Failed to swap back to main weapon after buffs", "error", err)
+			}
 		}
 	}
 
@@ -237,22 +244,42 @@ func buffCTA() {
 		// Swap weapon only in case we don't have the CTA already equipped
 		// (for example chicken previous game during buff stage).
 		if _, found := ctx.Data.PlayerUnit.Skills[skill.BattleCommand]; !found {
-			step.SwapToCTA()
+			if err := step.SwapToCTA(); err != nil {
+				ctx.Logger.Warn("Failed to swap to CTA, skipping CTA buffs", "error", err)
+				return
+			}
 			utils.PingSleep(utils.Light, 150)
 		}
 
-		ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.MustKBForSkill(skill.BattleCommand))
-		utils.Sleep(180)
-		ctx.HID.Click(game.RightButton, 300, 300)
-		utils.Sleep(100)
+		// Refresh data after swap to ensure we have current keybindings
+		ctx.RefreshGameData()
 
-		ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.MustKBForSkill(skill.BattleOrders))
-		utils.Sleep(180)
-		ctx.HID.Click(game.RightButton, 300, 300)
-		utils.Sleep(100)
+		// Cast Battle Command
+		if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleCommand); found {
+			ctx.HID.PressKeyBinding(kb)
+			utils.Sleep(180)
+			ctx.HID.Click(game.RightButton, 300, 300)
+			utils.Sleep(100)
+		} else {
+			ctx.Logger.Warn("BattleCommand keybinding not found on CTA")
+		}
+
+		// Cast Battle Orders
+		if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleOrders); found {
+			ctx.HID.PressKeyBinding(kb)
+			utils.Sleep(180)
+			ctx.HID.Click(game.RightButton, 300, 300)
+			utils.Sleep(100)
+		} else {
+			ctx.Logger.Warn("BattleOrders keybinding not found on CTA")
+		}
 
 		utils.PingSleep(utils.Light, 400)
-		step.SwapToMainWeapon()
+
+		// Always try to swap back to main weapon
+		if err := step.SwapToMainWeapon(); err != nil {
+			ctx.Logger.Warn("Failed to swap back to main weapon", "error", err)
+		}
 	}
 }
 
