@@ -571,10 +571,14 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 			}
 		}
 
-		//We've reached our target destination !
-		if distanceToTarget <= finishMoveDist || (adjustMinDist && distanceToTarget <= finishMoveDist*2) {
-			if shrine.ID != 0 && targetPosition == shrine.Position {
-				//Handle shrine if any
+		// Check if we can interact with shrine/chest via Telekinesis from current position
+		// This allows interaction from distance without moving all the way to the object
+		if shrine.ID != 0 && targetPosition == shrine.Position {
+			shrineDistance := ctx.PathFinder.DistanceFromMe(shrine.Position)
+			canUseTKForShrine := canUseTelekinesisForObject(shrine)
+
+			// Interact if within Telekinesis range OR if we've reached normal interaction distance
+			if (canUseTKForShrine && shrineDistance <= telekinesisRange) || shrineDistance <= finishMoveDist {
 				// Clear enemies around the shrine before interacting if enabled
 				if ctx.CharacterCfg.Game.ClearAreaBeforeShrine {
 					shrineClearRadius := 15
@@ -594,8 +598,15 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				blacklistedInteractions[shrine.ID] = true
 				shrine = data.Object{}
 				continue
-			} else if chest.ID != 0 && targetPosition == chest.Position {
-				//Handle chest if any
+			}
+		}
+
+		if chest.ID != 0 && targetPosition == chest.Position {
+			chestDistance := ctx.PathFinder.DistanceFromMe(chest.Position)
+			canUseTKForChest := canUseTelekinesisForObject(chest)
+
+			// Interact if within Telekinesis range OR if we've reached normal interaction distance
+			if (canUseTKForChest && chestDistance <= telekinesisRange) || chestDistance <= finishMoveDist {
 				// Clear enemies around the chest before opening if enabled
 				if ctx.CharacterCfg.Game.ClearAreaBeforeChest {
 					chestClearRadius := 15
@@ -621,7 +632,12 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				}
 				chest = data.Object{}
 				continue
-			} else if !utils.IsZeroPosition(tpPad.Position) && targetPosition == tpPad.Position {
+			}
+		}
+
+		//We've reached our target destination !
+		if distanceToTarget <= finishMoveDist || (adjustMinDist && distanceToTarget <= finishMoveDist*2) {
+			if !utils.IsZeroPosition(tpPad.Position) && targetPosition == tpPad.Position {
 				//Handle arcane sanctuary tp pad if any
 				if err := InteractObject(tpPad, func() bool {
 					return ctx.PathFinder.DistanceFromMe(tpPad.Position) > 5

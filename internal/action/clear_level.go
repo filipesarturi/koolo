@@ -63,11 +63,20 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 				// Interact with chests if openChests is true
 				if openChests && o.IsChest() && o.Selectable {
 					ctx.Logger.Debug(fmt.Sprintf("Found chest. attempting to interact. Name=%s. ID=%v UnitID=%v Pos=%v,%v Area='%s' InteractType=%v", o.Desc().Name, o.Name, o.ID, o.Position.X, o.Position.Y, ctx.Data.PlayerUnit.Area.Area().Name, o.InteractType))
-					err = MoveToCoords(o.Position)
-					if err != nil {
-						ctx.Logger.Warn("Failed moving to chest", slog.Any("error", err))
-						continue
+
+					// Check if we can use Telekinesis from current position
+					chestDistance := ctx.PathFinder.DistanceFromMe(o.Position)
+					canUseTK := canUseTelekinesisForObject(o)
+
+					// Only move if not within Telekinesis range (or TK not available)
+					if !canUseTK || chestDistance > telekinesisRange {
+						err = MoveToCoords(o.Position)
+						if err != nil {
+							ctx.Logger.Warn("Failed moving to chest", slog.Any("error", err))
+							continue
+						}
 					}
+
 					err = InteractObject(o, func() bool {
 						chest, _ := ctx.Data.Objects.FindByID(o.ID)
 						return !chest.Selectable

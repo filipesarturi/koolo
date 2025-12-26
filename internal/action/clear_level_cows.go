@@ -46,9 +46,17 @@ func ClearCurrentLevelCows(openChests bool, filter data.MonsterFilter) error {
 		if openChests {
 			for _, o := range ctx.Data.Objects {
 				if r.IsInside(o.Position) && o.IsChest() && o.Selectable {
-					if err := MoveToCoords(o.Position); err != nil {
-						continue
+					// Check if we can use Telekinesis from current position
+					chestDistance := ctx.PathFinder.DistanceFromMe(o.Position)
+					canUseTK := canUseTelekinesisForObject(o)
+
+					// Only move if not within Telekinesis range (or TK not available)
+					if !canUseTK || chestDistance > telekinesisRange {
+						if err := MoveToCoords(o.Position); err != nil {
+							continue
+						}
 					}
+
 					_ = InteractObject(o, func() bool {
 						chest, _ := ctx.Data.Objects.FindByID(o.ID)
 						return !chest.Selectable
