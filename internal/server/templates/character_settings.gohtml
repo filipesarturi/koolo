@@ -559,6 +559,22 @@
                 </fieldset>
             </article>
 
+            <!-- Pickup on Kill Options -->
+            <article style="margin-top: 20px; background-color: #e3f2fd; padding: 15px; border: 4px solid #2196f3;">
+                <header><strong>⚡ PICKUP ON KILL</strong></header>
+                <p style="font-size: 0.9em; color: #666;">
+                    When enabled, the bot will check for loot and pick up items immediately after each monster kill,
+                    instead of waiting to clear the entire area first. <strong>Useful for public games</strong> (e.g., cow runs)
+                    where other players may take drops.
+                </p>
+                <fieldset class="grid">
+                    <label>
+                        <input type="checkbox" name="characterPickupOnKill" {{ if .Config.Character.PickupOnKill }}checked{{ end }}/>
+                        Pick up items immediately after each kill
+                    </label>
+                </fieldset>
+            </article>
+
             <fieldset class="grid">
                 <label style="width: auto;">
                     <div id="useExtraBuffsDistContainer" class="conditional-field" {{ if .Config.Character.UseExtraBuffs }}style="display: none;"{{ end }}>

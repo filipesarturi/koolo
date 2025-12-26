@@ -71,8 +71,9 @@ func canUseTelekinesisForItem(it data.Item) bool {
 		return false
 	}
 
-	// Telekinesis works on: potions (healing, mana, rejuv) and gold
-	if it.IsPotion() || it.Name == "Gold" {
+	// Telekinesis works on: potions, gold, and scrolls (TP/ID)
+	if it.IsPotion() || it.Name == "Gold" ||
+		it.Name == item.ScrollOfTownPortal || it.Name == item.ScrollOfIdentify {
 		return true
 	}
 

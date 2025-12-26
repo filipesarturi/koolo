@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -17,6 +19,27 @@ import (
 	"github.com/hectorgimenez/koolo/internal/event"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
+
+// High runes (Vex and above) - highest pickup priority
+var highRunes = map[item.Name]bool{
+	"VexRune":  true,
+	"OhmRune":  true,
+	"LoRune":   true,
+	"SurRune":  true,
+	"BerRune":  true,
+	"JahRune":  true,
+	"ChamRune": true,
+	"ZodRune":  true,
+}
+
+// Mid runes (Pul to Gul) - second priority
+var midRunes = map[item.Name]bool{
+	"PulRune": true,
+	"UmRune":  true,
+	"MalRune": true,
+	"IstRune": true,
+	"GulRune": true,
+}
 
 const telekinesisItemPickupRange = 20 // Telekinesis range for item pickup
 
@@ -483,7 +506,70 @@ func GetItemsToPickup(maxDistance int) []data.Item {
 		}
 	}
 
+	// Sort items by priority: high runes > mid runes > unique/set > other > potions/scrolls/gold
+	sortItemsByPriority(filteredItems)
+
 	return filteredItems
+}
+
+// getItemPickupPriority returns a priority value for sorting (lower = higher priority)
+func getItemPickupPriority(itm data.Item) int {
+	// Priority 1: High Runes (Vex+) - most valuable, pick up first
+	if highRunes[itm.Name] {
+		return 1
+	}
+
+	// Priority 2: Mid Runes (Pul-Gul)
+	if midRunes[itm.Name] {
+		return 2
+	}
+
+	// Priority 3: Unique and Set items
+	if itm.Quality == item.QualityUnique || itm.Quality == item.QualitySet {
+		return 3
+	}
+
+	// Priority 4: Other runes (low runes) and valuable items
+	if itm.Desc().Type == item.TypeRune {
+		return 4
+	}
+
+	// Priority 4: Rare items
+	if itm.Quality == item.QualityRare {
+		return 4
+	}
+
+	// Priority 5: Magic items and other equipment
+	if itm.Quality == item.QualityMagic {
+		return 5
+	}
+
+	// Priority 6: Potions, Scrolls, Gold - pick up last
+	if itm.IsPotion() || strings.Contains(string(itm.Name), "Scroll") || itm.Name == "Gold" {
+		return 6
+	}
+
+	// Default priority for anything else
+	return 5
+}
+
+// sortItemsByPriority sorts items by pickup priority (higher priority items first)
+func sortItemsByPriority(items []data.Item) {
+	ctx := context.Get()
+
+	sort.SliceStable(items, func(i, j int) bool {
+		priorityI := getItemPickupPriority(items[i])
+		priorityJ := getItemPickupPriority(items[j])
+
+		// If same priority, prefer closer items
+		if priorityI == priorityJ {
+			distI := ctx.PathFinder.DistanceFromMe(items[i].Position)
+			distJ := ctx.PathFinder.DistanceFromMe(items[j].Position)
+			return distI < distJ
+		}
+
+		return priorityI < priorityJ
+	})
 }
 
 func shouldBePickedUp(i data.Item) bool {
@@ -571,8 +657,9 @@ func canUseTelekinesisForItemPickup(it data.Item) bool {
 		return false
 	}
 
-	// Telekinesis works on: potions (healing, mana, rejuv) and gold
-	if it.IsPotion() || it.Name == "Gold" {
+	// Telekinesis works on: potions, gold, and scrolls (TP/ID)
+	if it.IsPotion() || it.Name == "Gold" ||
+		it.Name == item.ScrollOfTownPortal || it.Name == item.ScrollOfIdentify {
 		return true
 	}
 

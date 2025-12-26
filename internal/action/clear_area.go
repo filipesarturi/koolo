@@ -2,16 +2,20 @@ package action
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/pather"
 )
+
+const pickupOnKillRadius = 15 // Pickup radius when PickupOnKill is enabled
 
 func ClearAreaAroundPlayer(radius int, filter data.MonsterFilter) error {
 	return ClearAreaAroundPosition(context.Get().Data.PlayerUnit.Position, radius, filter)
@@ -65,52 +69,115 @@ func ClearAreaAroundPosition(pos data.Position, radius int, filters ...data.Mons
 	ctx := context.Get()
 	ctx.SetLastAction("ClearAreaAroundPosition")
 
-	// Disable item pickup at the beginning of the function
-	ctx.DisableItemPickup()
+	// Check if PickupOnKill is enabled - if so, use the pickup-between-kills approach
+	if ctx.CharacterCfg.Character.PickupOnKill {
+		return clearAreaWithPickupOnKill(pos, radius, filters...)
+	}
 
-	// Defer the re-enabling of item pickup to ensure it happens regardless of how the function exits
+	// Standard behavior: disable item pickup during the clear sequence
+	ctx.DisableItemPickup()
 	defer ctx.EnableItemPickup()
 
 	return ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
-		enemies := d.Monsters.Enemies(filters...)
+		return selectNextEnemy(ctx, pos, radius, filters...)
+	}, nil)
+}
 
-		SortEnemiesByPriority(&enemies)
+// clearAreaWithPickupOnKill clears the area while picking up items after each kill
+func clearAreaWithPickupOnKill(pos data.Position, radius int, filters ...data.MonsterFilter) error {
+	ctx := context.Get()
 
-		for _, m := range enemies {
-			distanceToTarget := pather.DistanceFromPoint(pos, m.Position)
-			if distanceToTarget > radius {
-				continue
+	for {
+		ctx.PauseIfNotPriority()
+		ctx.RefreshGameData()
+
+		// Check for enemies in range
+		targetID, found := selectNextEnemy(ctx, pos, radius, filters...)
+		if !found {
+			// No more enemies, do a final pickup sweep and exit
+			return nil
+		}
+
+		// Track if the monster was killed (we'll check after the attack sequence)
+		monsterBefore, monsterFound := ctx.Data.Monsters.FindByID(targetID)
+		if !monsterFound {
+			continue
+		}
+
+		// Disable item pickup during combat
+		ctx.DisableItemPickup()
+
+		// Kill just this one monster using a single-target selector
+		_ = ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
+			// Check if original target is still alive
+			monster, stillExists := d.Monsters.FindByID(targetID)
+			if !stillExists || monster.Stats[stat.Life] <= 0 {
+				return data.UnitID(0), false // Monster dead, exit sequence
+			}
+			return targetID, true
+		}, nil)
+
+		// Re-enable item pickup
+		ctx.EnableItemPickup()
+
+		// Check if monster was killed (no longer exists or has 0 HP)
+		ctx.RefreshGameData()
+		monsterAfter, stillExists := ctx.Data.Monsters.FindByID(targetID)
+		monsterKilled := !stillExists || monsterAfter.Stats[stat.Life] <= 0
+
+		// If monster was killed, do a quick pickup of nearby items
+		if monsterKilled {
+			pickupPos := monsterBefore.Position
+			err := ItemPickup(pickupOnKillRadius)
+			if err != nil {
+				ctx.Logger.Debug("PickupOnKill: Failed to pickup items after kill",
+					slog.String("error", err.Error()),
+					slog.Int("x", pickupPos.X),
+					slog.Int("y", pickupPos.Y))
+			}
+		}
+	}
+}
+
+// selectNextEnemy finds the next valid enemy to target
+func selectNextEnemy(ctx *context.Status, pos data.Position, radius int, filters ...data.MonsterFilter) (data.UnitID, bool) {
+	enemies := ctx.Data.Monsters.Enemies(filters...)
+	SortEnemiesByPriority(&enemies)
+
+	for _, m := range enemies {
+		distanceToTarget := pather.DistanceFromPoint(pos, m.Position)
+		if distanceToTarget > radius {
+			continue
+		}
+
+		// Special case: Vizier can spawn on weird/off-grid tiles in Chaos Sanctuary.
+		isVizier := m.Type == data.MonsterTypeSuperUnique && m.Name == npc.StormCaster
+
+		// Skip monsters that exist in data but are placed on non-walkable tiles (often "underwater/off-grid").
+		if !isVizier && !ctx.Data.AreaData.IsWalkable(m.Position) {
+			continue
+		}
+
+		validEnemy := true
+		if !ctx.Data.CanTeleport() {
+			// If no path exists, do not target it (prevents chasing "ghost" monsters).
+			_, _, pathFound := ctx.PathFinder.GetPath(m.Position)
+			if !pathFound {
+				validEnemy = false
 			}
 
-			// Special case: Vizier can spawn on weird/off-grid tiles in Chaos Sanctuary.
-			isVizier := m.Type == data.MonsterTypeSuperUnique && m.Name == npc.StormCaster
-
-			// Skip monsters that exist in data but are placed on non-walkable tiles (often "underwater/off-grid").
-			if !isVizier && !ctx.Data.AreaData.IsWalkable(m.Position) {
-				continue
-			}
-
-			validEnemy := true
-			if !ctx.Data.CanTeleport() {
-				// If no path exists, do not target it (prevents chasing "ghost" monsters).
-				_, _, pathFound := ctx.PathFinder.GetPath(m.Position)
-				if !pathFound {
-					validEnemy = false
-				}
-
-				// Keep the door check to avoid targeting monsters behind closed doors.
-				if hasDoorBetween, _ := ctx.PathFinder.HasDoorBetween(ctx.Data.PlayerUnit.Position, m.Position); hasDoorBetween {
-					validEnemy = false
-				}
-			}
-
-			if validEnemy {
-				return m.UnitID, true
+			// Keep the door check to avoid targeting monsters behind closed doors.
+			if hasDoorBetween, _ := ctx.PathFinder.HasDoorBetween(ctx.Data.PlayerUnit.Position, m.Position); hasDoorBetween {
+				validEnemy = false
 			}
 		}
 
-		return data.UnitID(0), false
-	}, nil)
+		if validEnemy {
+			return m.UnitID, true
+		}
+	}
+
+	return data.UnitID(0), false
 }
 
 func ClearThroughPath(pos data.Position, radius int, filter data.MonsterFilter) error {

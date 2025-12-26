@@ -258,6 +258,7 @@ document.addEventListener('DOMContentLoaded', function () {
             characterUseExtraBuffs: boolVal('characterUseExtraBuffs'),
             characterUseTeleport: boolVal('characterUseTeleport'),
             characterUseTelekinesis: boolVal('characterUseTelekinesis'),
+            characterPickupOnKill: boolVal('characterPickupOnKill'),
             characterStashToShared: boolVal('characterStashToShared'),
             useCentralizedPickit: boolVal('useCentralizedPickit'),
             interactWithShrines: boolVal('interactWithShrines'),

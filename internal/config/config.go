@@ -177,6 +177,7 @@ type CharacterCfg struct {
 		StashToShared                bool   `yaml:"stashToShared"`
 		UseTeleport                  bool   `yaml:"useTeleport"`
 		UseTelekinesis               bool   `yaml:"useTelekinesis"`
+		PickupOnKill                 bool   `yaml:"pickupOnKill"`
 		ClearPathDist                int    `yaml:"clearPathDist"`
 		ShouldHireAct2MercFrozenAura bool   `yaml:"shouldHireAct2MercFrozenAura"`
 		UseExtraBuffs                bool   `yaml:"useExtraBuffs"`

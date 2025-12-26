@@ -81,6 +81,8 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 		return fmt.Errorf("failed moving/clearing to room center: %w", err)
 	}
 
+	pickupOnKill := ctx.CharacterCfg.Character.PickupOnKill
+
 	for {
 		ctx.PauseIfNotPriority()
 
@@ -113,6 +115,9 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 			return nil
 		}
 
+		// Track target position for pickup after kill
+		targetPos := target.Position
+
 		ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
 			m, ok := d.Monsters.FindByID(target.UnitID)
 			if ok && m.Stats[stat.Life] > 0 {
@@ -120,6 +125,21 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 			}
 			return 0, false
 		}, nil)
+
+		// If PickupOnKill is enabled, pickup items after each kill
+		if pickupOnKill {
+			ctx.RefreshGameData()
+			// Check if monster was killed
+			m, stillExists := ctx.Data.Monsters.FindByID(target.UnitID)
+			if !stillExists || m.Stats[stat.Life] <= 0 {
+				if err := ItemPickup(pickupOnKillRadius); err != nil {
+					ctx.Logger.Debug("PickupOnKill (cows): Failed to pickup items",
+						slog.String("error", err.Error()),
+						slog.Int("x", targetPos.X),
+						slog.Int("y", targetPos.Y))
+				}
+			}
+		}
 	}
 }
 
