@@ -223,6 +223,10 @@ type CharacterCfg struct {
 			BossStaticThreshold int `yaml:"boss_static_threshold"`
 
 			AggressiveNovaPositioning bool `yaml:"aggressive_nova_positioning"`
+			// AvoidDollsInGroups: if true, avoids attacking dolls when there are many nearby (default: true)
+			// MaxNearbyDolls: maximum number of nearby dolls before avoiding attack (default: 2)
+			AvoidDollsInGroups bool `yaml:"avoid_dolls_in_groups"`
+			MaxNearbyDolls     int  `yaml:"max_nearby_dolls"`
 		} `yaml:"nova_sorceress"`
 		LightningSorceress struct {
 		} `yaml:"lightning_sorceress"`
@@ -277,9 +281,10 @@ type CharacterCfg struct {
 		DisableIdentifyTome      bool                  `yaml:"disableIdentifyTome"`
 		InteractWithShrines      bool                  `yaml:"interactWithShrines"`
 		ClearAreaBeforeShrine    bool                  `yaml:"clearAreaBeforeShrine"`
-		InteractWithChests       bool                  `yaml:"interactWithChests"`
-		ClearAreaBeforeChest     bool                  `yaml:"clearAreaBeforeChest"`
-		StopLevelingAt           int                   `yaml:"stopLevelingAt"`
+		InteractWithChests                      bool                  `yaml:"interactWithChests"`
+		ClearAreaBeforeChest                    bool                  `yaml:"clearAreaBeforeChest"`
+		ExcludeDollsAndSoulsFromChestShrineClear bool                  `yaml:"excludeDollsAndSoulsFromChestShrineClear"`
+		StopLevelingAt                          int                   `yaml:"stopLevelingAt"`
 		IsNonLadderChar        bool                  `yaml:"isNonLadderChar"`
 		ClearTPArea            bool                  `yaml:"clearTPArea"`
 		Difficulty             difficulty.Difficulty `yaml:"difficulty"`

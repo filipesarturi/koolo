@@ -84,6 +84,9 @@ character:
     use_battlecry: true # Use Battle Cry skill to reduce enemy damage and defense
     battlecry_cooldown: 6 # Cooldown in seconds between Battle Cry casts
     battlecry_min_monsters: 1 # Minimum number of monsters in range to use Battle Cry
+  nova_sorceress:
+    avoid_dolls_in_groups: true # If true, avoids attacking dolls when there are many nearby (prevents deaths from doll explosions)
+    max_nearby_dolls: 2 # Maximum number of nearby dolls before avoiding attack (only used if avoid_dolls_in_groups is true)
 
 game:
   minGoldPickupThreshold: 500000 # If total gold amount is less than this, bot will pick up and sell magic+ items
@@ -92,6 +95,7 @@ game:
   clearAreaBeforeShrine: true # If true, bot will clear enemies around shrine before interacting
   interactWithChests: true # If true, bot will interact with chests while moving
   clearAreaBeforeChest: true # If true, bot will clear enemies around chest before opening
+  excludeDollsAndSoulsFromChestShrineClear: false # If true, bot will exclude dolls and souls when clearing area before chests/shrines
   difficulty: hell # Allowed values: normal, nightmare, hell
   randomizeRuns: true # Will randomize the order of the runs each game
   # Just add the runs you want to do and they will be executed respecting the order, unless randomizeRuns is set to true

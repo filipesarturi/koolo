@@ -60,6 +60,39 @@ func gridDistance(a, b data.Position) int {
 	return dy
 }
 
+// isDoll checks if a monster is a dangerous doll type
+func isDoll(m data.Monster) bool {
+	dollNPCs := []npc.ID{
+		npc.UndeadStygianDoll,
+		npc.UndeadStygianDoll2,
+		npc.UndeadSoulKiller,
+		npc.UndeadSoulKiller2,
+	}
+	for _, dollNPC := range dollNPCs {
+		if m.Name == dollNPC {
+			return true
+		}
+	}
+	return false
+}
+
+// countNearbyDolls counts how many dolls are within Nova radius of a position
+func (s NovaSorceress) countNearbyDolls(pos data.Position, excludeID data.UnitID) int {
+	count := 0
+	for _, m := range s.Data.Monsters.Enemies() {
+		if m.UnitID == excludeID {
+			continue
+		}
+		if m.Stats[stat.Life] <= 0 {
+			continue
+		}
+		if isDoll(m) && gridDistance(pos, m.Position) <= NovaSpellRadius {
+			count++
+		}
+	}
+	return count
+}
+
 // squaredDistance returns Euclidean distance squared (dx*dx + dy*dy).
 func squaredDistance(a, b data.Position) int {
 	dx := a.X - b.X
@@ -563,12 +596,33 @@ func (s NovaSorceress) KillMonsterSequence(
 	attackedThisEngagement := false
 	lastRepositionAt := time.Time{}
 
+	// Track blacklisted dolls to avoid infinite loops
+	dollBlacklist := make(map[data.UnitID]bool)
+	maxDollSkipAttempts := 5
+	dollSkipAttempts := 0
+
 	for {
 		ctx.PauseIfNotPriority()
 
 		id, found := monsterSelector(*s.Data)
 		if !found {
+			// Reset blacklist if no targets found
+			if len(dollBlacklist) > 0 {
+				dollBlacklist = make(map[data.UnitID]bool)
+				dollSkipAttempts = 0
+			}
 			return nil
+		}
+
+		// Skip blacklisted dolls
+		if dollBlacklist[id] {
+			dollSkipAttempts++
+			if dollSkipAttempts >= maxDollSkipAttempts {
+				// Reset blacklist after max attempts to avoid infinite loop
+				dollBlacklist = make(map[data.UnitID]bool)
+				dollSkipAttempts = 0
+			}
+			continue
 		}
 
 		if !s.preBattleChecks(id, skipOnImmunities) {
@@ -579,6 +633,63 @@ func (s NovaSorceress) KillMonsterSequence(
 		if !found || monster.Stats[stat.Life] <= 0 {
 			return nil
 		}
+
+		// Check if we should avoid attacking this doll due to nearby dolls
+		// Default to true if not configured (when section is not present in YAML)
+		avoidDollsInGroups := ctx.CharacterCfg.Character.NovaSorceress.AvoidDollsInGroups
+		// If AvoidDollsInGroups is false, check if the nova_sorceress section was likely not configured
+		// We detect this by checking if all fields have zero/default values
+		if !avoidDollsInGroups {
+			novoCfg := ctx.CharacterCfg.Character.NovaSorceress
+			// If all fields are zero/default, section likely not configured - default to true
+			if novoCfg.MaxNearbyDolls == 0 && novoCfg.BossStaticThreshold == 0 &&
+				!novoCfg.AggressiveNovaPositioning {
+				avoidDollsInGroups = true
+			}
+		}
+
+		if avoidDollsInGroups && isDoll(monster) {
+			maxNearbyDolls := ctx.CharacterCfg.Character.NovaSorceress.MaxNearbyDolls
+			if maxNearbyDolls <= 0 {
+				maxNearbyDolls = 2 // Default threshold
+			}
+
+			nearbyDolls := s.countNearbyDolls(monster.Position, monster.UnitID)
+			if nearbyDolls > maxNearbyDolls {
+				// Too many dolls nearby, try to find another target first
+				hasOtherTarget := false
+				for _, otherMonster := range s.Data.Monsters.Enemies() {
+					if otherMonster.UnitID == id || otherMonster.Stats[stat.Life] <= 0 {
+						continue
+					}
+					if dollBlacklist[otherMonster.UnitID] {
+						continue
+					}
+					// Check if it's not a doll or if it's a doll with fewer nearby dolls
+					if !isDoll(otherMonster) {
+						hasOtherTarget = true
+						break
+					} else {
+						otherNearbyDolls := s.countNearbyDolls(otherMonster.Position, otherMonster.UnitID)
+						if otherNearbyDolls <= maxNearbyDolls {
+							hasOtherTarget = true
+							break
+						}
+					}
+				}
+
+				if hasOtherTarget {
+					// Blacklist this doll and try another target
+					dollBlacklist[id] = true
+					dollSkipAttempts++
+					continue
+				}
+				// No other targets available, proceed with caution (will use larger distance)
+			}
+		}
+
+		// Reset doll skip attempts when we have a valid target
+		dollSkipAttempts = 0
 
 		// Aggressive Nova positioning:
 		// One decisive reposition per pack, anchored to elite center (when available),
@@ -655,11 +766,27 @@ func (s NovaSorceress) KillMonsterSequence(
 		}
 
 		// Choose Nova distance based on config (aggressive / normal).
+		// For dolls, use safer distance if there are many nearby
 		novaMin := NovaMinDistance
 		novaMax := NovaMaxDistance
 		if ctx.CharacterCfg.Character.NovaSorceress.AggressiveNovaPositioning {
 			novaMin = NovaAggroMinDistance
 			novaMax = NovaAggroMaxDistance
+		}
+
+		// If attacking a doll, use safer distance (max distance) to reduce explosion risk
+		if isDoll(monster) {
+			maxNearbyDolls := ctx.CharacterCfg.Character.NovaSorceress.MaxNearbyDolls
+			if maxNearbyDolls <= 0 {
+				maxNearbyDolls = 2
+			}
+			nearbyDolls := s.countNearbyDolls(monster.Position, monster.UnitID)
+			if nearbyDolls > 0 {
+				// Use max distance for dolls to reduce risk, but keep within Nova range
+				// Nova radius is 8, so max safe distance is around 9-10
+				novaMin = NovaMaxDistance
+				novaMax = NovaMaxDistance + 1
+			}
 		}
 
 		novaOpts := []step.AttackOption{

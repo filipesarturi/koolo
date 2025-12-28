@@ -583,7 +583,11 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				if ctx.CharacterCfg.Game.ClearAreaBeforeShrine {
 					shrineClearRadius := 15
 					if enemyFound, _ := IsAnyEnemyAroundPosition(shrine.Position, shrineClearRadius); enemyFound {
-						if err := ClearAreaAroundPosition(shrine.Position, shrineClearRadius); err != nil {
+						var filters []data.MonsterFilter
+						if ctx.CharacterCfg.Game.ExcludeDollsAndSoulsFromChestShrineClear {
+							filters = append(filters, MonsterFilterExcludingDollsAndSouls())
+						}
+						if err := ClearAreaAroundPosition(shrine.Position, shrineClearRadius, filters...); err != nil {
 							ctx.Logger.Warn("Failed to clear area around shrine", slog.Any("error", err))
 						}
 					}
@@ -611,7 +615,11 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				if ctx.CharacterCfg.Game.ClearAreaBeforeChest {
 					chestClearRadius := 15
 					if enemyFound, _ := IsAnyEnemyAroundPosition(chest.Position, chestClearRadius); enemyFound {
-						if err := ClearAreaAroundPosition(chest.Position, chestClearRadius); err != nil {
+						var filters []data.MonsterFilter
+						if ctx.CharacterCfg.Game.ExcludeDollsAndSoulsFromChestShrineClear {
+							filters = append(filters, MonsterFilterExcludingDollsAndSouls())
+						}
+						if err := ClearAreaAroundPosition(chest.Position, chestClearRadius, filters...); err != nil {
 							ctx.Logger.Warn("Failed to clear area around chest", slog.Any("error", err))
 						}
 					}

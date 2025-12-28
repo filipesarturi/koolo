@@ -469,6 +469,12 @@
                         Clear area before opening chests
                     </label>
                 </fieldset>
+                <fieldset class="grid" id="excludeDollsAndSoulsContainer" {{ if and (not .Config.Game.ClearAreaBeforeShrine) (not .Config.Game.ClearAreaBeforeChest) }}style="display: none;"{{ end }}>
+                    <label>
+                        <input type="checkbox" name="excludeDollsAndSoulsFromChestShrineClear" {{ if .Config.Game.ExcludeDollsAndSoulsFromChestShrineClear }}checked{{ end }}/>
+                        Exclude dolls and souls when clearing area before chests/shrines
+                    </label>
+                </fieldset>
                 <fieldset class="grid">
                     <label>
                         Level until (put 0 for no limit)

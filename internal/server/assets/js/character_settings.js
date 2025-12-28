@@ -176,8 +176,11 @@ document.addEventListener('DOMContentLoaded', function () {
     const clearPathDistValue = document.getElementById('clearPathDistValue');
     const interactWithChestsCheckbox = document.getElementById('interactWithChests');
     const clearAreaBeforeChestContainer = document.getElementById('clearAreaBeforeChestContainer');
+    const clearAreaBeforeChestCheckbox = document.querySelector('input[name="clearAreaBeforeChest"]');
     const interactWithShrinesCheckbox = document.getElementById('interactWithShrines');
     const clearAreaBeforeShrineContainer = document.getElementById('clearAreaBeforeShrineContainer');
+    const clearAreaBeforeShrineCheckbox = document.querySelector('input[name="clearAreaBeforeShrine"]');
+    const excludeDollsAndSoulsContainer = document.getElementById('excludeDollsAndSoulsContainer');
 
     const classBuildMapping = {
         amazon: [
@@ -385,6 +388,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 clearAreaBeforeChestContainer.style.display = 'none';
             }
         }
+        toggleExcludeDollsAndSoulsVisibility();
     }
     function toggleClearAreaBeforeShrineVisibility() {
         if (interactWithShrinesCheckbox && clearAreaBeforeShrineContainer) {
@@ -392,6 +396,19 @@ document.addEventListener('DOMContentLoaded', function () {
                 clearAreaBeforeShrineContainer.style.display = 'block';
             } else {
                 clearAreaBeforeShrineContainer.style.display = 'none';
+            }
+        }
+        toggleExcludeDollsAndSoulsVisibility();
+    }
+    function toggleExcludeDollsAndSoulsVisibility() {
+        if (excludeDollsAndSoulsContainer) {
+            const shrineActive = interactWithShrinesCheckbox && interactWithShrinesCheckbox.checked && clearAreaBeforeShrineCheckbox && clearAreaBeforeShrineCheckbox.checked;
+            const chestActive = interactWithChestsCheckbox && interactWithChestsCheckbox.checked && clearAreaBeforeChestCheckbox && clearAreaBeforeChestCheckbox.checked;
+            
+            if (shrineActive || chestActive) {
+                excludeDollsAndSoulsContainer.style.display = 'block';
+            } else {
+                excludeDollsAndSoulsContainer.style.display = 'none';
             }
         }
     }
@@ -453,6 +470,17 @@ document.addEventListener('DOMContentLoaded', function () {
         // Initialize visibility
         toggleClearAreaBeforeShrineVisibility();
     }
+
+    // Set up event listeners for clear area checkboxes to toggle exclude dolls/souls visibility
+    if (clearAreaBeforeChestCheckbox) {
+        clearAreaBeforeChestCheckbox.addEventListener('change', toggleExcludeDollsAndSoulsVisibility);
+    }
+    if (clearAreaBeforeShrineCheckbox) {
+        clearAreaBeforeShrineCheckbox.addEventListener('change', toggleExcludeDollsAndSoulsVisibility);
+    }
+
+    // Initialize exclude dolls/souls visibility
+    toggleExcludeDollsAndSoulsVisibility();
 
     if (clearPathDistInput) {
         clearPathDistInput.addEventListener('input', updateClearPathValue);

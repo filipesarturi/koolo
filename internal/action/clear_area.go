@@ -65,6 +65,43 @@ func SortEnemiesByPriority(enemies *[]data.Monster) {
 	})
 }
 
+// MonsterFilterExcludingDollsAndSouls returns a filter that excludes dangerous dolls and souls
+// Dolls: UndeadStygianDoll, UndeadStygianDoll2, UndeadSoulKiller, UndeadSoulKiller2
+// Souls: BlackSoul, BlackSoul2, BurningSoul, BurningSoul2
+func MonsterFilterExcludingDollsAndSouls() data.MonsterFilter {
+	dangerousNPCs := []npc.ID{
+		npc.UndeadStygianDoll,
+		npc.UndeadStygianDoll2,
+		npc.UndeadSoulKiller,
+		npc.UndeadSoulKiller2,
+		npc.BlackSoul,
+		npc.BlackSoul2,
+		npc.BurningSoul,
+		npc.BurningSoul2,
+	}
+
+	return func(monsters data.Monsters) []data.Monster {
+		var filteredMonsters []data.Monster
+		baseFilter := data.MonsterAnyFilter()
+
+		for _, m := range monsters.Enemies(baseFilter) {
+			isDangerous := false
+			for _, dangerousNPC := range dangerousNPCs {
+				if m.Name == dangerousNPC {
+					isDangerous = true
+					break
+				}
+			}
+
+			if !isDangerous {
+				filteredMonsters = append(filteredMonsters, m)
+			}
+		}
+
+		return filteredMonsters
+	}
+}
+
 func ClearAreaAroundPosition(pos data.Position, radius int, filters ...data.MonsterFilter) error {
 	ctx := context.Get()
 	ctx.SetLastAction("ClearAreaAroundPosition")

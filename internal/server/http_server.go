@@ -1459,6 +1459,7 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		cfg.Game.ClearAreaBeforeShrine = values.Has("clearAreaBeforeShrine")
 		cfg.Game.InteractWithChests = values.Has("interactWithChests")
 		cfg.Game.ClearAreaBeforeChest = values.Has("clearAreaBeforeChest")
+		cfg.Game.ExcludeDollsAndSoulsFromChestShrineClear = values.Has("excludeDollsAndSoulsFromChestShrineClear")
 		if v := values.Get("stopLevelingAt"); v != "" {
 			cfg.Game.StopLevelingAt, _ = strconv.Atoi(v)
 		}
@@ -2215,6 +2216,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Game.ClearAreaBeforeShrine = r.Form.Has("clearAreaBeforeShrine")
 		cfg.Game.InteractWithChests = r.Form.Has("interactWithChests")
 		cfg.Game.ClearAreaBeforeChest = r.Form.Has("clearAreaBeforeChest")
+		cfg.Game.ExcludeDollsAndSoulsFromChestShrineClear = r.Form.Has("excludeDollsAndSoulsFromChestShrineClear")
 		cfg.Game.StopLevelingAt, _ = strconv.Atoi(r.Form.Get("stopLevelingAt"))
 		cfg.Game.IsNonLadderChar = r.Form.Has("isNonLadderChar")
 
