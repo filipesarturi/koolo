@@ -130,19 +130,18 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 				}
 			}
 		}
-		// Still need to buy consumables if forceRefill is true
-		if forceRefill {
-			ctx.Logger.Info("Visiting vendor for consumables...", slog.Bool("forceRefill", forceRefill))
+		// Check if we need to buy consumables (forceRefill or missing keys)
+		_, needsBuyKeys := town.ShouldBuyKeys()
+		if forceRefill || needsBuyKeys {
+			ctx.Logger.Info("Visiting vendor for consumables...", slog.Bool("forceRefill", forceRefill), slog.Bool("needsBuyKeys", needsBuyKeys))
 			vendorNPC := town.GetTownByArea(ctx.Data.PlayerUnit.Area).RefillNPC()
 			if vendorNPC == npc.Drognan {
-				_, needsBuy := town.ShouldBuyKeys()
-				if needsBuy && ctx.Data.PlayerUnit.Class != data.Assassin {
+				if needsBuyKeys && ctx.Data.PlayerUnit.Class != data.Assassin {
 					vendorNPC = npc.Lysander
 				}
 			}
 			if vendorNPC == npc.Ormus {
-				_, needsBuy := town.ShouldBuyKeys()
-				if needsBuy && ctx.Data.PlayerUnit.Class != data.Assassin {
+				if needsBuyKeys && ctx.Data.PlayerUnit.Class != data.Assassin {
 					if err := FindHratliEverywhere(); err != nil {
 						return err
 					}
@@ -264,7 +263,8 @@ func shouldVisitVendor() bool {
 		return false
 	}
 
-	if ctx.BeltManager.ShouldBuyPotions() || town.ShouldBuyTPs() || town.ShouldBuyIDs() {
+	_, needsBuyKeys := town.ShouldBuyKeys()
+	if ctx.BeltManager.ShouldBuyPotions() || town.ShouldBuyTPs() || town.ShouldBuyIDs() || needsBuyKeys {
 		return true
 	}
 

@@ -571,6 +571,11 @@ func getItemPickupPriority(itm data.Item) int {
 		return 6
 	}
 
+	// Priority 7: Keys - lowest priority, only pick up if not at capacity
+	if itm.Name == item.Key {
+		return 7
+	}
+
 	// Default priority for anything else
 	return 5
 }
@@ -636,6 +641,33 @@ func shouldBePickedUp(i data.Item) bool {
 		if ctx.HealthManager.ShouldPickStaminaPot() {
 			return true
 		}
+	}
+
+	// Pick up keys if we have less than the configured KeyCount (low priority pickup)
+	if i.Name == item.Key {
+		keyCount := getKeyCount()
+		if keyCount <= 0 {
+			// If KeyCount is 0 or disabled, don't pick up keys
+			return false
+		}
+
+		// Count current keys in inventory
+		totalKeys := 0
+		for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if itm.Name == item.Key {
+				if qty, found := itm.FindStat(stat.Quantity, 0); found {
+					totalKeys += qty.Value
+				} else {
+					totalKeys++ // If no quantity stat, assume stack of 1
+				}
+			}
+		}
+
+		// Only pick up keys if we have less than the configured amount
+		if totalKeys < keyCount {
+			return true
+		}
+		return false
 	}
 
 	// If total gold is below the minimum threshold, pick up magic and better items for selling.

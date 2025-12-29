@@ -6,10 +6,14 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
+	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/town"
+	"github.com/hectorgimenez/koolo/internal/ui"
+	"github.com/hectorgimenez/koolo/internal/utils"
 	"github.com/lxn/win"
 )
 
@@ -33,6 +37,34 @@ func IsDropProtected(i data.Item) bool {
 	// Always keep the cube so the bot can continue farming afterward.
 	if i.Name == "HoradricCube" {
 		return true
+	}
+
+	// Protect keys based on KeyCount configuration
+	if i.Name == item.Key {
+		keyCount := getKeyCount()
+		if keyCount <= 0 {
+			// If KeyCount is 0 or disabled, never drop keys
+			return true
+		}
+
+		// Count current keys in inventory
+		totalKeys := 0
+		if ctx != nil {
+			for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+				if itm.Name == item.Key {
+					if qty, found := itm.FindStat(stat.Quantity, 0); found {
+						totalKeys += qty.Value
+					} else {
+						totalKeys++ // If no quantity stat, assume stack of 1
+					}
+				}
+			}
+		}
+
+		// Only allow dropping keys if we have more than the configured amount
+		if totalKeys <= keyCount {
+			return true // Protect keys if we have at or below the configured amount
+		}
 	}
 
 	if selected {
@@ -104,7 +136,7 @@ func HasGrandCharmRerollCandidate(ctx *context.Status) bool {
 // DropVendorRefill is a Drop-specific vendor helper.
 // - Always interacts with Akara as the vendor.
 // - Sells junk items (and excess keys) via town.SellJunk, respecting optional lockConfig.
-// - Does not buy any consumables (no potions, TP or ID scrolls).
+// - Does not buy potions, TP or ID scrolls, but will buy keys if needed.
 func DropVendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) error {
 	ctx := context.Get()
 	ctx.SetLastAction("DropVendorRefill")
@@ -128,12 +160,15 @@ func DropVendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) erro
 		}
 	}
 
-	// If we are not selling anything and no temporary lock is provided, skip vendor entirely.
-	if !hasJunkToSell {
+	// Check if we need to buy keys
+	_, needsBuyKeys := town.ShouldBuyKeys()
+
+	// If we are not selling anything and don't need to buy keys, skip vendor entirely.
+	if !hasJunkToSell && !needsBuyKeys {
 		return nil
 	}
 
-	ctx.Logger.Info("Drop: Visiting Akara for junk sale...", "forceRefill", forceRefill)
+	ctx.Logger.Info("Drop: Visiting Akara...", "forceRefill", forceRefill, "hasJunkToSell", hasJunkToSell, "needsBuyKeys", needsBuyKeys)
 
 	if err := InteractNPC(npc.Akara); err != nil {
 		return err
@@ -150,9 +185,31 @@ func DropVendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) erro
 		}
 	}
 
-	// Align with existing vendor flow: switch to tab 4 (shared stash area for vendor UI)
+	// Switch to tab 4 (keys are usually in tab 4) and buy keys if needed
 	SwitchVendorTab(4)
 	ctx.RefreshGameData()
+	
+	if needsBuyKeys && ctx.Data.PlayerUnit.Class != data.Assassin {
+		// Buy keys using the same logic as BuyConsumables
+		keyQuantity, _ := town.ShouldBuyKeys()
+		if itm, found := ctx.Data.Inventory.Find(item.Key, item.LocationVendor); found {
+			ctx.Logger.Debug("Drop: Vendor with keys detected, provisioning...")
+			keyCount := getKeyCount()
+			qtyVendor, _ := itm.FindStat(stat.Quantity, 0)
+			if (qtyVendor.Value > 0) && keyCount > 0 && (keyQuantity < keyCount) {
+				// Use buyFullStack logic: for keys, Shift+Right Click fills the stack
+				// If 0 keys, need two clicks; if >0 keys, one click fills
+				screenPos := ui.GetScreenCoordsForItem(itm)
+				ctx.HID.ClickWithModifier(game.RightButton, screenPos.X, screenPos.Y, game.ShiftKey)
+				utils.PingSleep(utils.Light, 200)
+				if keyQuantity == 0 {
+					// If 0 keys, first click buys 1, second click fills the stack
+					ctx.HID.ClickWithModifier(game.RightButton, screenPos.X, screenPos.Y, game.ShiftKey)
+					utils.PingSleep(utils.Light, 200)
+				}
+			}
+		}
+	}
 
 	return step.CloseAllMenus()
 }
