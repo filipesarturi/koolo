@@ -322,6 +322,90 @@
             Aggressive Positioning (focus packs / skip leftovers)
         </label>
     </fieldset>
+    <fieldset class="grid">
+        <legend>Kill Speed Optimizations</legend>
+        <label>
+            Static Field Threshold (%)
+            <input type="number"
+                   id="novaStaticFieldThreshold"
+                   name="novaStaticFieldThreshold"
+                   min="1"
+                   max="100"
+                   step="1"
+                   value="{{ if .Config.Character.NovaSorceress.StaticFieldThreshold }}{{ .Config.Character.NovaSorceress.StaticFieldThreshold }}{{ else }}50{{ end }}">
+        </label>
+        <label>
+            Static Field Pack Threshold
+            <input type="number"
+                   id="novaStaticFieldPackThreshold"
+                   name="novaStaticFieldPackThreshold"
+                   min="1"
+                   max="20"
+                   step="1"
+                   value="{{ if .Config.Character.NovaSorceress.StaticFieldPackThreshold }}{{ .Config.Character.NovaSorceress.StaticFieldPackThreshold }}{{ else }}7{{ end }}">
+        </label>
+        <label>
+            <input type="checkbox"
+                   id="novaEnableMicroAdjustments"
+                   name="novaEnableMicroAdjustments"
+                   {{ if .Config.Character.NovaSorceress.EnableMicroAdjustments }}checked{{ end }}/>
+            Enable Micro Adjustments
+        </label>
+        <label>
+            Micro Adjustment Cooldown (ms)
+            <input type="number"
+                   id="novaMicroAdjustmentCooldown"
+                   name="novaMicroAdjustmentCooldown"
+                   min="100"
+                   max="1000"
+                   step="50"
+                   value="{{ if .Config.Character.NovaSorceress.MicroAdjustmentCooldown }}{{ .Config.Character.NovaSorceress.MicroAdjustmentCooldown }}{{ else }}300{{ end }}">
+        </label>
+        <label>
+            Micro Adjustment Min Hits Gain
+            <input type="number"
+                   id="novaMicroAdjustmentMinHitsGain"
+                   name="novaMicroAdjustmentMinHitsGain"
+                   min="1"
+                   max="10"
+                   step="1"
+                   value="{{ if .Config.Character.NovaSorceress.MicroAdjustmentMinHitsGain }}{{ .Config.Character.NovaSorceress.MicroAdjustmentMinHitsGain }}{{ else }}1{{ end }}">
+        </label>
+        <label>
+            Micro Adjustment Max Distance (tiles)
+            <input type="number"
+                   id="novaMicroAdjustmentMaxDistance"
+                   name="novaMicroAdjustmentMaxDistance"
+                   min="2"
+                   max="8"
+                   step="1"
+                   value="{{ if .Config.Character.NovaSorceress.MicroAdjustmentMaxDistance }}{{ .Config.Character.NovaSorceress.MicroAdjustmentMaxDistance }}{{ else }}4{{ end }}">
+        </label>
+        <label>
+            <input type="checkbox"
+                   id="novaEarlyPackAbandonment"
+                   name="novaEarlyPackAbandonment"
+                   {{ if .Config.Character.NovaSorceress.EarlyPackAbandonment }}checked{{ end }}/>
+            Early Pack Abandonment
+        </label>
+        <label>
+            Pack Abandonment Threshold (%)
+            <input type="number"
+                   id="novaPackAbandonmentThreshold"
+                   name="novaPackAbandonmentThreshold"
+                   min="10"
+                   max="50"
+                   step="5"
+                   value="{{ if .Config.Character.NovaSorceress.PackAbandonmentThreshold }}{{ .Config.Character.NovaSorceress.PackAbandonmentThreshold }}{{ else }}25{{ end }}">
+        </label>
+        <label>
+            <input type="checkbox"
+                   id="novaDynamicRepositionCooldown"
+                   name="novaDynamicRepositionCooldown"
+                   {{ if .Config.Character.NovaSorceress.DynamicRepositionCooldown }}checked{{ end }}/>
+            Dynamic Reposition Cooldown
+        </label>
+    </fieldset>
 </div>
                 <div class="blizzard-sorceress-options" style="display: none;">
                     <fieldset class="grid">

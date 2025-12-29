@@ -596,6 +596,13 @@ func (s NovaSorceress) KillMonsterSequence(
 	attackedThisEngagement := false
 	lastRepositionAt := time.Time{}
 
+	// Track pack for early abandonment
+	var currentPackAnchor data.Position
+	var originalPackSize int = 0
+
+	// Micro-adjustment tracking
+	lastMicroAdjustmentAt := time.Time{}
+
 	// Track blacklisted dolls to avoid infinite loops
 	dollBlacklist := make(map[data.UnitID]bool)
 	maxDollSkipAttempts := 5
@@ -702,6 +709,17 @@ func (s NovaSorceress) KillMonsterSequence(
 				repositionCount = 0
 				attackedThisEngagement = false
 				lastRepositionAt = time.Time{}
+				// Track new pack for abandonment logic
+				if ev.anchorPos.X != 0 || ev.anchorPos.Y != 0 {
+					currentPackAnchor = ev.anchorPos
+					// Count original pack size
+					enemies := ctx.Data.Monsters.Enemies()
+					seed, ok := pickDenseSeed(ctx.Data.PlayerUnit.Position, monster.Position, enemies)
+					if ok {
+						pack := buildPack(seed, enemies)
+						originalPackSize = len(pack)
+					}
+				}
 			}
 
 			if ev.ok && !attackedThisEngagement {
@@ -709,8 +727,20 @@ func (s NovaSorceress) KillMonsterSequence(
 				maxRep := maxRepositionsForPack(ev.packSize)
 
 				if need > 0 && repositionCount < maxRep && ev.currentHits < need {
+					// Dynamic cooldown based on pack size for better kill speed
+					repositionCooldown := 650 * time.Millisecond // Default
+					if ctx.CharacterCfg.Character.NovaSorceress.DynamicRepositionCooldown {
+						if ev.packSize >= 10 {
+							repositionCooldown = 400 * time.Millisecond // Faster in large packs
+						} else if ev.packSize >= 7 {
+							repositionCooldown = 650 * time.Millisecond // Standard
+						} else {
+							repositionCooldown = 800 * time.Millisecond // Slower in small packs
+						}
+					}
+
 					// Cooldown prevents wall-fail spam.
-					if lastRepositionAt.IsZero() || time.Since(lastRepositionAt) > 650*time.Millisecond {
+					if lastRepositionAt.IsZero() || time.Since(lastRepositionAt) > repositionCooldown {
 						gain := ev.bestHits - ev.currentHits
 
 						// Big packs: demand meaningful improvement.
@@ -750,18 +780,55 @@ func (s NovaSorceress) KillMonsterSequence(
 					}
 				}
 			}
+		} else {
+			// Even without aggressive positioning, track pack for abandonment
+			if currentPackAnchor.X == 0 && currentPackAnchor.Y == 0 {
+				enemies := ctx.Data.Monsters.Enemies()
+				seed, ok := pickDenseSeed(ctx.Data.PlayerUnit.Position, monster.Position, enemies)
+				if ok {
+					pack := buildPack(seed, enemies)
+					anchor := chooseAnchorForPack(monster, pack, seed)
+					currentPackAnchor = anchor
+					originalPackSize = len(pack)
+				}
+			}
+		}
+
+		// Early pack abandonment: check if we should abandon this pack
+		if originalPackSize > 0 && s.shouldAbandonPack(currentPackAnchor, originalPackSize) {
+			// Reset pack tracking and find new target
+			currentPackAnchor = data.Position{}
+			originalPackSize = 0
+			lastEngKey = 0
+			continue
 		}
 
 		// Static Field first if needed.
-		if !staticFieldCast && s.shouldCastStaticField(monster) {
-			staticOpts := []step.AttackOption{
-				step.RangedDistance(StaticMinDistance, StaticMaxDistance),
+		// Check both individual threshold and pack-based threshold
+		if !staticFieldCast {
+			shouldCast := s.shouldCastStaticField(monster)
+			
+			// Also check pack-based threshold for large packs
+			if !shouldCast {
+				playerPos := ctx.Data.PlayerUnit.Position
+				enemies := ctx.Data.Monsters.Enemies()
+				seed, ok := pickDenseSeed(playerPos, monster.Position, enemies)
+				if ok {
+					pack := buildPack(seed, enemies)
+					shouldCast = s.shouldCastStaticFieldOnPack(monster, pack)
+				}
 			}
 
-			if err := step.SecondaryAttack(skill.StaticField, monster.UnitID, 1, staticOpts...); err == nil {
-				staticFieldCast = true
-				attackedThisEngagement = true
-				continue
+			if shouldCast {
+				staticOpts := []step.AttackOption{
+					step.RangedDistance(StaticMinDistance, StaticMaxDistance),
+				}
+
+				if err := step.SecondaryAttack(skill.StaticField, monster.UnitID, 1, staticOpts...); err == nil {
+					staticFieldCast = true
+					attackedThisEngagement = true
+					continue
+				}
 			}
 		}
 
@@ -798,6 +865,41 @@ func (s NovaSorceress) KillMonsterSequence(
 			attackedThisEngagement = true
 		}
 
+		// Micro-adjustments: evaluate and adjust position during combat
+		if ctx.CharacterCfg.Character.NovaSorceress.EnableMicroAdjustments {
+			cooldown := time.Duration(ctx.CharacterCfg.Character.NovaSorceress.MicroAdjustmentCooldown) * time.Millisecond
+			if cooldown == 0 {
+				cooldown = 300 * time.Millisecond // Default: 300ms
+			}
+
+			// Check if cooldown has passed
+			if lastMicroAdjustmentAt.IsZero() || time.Since(lastMicroAdjustmentAt) >= cooldown {
+				// Build current pack for evaluation
+				playerPos := ctx.Data.PlayerUnit.Position
+				enemies := ctx.Data.Monsters.Enemies()
+				seed, ok := pickDenseSeed(playerPos, monster.Position, enemies)
+				if ok {
+					pack := buildPack(seed, enemies)
+					// Only micro-adjust if pack is still substantial (not almost dead)
+					if len(pack) >= 3 {
+						bestPos, hitsGain, found := s.evalMicroAdjustment(playerPos, pack)
+						if found {
+							// Only move if it's a small adjustment and pack isn't almost dead
+							dist := gridDistance(playerPos, bestPos)
+							if dist <= ctx.CharacterCfg.Character.NovaSorceress.MicroAdjustmentMaxDistance {
+								if err := step.MoveTo(bestPos); err == nil {
+									lastMicroAdjustmentAt = time.Now()
+									s.Logger.Debug("Micro-adjustment applied", 
+										slog.Int("hits_gain", hitsGain),
+										slog.Int("distance", dist))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if completedAttackLoops >= NovaMaxAttacksLoop {
 			completedAttackLoops = 0
 			staticFieldCast = false
@@ -805,13 +907,151 @@ func (s NovaSorceress) KillMonsterSequence(
 	}
 }
 
+// evalMicroAdjustment evaluates nearby positions for micro-adjustments during combat
+// Returns best position and hits gain if adjustment is beneficial
+func (s NovaSorceress) evalMicroAdjustment(currentPos data.Position, pack []data.Monster) (bestPos data.Position, hitsGain int, found bool) {
+	ctx := context.Get()
+	
+	// If micro-adjustments are disabled, return false
+	if !ctx.CharacterCfg.Character.NovaSorceress.EnableMicroAdjustments {
+		return data.Position{}, 0, false
+	}
+
+	maxDistance := ctx.CharacterCfg.Character.NovaSorceress.MicroAdjustmentMaxDistance
+	if maxDistance == 0 {
+		maxDistance = 4 // Default: 4 tiles
+	}
+
+	currentHits := countHitsAt(currentPos, pack)
+	if len(pack) == 0 {
+		return data.Position{}, 0, false
+	}
+
+	// Evaluate positions in a small radius around current position
+	bestHits := currentHits
+	bestPosition := currentPos
+	isWalkable := ctx.Data.AreaData.IsWalkable
+
+	// Check positions in a small ring around current position (2-4 tiles)
+	for radius := 2; radius <= maxDistance; radius++ {
+		for x := currentPos.X - radius; x <= currentPos.X+radius; x++ {
+			for y := currentPos.Y - radius; y <= currentPos.Y+radius; y++ {
+				p := data.Position{X: x, Y: y}
+				dist := gridDistance(currentPos, p)
+				
+				// Only check positions at this radius
+				if dist != radius {
+					continue
+				}
+
+				// Must be walkable
+				if !isWalkable(p) {
+					continue
+				}
+
+				// Count hits at this position
+				hits := countHitsAt(p, pack)
+				if hits > bestHits {
+					bestHits = hits
+					bestPosition = p
+				}
+			}
+		}
+	}
+
+	hitsGain = bestHits - currentHits
+	minGain := ctx.CharacterCfg.Character.NovaSorceress.MicroAdjustmentMinHitsGain
+	if minGain == 0 {
+		minGain = 1 // Default: need at least 1 hit gain
+	}
+
+	if hitsGain >= minGain && bestPosition != currentPos {
+		return bestPosition, hitsGain, true
+	}
+
+	return data.Position{}, 0, false
+}
+
+// shouldAbandonPack checks if the pack should be abandoned based on remaining enemies
+// Returns true if less than threshold% of pack enemies are still alive
+func (s NovaSorceress) shouldAbandonPack(anchorPos data.Position, originalPackSize int) bool {
+	ctx := context.Get()
+	
+	// If early pack abandonment is disabled, never abandon
+	if !ctx.CharacterCfg.Character.NovaSorceress.EarlyPackAbandonment {
+		return false
+	}
+
+	threshold := ctx.CharacterCfg.Character.NovaSorceress.PackAbandonmentThreshold
+	if threshold == 0 {
+		threshold = 25 // Default: abandon when < 25% enemies alive
+	}
+
+	// Count alive enemies in the pack area
+	aliveCount := 0
+	enemies := ctx.Data.Monsters.Enemies()
+	r2 := NovaPackRadius * NovaPackRadius
+
+	for _, m := range enemies {
+		if m.Stats[stat.Life] <= 0 {
+			continue
+		}
+		if squaredDistance(anchorPos, m.Position) <= r2 {
+			aliveCount++
+		}
+	}
+
+	// If original pack size is 0 or very small, don't abandon
+	if originalPackSize < 3 {
+		return false
+	}
+
+	// Calculate percentage of original pack still alive
+	alivePercentage := (float64(aliveCount) / float64(originalPackSize)) * 100
+	return alivePercentage < float64(threshold)
+}
+
 func (s NovaSorceress) shouldCastStaticField(monster data.Monster) bool {
+	ctx := context.Get()
 	maxLife := float64(monster.Stats[stat.MaxLife])
 	if maxLife == 0 {
 		return false
 	}
 	hpPercentage := (float64(monster.Stats[stat.Life]) / maxLife) * 100
-	return hpPercentage > StaticFieldThreshold
+
+	// Use configurable threshold, default to 50 if not set (more aggressive than old 67)
+	threshold := float64(ctx.CharacterCfg.Character.NovaSorceress.StaticFieldThreshold)
+	if threshold == 0 {
+		threshold = 50 // Default to 50% for better kill speed
+	}
+
+	return hpPercentage > threshold
+}
+
+// shouldCastStaticFieldOnPack checks if Static Field should be used based on pack size
+// Returns true if pack has enough enemies even if individually below threshold
+func (s NovaSorceress) shouldCastStaticFieldOnPack(target data.Monster, pack []data.Monster) bool {
+	ctx := context.Get()
+	packThreshold := ctx.CharacterCfg.Character.NovaSorceress.StaticFieldPackThreshold
+	if packThreshold == 0 {
+		packThreshold = 7 // Default: use in packs with 7+ enemies
+	}
+
+	// If pack is large enough, use Static Field even if individual enemies are below threshold
+	if len(pack) >= packThreshold {
+		// Check if at least one enemy in pack is above a lower threshold
+		// This allows Static Field in large packs even if enemies are lower HP
+		aliveCount := 0
+		for _, m := range pack {
+			if m.Stats[stat.Life] > 0 {
+				aliveCount++
+			}
+		}
+		// Use Static Field if pack has enough alive enemies
+		return aliveCount >= packThreshold
+	}
+
+	return false
 }
 
 func (s NovaSorceress) killBossWithStatic(bossID npc.ID, monsterType data.MonsterType) error {

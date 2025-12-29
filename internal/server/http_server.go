@@ -1814,6 +1814,41 @@ func (s *HttpServer) updateClassSpecificConfig(values url.Values, cfg *config.Ch
 	// Nova Sorceress specific options (Extra)
 	if cfg.Character.Class == "nova" {
 		cfg.Character.NovaSorceress.AggressiveNovaPositioning = values.Has("aggressiveNovaPositioning")
+		
+		// Kill speed optimizations
+		if staticFieldThreshold := values.Get("novaStaticFieldThreshold"); staticFieldThreshold != "" {
+			if val, err := strconv.Atoi(staticFieldThreshold); err == nil && val >= 1 && val <= 100 {
+				cfg.Character.NovaSorceress.StaticFieldThreshold = val
+			}
+		}
+		if staticFieldPackThreshold := values.Get("novaStaticFieldPackThreshold"); staticFieldPackThreshold != "" {
+			if val, err := strconv.Atoi(staticFieldPackThreshold); err == nil && val >= 1 && val <= 20 {
+				cfg.Character.NovaSorceress.StaticFieldPackThreshold = val
+			}
+		}
+		cfg.Character.NovaSorceress.EnableMicroAdjustments = values.Has("novaEnableMicroAdjustments")
+		if microCooldown := values.Get("novaMicroAdjustmentCooldown"); microCooldown != "" {
+			if val, err := strconv.Atoi(microCooldown); err == nil && val >= 100 && val <= 1000 {
+				cfg.Character.NovaSorceress.MicroAdjustmentCooldown = val
+			}
+		}
+		if microMinHits := values.Get("novaMicroAdjustmentMinHitsGain"); microMinHits != "" {
+			if val, err := strconv.Atoi(microMinHits); err == nil && val >= 1 && val <= 10 {
+				cfg.Character.NovaSorceress.MicroAdjustmentMinHitsGain = val
+			}
+		}
+		if microMaxDist := values.Get("novaMicroAdjustmentMaxDistance"); microMaxDist != "" {
+			if val, err := strconv.Atoi(microMaxDist); err == nil && val >= 2 && val <= 8 {
+				cfg.Character.NovaSorceress.MicroAdjustmentMaxDistance = val
+			}
+		}
+		cfg.Character.NovaSorceress.EarlyPackAbandonment = values.Has("novaEarlyPackAbandonment")
+		if packAbandonThreshold := values.Get("novaPackAbandonmentThreshold"); packAbandonThreshold != "" {
+			if val, err := strconv.Atoi(packAbandonThreshold); err == nil && val >= 10 && val <= 50 {
+				cfg.Character.NovaSorceress.PackAbandonmentThreshold = val
+			}
+		}
+		cfg.Character.NovaSorceress.DynamicRepositionCooldown = values.Has("novaDynamicRepositionCooldown")
 	}
 
 	// Lightning Sorceress specific options
@@ -2188,6 +2223,53 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		// Nova Sorceress specific options
 		if cfg.Character.Class == "nova" {
 			cfg.Character.NovaSorceress.AggressiveNovaPositioning = r.Form.Has("aggressiveNovaPositioning")
+			
+			// Kill speed optimizations
+			if staticFieldThreshold := r.Form.Get("novaStaticFieldThreshold"); staticFieldThreshold != "" {
+				if val, err := strconv.Atoi(staticFieldThreshold); err == nil && val >= 1 && val <= 100 {
+					cfg.Character.NovaSorceress.StaticFieldThreshold = val
+				} else {
+					s.logger.Warn("Invalid Static Field Threshold, using default", slog.Int("default", 50))
+				}
+			}
+			if staticFieldPackThreshold := r.Form.Get("novaStaticFieldPackThreshold"); staticFieldPackThreshold != "" {
+				if val, err := strconv.Atoi(staticFieldPackThreshold); err == nil && val >= 1 && val <= 20 {
+					cfg.Character.NovaSorceress.StaticFieldPackThreshold = val
+				} else {
+					s.logger.Warn("Invalid Static Field Pack Threshold, using default", slog.Int("default", 7))
+				}
+			}
+			cfg.Character.NovaSorceress.EnableMicroAdjustments = r.Form.Has("novaEnableMicroAdjustments")
+			if microCooldown := r.Form.Get("novaMicroAdjustmentCooldown"); microCooldown != "" {
+				if val, err := strconv.Atoi(microCooldown); err == nil && val >= 100 && val <= 1000 {
+					cfg.Character.NovaSorceress.MicroAdjustmentCooldown = val
+				} else {
+					s.logger.Warn("Invalid Micro Adjustment Cooldown, using default", slog.Int("default", 300))
+				}
+			}
+			if microMinHits := r.Form.Get("novaMicroAdjustmentMinHitsGain"); microMinHits != "" {
+				if val, err := strconv.Atoi(microMinHits); err == nil && val >= 1 && val <= 10 {
+					cfg.Character.NovaSorceress.MicroAdjustmentMinHitsGain = val
+				} else {
+					s.logger.Warn("Invalid Micro Adjustment Min Hits Gain, using default", slog.Int("default", 1))
+				}
+			}
+			if microMaxDist := r.Form.Get("novaMicroAdjustmentMaxDistance"); microMaxDist != "" {
+				if val, err := strconv.Atoi(microMaxDist); err == nil && val >= 2 && val <= 8 {
+					cfg.Character.NovaSorceress.MicroAdjustmentMaxDistance = val
+				} else {
+					s.logger.Warn("Invalid Micro Adjustment Max Distance, using default", slog.Int("default", 4))
+				}
+			}
+			cfg.Character.NovaSorceress.EarlyPackAbandonment = r.Form.Has("novaEarlyPackAbandonment")
+			if packAbandonThreshold := r.Form.Get("novaPackAbandonmentThreshold"); packAbandonThreshold != "" {
+				if val, err := strconv.Atoi(packAbandonThreshold); err == nil && val >= 10 && val <= 50 {
+					cfg.Character.NovaSorceress.PackAbandonmentThreshold = val
+				} else {
+					s.logger.Warn("Invalid Pack Abandonment Threshold, using default", slog.Int("default", 25))
+				}
+			}
+			cfg.Character.NovaSorceress.DynamicRepositionCooldown = r.Form.Has("novaDynamicRepositionCooldown")
 		}
 
 		for y, row := range cfg.Inventory.InventoryLock {

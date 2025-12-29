@@ -87,6 +87,16 @@ character:
   nova_sorceress:
     avoid_dolls_in_groups: true # If true, avoids attacking dolls when there are many nearby (prevents deaths from doll explosions)
     max_nearby_dolls: 2 # Maximum number of nearby dolls before avoiding attack (only used if avoid_dolls_in_groups is true)
+    # Kill speed optimizations
+    static_field_threshold: 50 # HP percentage threshold for Static Field (default: 50, more aggressive than old 67)
+    static_field_pack_threshold: 7 # Use Static Field in packs with N+ enemies even below normal threshold (default: 7)
+    enable_micro_adjustments: true # Enable micro position adjustments during combat for better hit coverage
+    micro_adjustment_cooldown: 300 # Cooldown between micro-adjustments in milliseconds (default: 300)
+    micro_adjustment_min_hits_gain: 1 # Minimum hits gain to justify micro-adjustment (default: 1)
+    micro_adjustment_max_distance: 4 # Maximum distance for micro-adjustments in tiles (default: 4)
+    early_pack_abandonment: true # Abandon packs when few enemies remain to find new targets faster
+    pack_abandonment_threshold: 25 # Percentage of alive enemies to abandon pack (default: 25%)
+    dynamic_reposition_cooldown: true # Use dynamic cooldowns based on pack size (faster in large packs)
 
 game:
   minGoldPickupThreshold: 500000 # If total gold amount is less than this, bot will pick up and sell magic+ items

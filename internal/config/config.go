@@ -227,6 +227,17 @@ type CharacterCfg struct {
 			// MaxNearbyDolls: maximum number of nearby dolls before avoiding attack (default: 2)
 			AvoidDollsInGroups bool `yaml:"avoid_dolls_in_groups"`
 			MaxNearbyDolls     int  `yaml:"max_nearby_dolls"`
+
+			// Kill speed optimizations
+			StaticFieldThreshold      int  `yaml:"static_field_threshold"`       // HP percentage threshold for Static Field (default: 50)
+			StaticFieldPackThreshold  int  `yaml:"static_field_pack_threshold"`   // Use Static Field in packs with N+ enemies (default: 7)
+			EnableMicroAdjustments    bool `yaml:"enable_micro_adjustments"`      // Enable micro position adjustments during combat
+			MicroAdjustmentCooldown   int  `yaml:"micro_adjustment_cooldown"`     // Cooldown between micro-adjustments in ms (default: 300)
+			MicroAdjustmentMinHitsGain int  `yaml:"micro_adjustment_min_hits_gain"` // Minimum hits gain to justify micro-adjustment (default: 1)
+			MicroAdjustmentMaxDistance int  `yaml:"micro_adjustment_max_distance"` // Maximum distance for micro-adjustments in tiles (default: 4)
+			EarlyPackAbandonment       bool `yaml:"early_pack_abandonment"`       // Abandon packs when few enemies remain
+			PackAbandonmentThreshold   int  `yaml:"pack_abandonment_threshold"`   // Percentage of alive enemies to abandon pack (default: 25)
+			DynamicRepositionCooldown  bool `yaml:"dynamic_reposition_cooldown"`   // Use dynamic cooldowns based on pack size
 		} `yaml:"nova_sorceress"`
 		LightningSorceress struct {
 		} `yaml:"lightning_sorceress"`
