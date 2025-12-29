@@ -135,7 +135,10 @@ func Buff() {
 	}
 
 	// --- CTA buffs ---
-	ctaBuffsApplied := buffCTA()
+	// Check if we need to use swap for class buffs
+	useSwapForBuffs := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseSwapForBuffs
+	// If useSwapForBuffs is active, don't swap back after CTA, we'll use CTA for class buffs
+	ctaBuffsApplied := buffCTA(!useSwapForBuffs)
 
 	// --- Post-CTA class buffs (with optional weapon swap) ---
 
@@ -151,18 +154,26 @@ func Buff() {
 	}
 
 	if len(postKeys) > 0 {
-		// Read our new toggle from config:
-		useSwapForBuffs := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseSwapForBuffs
 		swappedForBuffs := false
 
 		// Optionally swap to offhand (CTA / buff weapon) before class buffs.
+		// Only swap if useSwapForBuffs is active AND we're not already on CTA
 		if useSwapForBuffs {
-			ctx.Logger.Debug("Using weapon swap for class buff skills")
-			if err := step.SwapToCTA(); err != nil {
-				ctx.Logger.Warn("Failed to swap to offhand for buffs, using main weapon", "error", err)
+			// Check if we're already on CTA (buffCTA might have left us there)
+			ctx.RefreshGameData()
+			_, alreadyOnCTA := ctx.Data.PlayerUnit.Skills[skill.BattleOrders]
+			if !alreadyOnCTA {
+				ctx.Logger.Debug("Using weapon swap for class buff skills")
+				if err := step.SwapToCTA(); err != nil {
+					ctx.Logger.Warn("Failed to swap to offhand for buffs, using main weapon", "error", err)
+				} else {
+					swappedForBuffs = true
+					utils.PingSleep(utils.Light, 400)
+				}
 			} else {
+				// We're already on CTA from buffCTA, no need to swap
 				swappedForBuffs = true
-				utils.PingSleep(utils.Light, 400)
+				ctx.Logger.Debug("Already on CTA from buffCTA, skipping swap for class buffs")
 			}
 		}
 
@@ -265,10 +276,10 @@ func IsRebuffRequired() bool {
 	return false
 }
 
-// buffCTA handles the CTA weapon set: swap, cast BC/BO, swap back.
-// This is kept exactly as in the original implementation.
+// buffCTA handles the CTA weapon set: swap, cast BC/BO, optionally swap back.
+// If shouldSwapBack is false, leaves the character on CTA weapon set.
 // Returns true if CTA buffs were successfully applied, false otherwise.
-func buffCTA() bool {
+func buffCTA(shouldSwapBack bool) bool {
 	ctx := context.Get()
 	ctx.SetLastAction("buffCTA")
 
@@ -335,11 +346,13 @@ func buffCTA() bool {
 
 	utils.PingSleep(utils.Light, 400)
 
-	// Always try to swap back to main weapon
-	if err := step.SwapToMainWeapon(); err != nil {
-		ctx.Logger.Warn("Failed to swap back to main weapon", "error", err)
-		recordSwapFailure(ctx.Name)
-		return false
+	// Only swap back to main weapon if requested
+	if shouldSwapBack {
+		if err := step.SwapToMainWeapon(); err != nil {
+			ctx.Logger.Warn("Failed to swap back to main weapon", "error", err)
+			recordSwapFailure(ctx.Name)
+			return false
+		}
 	}
 
 	// Clear failure count on success
