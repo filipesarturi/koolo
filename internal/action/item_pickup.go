@@ -448,6 +448,13 @@ outer:
 	}
 }
 
+// HasItemsToPickup checks if there are items on the ground that should be picked up
+// This is useful for continuous monitoring, especially in public games where other players may kill monsters
+func HasItemsToPickup(maxDistance int) bool {
+	items := GetItemsToPickup(maxDistance)
+	return len(items) > 0
+}
+
 func GetItemsToPickup(maxDistance int) []data.Item {
 	ctx := context.Get()
 	ctx.SetLastAction("GetItemsToPickup")

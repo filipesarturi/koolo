@@ -10,6 +10,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action"
 	"github.com/hectorgimenez/koolo/internal/action/step"
@@ -243,9 +244,52 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 					}
 				}
 
-				// Perform item pickup if enabled
-				if b.ctx.CurrentGame.PickupItems {
-					action.ItemPickup(30)
+				// Continuous item pickup check - always verify for drops, especially in public games
+				// where other players may kill monsters before the bot
+				if !b.ctx.Data.PlayerUnit.Area.IsTown() {
+					// Check if there are items to pickup
+					hasItems := action.HasItemsToPickup(30)
+					
+					if b.ctx.CurrentGame.PickupItems {
+						// If PickupItems is enabled, always try pickup (maintains backward compatibility)
+						action.ItemPickup(30)
+					} else if hasItems {
+						// If PickupItems is disabled but there are items on ground,
+						// check if we're in active combat before enabling pickup
+						// This allows picking up drops from other players while avoiding
+						// unnecessary interruptions during intense combat
+						hasEnemiesNearby, _ := action.IsAnyEnemyAroundPlayer(10)
+						
+						// Only enable pickup if there are no nearby enemies or if items are high priority
+						// (runes, uniques, sets) that should be picked up even during combat
+						if !hasEnemiesNearby {
+							// No nearby enemies, safe to pick up items dropped by other players
+							b.ctx.EnableItemPickup()
+							action.ItemPickup(30)
+							b.ctx.DisableItemPickup()
+						} else {
+							// Enemies nearby - check if items are high priority (runes, uniques, sets)
+							items := action.GetItemsToPickup(30)
+							hasHighPriorityItems := false
+							for _, itm := range items {
+								// High priority: runes, uniques, sets
+								if itm.Desc().Type == item.TypeRune ||
+									itm.Quality == item.QualityUnique ||
+									itm.Quality == item.QualitySet ||
+									itm.IsRuneword {
+									hasHighPriorityItems = true
+									break
+								}
+							}
+							
+							// Pick up high priority items even during combat
+							if hasHighPriorityItems {
+								b.ctx.EnableItemPickup()
+								action.ItemPickup(30)
+								b.ctx.DisableItemPickup()
+							}
+						}
+					}
 				}
 				action.BuffIfRequired()
 
