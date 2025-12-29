@@ -152,6 +152,14 @@ func (a Cows) getWirtsLeg() error {
 		return err
 	}
 
+	// Clear Tristram before getting the leg if option is enabled
+	if a.ctx.CharacterCfg.Game.Cows.ClearTristram {
+		a.ctx.Logger.Info("Clearing Tristram before getting Wirt's Leg")
+		if err := a.clearTristram(); err != nil {
+			return err
+		}
+	}
+
 	wirtCorpse, found := a.ctx.Data.Objects.FindOne(object.WirtCorpse)
 	if !found {
 		return errors.New("wirt corpse not found")
@@ -290,4 +298,9 @@ func (a Cows) hasWirtsLeg() bool {
 		item.LocationInventory,
 		item.LocationCube)
 	return found
+}
+
+func (a Cows) clearTristram() error {
+	a.ctx.Logger.Info("Clearing Tristram")
+	return action.ClearCurrentLevel(false, data.MonsterAnyFilter())
 }

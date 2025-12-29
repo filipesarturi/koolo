@@ -29,6 +29,7 @@
 {{ define "cows" }}
     <fieldset>
         <label><input type="checkbox" name="gameCowsOpenChests" {{ if .Config.Game.Cows.OpenChests }}checked{{ end }}> Open chests</label>
+        <label><input type="checkbox" name="gameCowsClearTristram" {{ if .Config.Game.Cows.ClearTristram }}checked{{ end }}> Clear Tristram before getting leg</label>
     </fieldset>
 {{ end }}
 

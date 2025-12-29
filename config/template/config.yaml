@@ -147,6 +147,9 @@ game:
     focusOnElitePacks: false # Will clear only Elite monsters
     clearPortal: true # Kills Rakanishu and makes easier selecting the portal
     onlyFarmRejuvs: false # If set to true, bot will only farm until it has a full belt of rejuvenation potions
+  cows:
+    openChests: false # Will open chests in cow level
+    clearTristram: false # Will clear Tristram before getting Wirt's Leg
   nihlathak:
     clearArea: true
   diablo:

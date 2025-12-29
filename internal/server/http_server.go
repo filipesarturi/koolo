@@ -2330,6 +2330,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		s.applyShoppingFromForm(r.Form, cfg)
 
 		cfg.Game.Cows.OpenChests = r.Form.Has("gameCowsOpenChests")
+		cfg.Game.Cows.ClearTristram = r.Form.Has("gameCowsClearTristram")
 
 		cfg.Game.Pit.MoveThroughBlackMarsh = r.Form.Has("gamePitMoveThroughBlackMarsh")
 		cfg.Game.Pit.OpenChests = r.Form.Has("gamePitOpenChests")
@@ -2697,6 +2698,7 @@ func (s *HttpServer) applyRunDetails(values url.Values, cfg *config.CharacterCfg
 			cfg.Game.Pit.OnlyClearLevel2 = values.Has("gamePitOnlyClearLevel2")
 		case "cows":
 			cfg.Game.Cows.OpenChests = values.Has("gameCowsOpenChests")
+			cfg.Game.Cows.ClearTristram = values.Has("gameCowsClearTristram")
 		case "pindleskin":
 			if raw, ok := values["gamePindleskinSkipOnImmunities[]"]; ok {
 				skips := make([]stat.Resist, 0, len(raw))
