@@ -265,6 +265,7 @@ document.addEventListener('DOMContentLoaded', function () {
             interactWithChests: boolVal('interactWithChests'),
             stopLevelingAt: inputVal('stopLevelingAt'),
             gameMinGoldPickupThreshold: inputVal('gameMinGoldPickupThreshold'),
+            vendorMinGoldToDrop: inputVal('vendorMinGoldToDrop'),
             useCainIdentify: boolVal('useCainIdentify'),
             disableIdentifyTome: boolVal('game.disableIdentifyTome'),
         };
@@ -807,6 +808,7 @@ document.addEventListener('DOMContentLoaded', function () {
         'interactWithChests',
         'stopLevelingAt',
         'gameMinGoldPickupThreshold',
+        'vendorMinGoldToDrop',
         'useCainIdentify',
         'game.disableIdentifyTome',
     ]);

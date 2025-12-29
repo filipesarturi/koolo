@@ -568,6 +568,10 @@
                         Minimum Gold (will pick up Magic+ to sell for gold if below)
                         <input min="0" type="number" name="gameMinGoldPickupThreshold" placeholder="{{ .Config.Game.MinGoldPickupThreshold }}" value="{{ .Config.Game.MinGoldPickupThreshold }}"/>
                     </label>
+                    <label>
+                        Minimum Gold to Drop (will drop items instead of selling if gold >= this value)
+                        <input min="0" type="number" name="vendorMinGoldToDrop" placeholder="{{ .Config.Vendor.MinGoldToDrop }}" value="{{ .Config.Vendor.MinGoldToDrop }}"/>
+                    </label>
                 </fieldset>
                 <fieldset class="grid">
                     <label>

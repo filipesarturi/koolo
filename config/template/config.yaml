@@ -262,3 +262,6 @@ backtotown:
   noHpPotions: true
   noMpPotions: false
   mercDied: true
+
+vendor:
+  minGoldToDrop: 1000000 # If total gold amount is greater than or equal to this, bot will drop items instead of selling them

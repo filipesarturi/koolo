@@ -1452,6 +1452,9 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		if v := values.Get("gameMinGoldPickupThreshold"); v != "" {
 			cfg.Game.MinGoldPickupThreshold, _ = strconv.Atoi(v)
 		}
+		if v := values.Get("vendorMinGoldToDrop"); v != "" {
+			cfg.Vendor.MinGoldToDrop, _ = strconv.Atoi(v)
+		}
 		cfg.UseCentralizedPickit = values.Has("useCentralizedPickit")
 		cfg.Game.UseCainIdentify = values.Has("useCainIdentify")
 		cfg.Game.DisableIdentifyTome = values.Get("game.disableIdentifyTome") == "on"
@@ -2291,6 +2294,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		// Game
 		cfg.Game.CreateLobbyGames = r.Form.Has("createLobbyGames")
 		cfg.Game.MinGoldPickupThreshold, _ = strconv.Atoi(r.Form.Get("gameMinGoldPickupThreshold"))
+		cfg.Vendor.MinGoldToDrop, _ = strconv.Atoi(r.Form.Get("vendorMinGoldToDrop"))
 		cfg.UseCentralizedPickit = r.Form.Has("useCentralizedPickit")
 		cfg.Game.UseCainIdentify = r.Form.Has("useCainIdentify")
 		cfg.Game.DisableIdentifyTome = r.PostFormValue("game.disableIdentifyTome") == "on"

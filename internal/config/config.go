@@ -468,7 +468,10 @@ type CharacterCfg struct {
 		EquipmentBroken bool `yaml:"equipmentBroken"`
 	} `yaml:"backtotown"`
 	Shopping ShoppingConfig `yaml:"shopping"`
-	Runtime  struct {
+	Vendor   struct {
+		MinGoldToDrop int `yaml:"minGoldToDrop"`
+	} `yaml:"vendor"`
+	Runtime struct {
 		Rules     nip.Rules   `yaml:"-"`
 		TierRules []int       `yaml:"-"`
 		Drops     []data.Item `yaml:"-"`

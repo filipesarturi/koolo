@@ -1,6 +1,7 @@
 package town
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/ui"
 	"github.com/hectorgimenez/koolo/internal/utils"
+	"github.com/lxn/win"
 )
 
 var questItems = []item.Name{
@@ -285,10 +287,114 @@ func SellJunk(lockConfig ...[][]int) {
 	}
 	// --- END OPTIMIZED LOGIC ---
 
-	// Existing logic to sell other junk items, now with lockConfig support
-	for _, i := range ItemsToBeSold(lockConfig...) {
-		SellItem(i)
+	// Check if we should drop items instead of selling based on gold threshold
+	currentGold := ctx.Data.PlayerUnit.TotalPlayerGold()
+	minGoldToDrop := ctx.CharacterCfg.Vendor.MinGoldToDrop
+	shouldDrop := minGoldToDrop > 0 && currentGold >= minGoldToDrop
+
+	if shouldDrop {
+		// Ensure we're in town before dropping items
+		if !ctx.Data.PlayerUnit.Area.IsTown() {
+			ctx.Logger.Warn("Cannot drop items outside of town, selling instead")
+			shouldDrop = false
+		} else {
+			ctx.Logger.Info(fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d), dropping items instead of selling", currentGold, minGoldToDrop))
+		}
 	}
+
+	// Process other junk items - drop or sell based on gold threshold
+	itemsToProcess := ItemsToBeSold(lockConfig...)
+	if shouldDrop {
+		// Drop all items at once, keeping inventory open
+		dropItems(itemsToProcess)
+	} else {
+		// Sell items normally
+		for _, i := range itemsToProcess {
+			SellItem(i)
+		}
+	}
+}
+
+// closeAllMenus closes all open menus by pressing ESC
+func closeAllMenus() error {
+	ctx := context.Get()
+	attempts := 0
+	for ctx.Data.OpenMenus.IsMenuOpen() {
+		ctx.PauseIfNotPriority()
+		ctx.RefreshGameData()
+		if attempts > 10 {
+			return errors.New("failed closing game menu")
+		}
+		ctx.HID.PressKey(win.VK_ESCAPE)
+		utils.Sleep(200)
+		attempts++
+	}
+	return nil
+}
+
+// dropItems handles dropping multiple items, keeping inventory open during the process
+func dropItems(items []data.Item) {
+	if len(items) == 0 {
+		return
+	}
+
+	ctx := context.Get()
+	ctx.SetLastAction("dropItems")
+
+	// Close any open menus first
+	_ = closeAllMenus()
+	utils.PingSleep(utils.Medium, 170) // Medium operation: Wait for menus to close
+
+	// Open inventory once
+	ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+	utils.PingSleep(utils.Medium, 300) // Medium operation: Wait for inventory to open
+
+	// Refresh to get updated item positions
+	ctx.RefreshGameData()
+
+	// Drop all items while keeping inventory open
+	for _, i := range items {
+		// Refresh item data to get current position (items may shift after previous drops)
+		ctx.RefreshGameData()
+		var currentItem data.Item
+		var found bool
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == i.UnitID {
+				currentItem = it
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			ctx.Logger.Debug(fmt.Sprintf("Item %s (UnitID: %d) not found in inventory, skipping", i.Name, i.UnitID))
+			continue
+		}
+
+		screenPos := ui.GetScreenCoordsForItem(currentItem)
+		ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+		utils.PingSleep(utils.Medium, 100) // Medium operation: Position pointer on item
+		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+		utils.PingSleep(utils.Medium, 200) // Medium operation: Wait for item to drop
+
+		// Verify item was dropped
+		ctx.RefreshGameData()
+		stillInInventory := false
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == i.UnitID {
+				stillInInventory = true
+				ctx.Logger.Warn(fmt.Sprintf("Failed to drop item %s (UnitID: %d), still in inventory. Inventory might be full or area restricted.", i.Name, i.UnitID))
+				break
+			}
+		}
+		if !stillInInventory {
+			ctx.Logger.Debug(fmt.Sprintf("Successfully dropped item %s (UnitID: %d).", i.Name, i.UnitID))
+		}
+	}
+
+	// Close inventory after dropping all items
+	_ = closeAllMenus()
+	utils.PingSleep(utils.Medium, 170) // Medium operation: Clean up UI
 }
 
 // SellItem sells a single item by Control-Clicking it.
