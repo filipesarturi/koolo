@@ -109,9 +109,10 @@ func BuyConsumables(forceRefill bool) {
 		if itm, found := ctx.Data.Inventory.Find(item.Key, item.LocationVendor); found {
 			ctx.Logger.Debug("Vendor with keys detected, provisioning...")
 
-			// Only buy if vendor has keys and we have less than 12
+			// Only buy if vendor has keys and we have less than configured KeyCount
+			keyCount := getKeyCount()
 			qtyVendor, _ := itm.FindStat(stat.Quantity, 0)
-			if (qtyVendor.Value > 0) && (keyQuantity < 12) {
+			if (qtyVendor.Value > 0) && keyCount > 0 && (keyQuantity < keyCount) {
 				// Pass keyQuantity to buyFullStack so it knows how many keys we had initially
 				buyFullStack(itm, keyQuantity)
 			}
@@ -163,6 +164,18 @@ func ShouldBuyIDs() bool {
 	return !found || qty.Value < 10
 }
 
+// getKeyCount returns the configured KeyCount, or 12 as default if not defined
+// Returns 0 if explicitly disabled (KeyCount set to 0)
+func getKeyCount() int {
+	ctx := context.Get()
+	if ctx.CharacterCfg.Inventory.KeyCount == nil {
+		// Not defined, use default of 12
+		return 12
+	}
+	// If explicitly set to 0, it's disabled
+	return *ctx.CharacterCfg.Inventory.KeyCount
+}
+
 func ShouldBuyKeys() (int, bool) {
 	// Re-calculating total keys each time ShouldBuyKeys is called for accuracy
 	ctx := context.Get()
@@ -175,12 +188,18 @@ func ShouldBuyKeys() (int, bool) {
 		}
 	}
 
+	keyCount := getKeyCount()
+	if keyCount <= 0 {
+		// If KeyCount is 0 (explicitly disabled), don't buy keys automatically
+		return totalKeys, false
+	}
+
 	if totalKeys == 0 {
 		return 0, true // No keys found, so we should buy
 	}
 
-	// We only need to buy if we have less than 12 keys.
-	return totalKeys, totalKeys < 12
+	// We only need to buy if we have less than the configured KeyCount
+	return totalKeys, totalKeys < keyCount
 }
 
 func SellJunk(lockConfig ...[][]int) {

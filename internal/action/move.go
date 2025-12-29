@@ -611,6 +611,14 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 
 			// Interact if within Telekinesis range OR if we've reached normal interaction distance
 			if (canUseTKForChest && chestDistance <= telekinesisRange) || chestDistance <= finishMoveDist {
+				// Check if we have keys before attempting to open locked chests
+				if !hasKeysInInventory() {
+					ctx.Logger.Debug("Skipping chest - no keys in inventory", slog.Any("chest_id", chest.ID))
+					blacklistedInteractions[chest.ID] = true
+					chest = data.Object{}
+					continue
+				}
+
 				// Clear enemies around the chest before opening if enabled
 				if ctx.CharacterCfg.Game.ClearAreaBeforeChest {
 					chestClearRadius := 15

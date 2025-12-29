@@ -5,6 +5,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -140,4 +141,35 @@ func DrinkAllPotionsInInventory() {
 	}
 
 	step.CloseAllMenus()
+}
+
+// hasKeysInInventory checks if there are any keys in the inventory
+// Returns true immediately when the first key is found, without iterating through the entire inventory
+func hasKeysInInventory() bool {
+	ctx := context.Get()
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name == item.Key {
+			if qty, found := itm.FindStat(stat.Quantity, 0); found {
+				if qty.Value > 0 {
+					return true // Return immediately when keys are found
+				}
+			} else {
+				// If no quantity stat, assume it's a key (stack of 1)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// getKeyCount returns the configured KeyCount, or 12 as default if not defined
+// Returns 0 if explicitly disabled (KeyCount set to 0)
+func getKeyCount() int {
+	ctx := context.Get()
+	if ctx.CharacterCfg.Inventory.KeyCount == nil {
+		// Not defined, use default of 12
+		return 12
+	}
+	// If explicitly set to 0, it's disabled
+	return *ctx.CharacterCfg.Inventory.KeyCount
 }

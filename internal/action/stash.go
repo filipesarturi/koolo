@@ -12,6 +12,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -267,9 +268,37 @@ func shouldStashIt(i data.Item, firstRun bool) (bool, bool, string, string) {
 		return false, false, "", "" // Explicitly do NOT stash the Horadric Staff
 	}
 
-	if i.Name == "TomeOfTownPortal" || i.Name == "TomeOfIdentify" || i.Name == "Key" || i.Name == "WirtsLeg" {
+	if i.Name == "TomeOfTownPortal" || i.Name == "TomeOfIdentify" || i.Name == "WirtsLeg" {
 		fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (Quest/Special item exclusion).\n", i.Name)
 		return false, false, "", ""
+	}
+
+	// Handle keys based on KeyCount configuration
+	if i.Name == "Key" {
+		keyCount := getKeyCount()
+		if keyCount <= 0 {
+			// If KeyCount is 0 or disabled, never stash keys
+			fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (KeyCount disabled).\n", i.Name)
+			return false, false, "", ""
+		}
+
+		// Count current keys in inventory
+		totalKeys := 0
+		for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if itm.Name == item.Key {
+				if qty, found := itm.FindStat(stat.Quantity, 0); found {
+					totalKeys += qty.Value
+				} else {
+					totalKeys++ // If no quantity stat, assume stack of 1
+				}
+			}
+		}
+
+		// Only stash keys if we have more than the configured amount
+		if totalKeys <= keyCount {
+			fmt.Printf("DEBUG: PREVENTING stash for '%s' (only %d keys, need to keep %d).\n", i.Name, totalKeys, keyCount)
+			return false, false, "", ""
+		}
 	}
 
 	if _, isLevelingChar := ctx.Char.(context.LevelingCharacter); isLevelingChar && i.IsFromQuest() && i.Name != "HoradricCube" || i.Name == "HoradricStaff" {

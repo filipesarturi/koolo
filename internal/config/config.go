@@ -170,6 +170,7 @@ type CharacterCfg struct {
 		HealingPotionCount int         `yaml:"healingPotionCount"`
 		ManaPotionCount    int         `yaml:"manaPotionCount"`
 		RejuvPotionCount   int         `yaml:"rejuvPotionCount"`
+		KeyCount           *int        `yaml:"keyCount"`
 	} `yaml:"inventory"`
 	Character struct {
 		Class                        string `yaml:"class"`

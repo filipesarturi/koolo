@@ -62,6 +62,12 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 			if r.IsInside(o.Position) {
 				// Interact with chests if openChests is true
 				if openChests && o.IsChest() && o.Selectable {
+					// Check if we have keys before attempting to open locked chests
+					if !hasKeysInInventory() {
+						ctx.Logger.Debug("Skipping chest - no keys in inventory", slog.Any("chest_id", o.ID))
+						continue
+					}
+
 					ctx.Logger.Debug(fmt.Sprintf("Found chest. attempting to interact. Name=%s. ID=%v UnitID=%v Pos=%v,%v Area='%s' InteractType=%v", o.Desc().Name, o.Name, o.ID, o.Position.X, o.Position.Y, ctx.Data.PlayerUnit.Area.Area().Name, o.InteractType))
 
 					// Check if we can use Telekinesis from current position

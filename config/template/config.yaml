@@ -63,6 +63,7 @@ inventory:
   healingPotionCount: 0 # Number of healing potions to keep in inventory
   manaPotionCount: 0 # Number of mana potions to keep in inventory
   rejuvPotionCount: 0 # Number of rejuvenation potions to keep in inventory
+  keyCount: 12 # Number of keys to keep in inventory (default: 12 if not defined, 0 = disabled)
 
 character:
   class: sorceress # Allowed values: sorceress, lightning, hammerdin, foh, dragondin, paladin (leveling only), barb_leveling
