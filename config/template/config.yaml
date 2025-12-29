@@ -265,3 +265,4 @@ backtotown:
 
 vendor:
   minGoldToDrop: 1000000 # If total gold amount is greater than or equal to this, bot will drop items instead of selling them
+  alwaysDropAct: 0 # Act number (1-5) where items should always be dropped instead of sold. 0 = disabled

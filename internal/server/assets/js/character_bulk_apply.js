@@ -266,6 +266,7 @@ document.addEventListener('DOMContentLoaded', function () {
             stopLevelingAt: inputVal('stopLevelingAt'),
             gameMinGoldPickupThreshold: inputVal('gameMinGoldPickupThreshold'),
             vendorMinGoldToDrop: inputVal('vendorMinGoldToDrop'),
+            vendorAlwaysDropAct: inputVal('vendorAlwaysDropAct'),
             useCainIdentify: boolVal('useCainIdentify'),
             disableIdentifyTome: boolVal('game.disableIdentifyTome'),
         };
@@ -809,6 +810,7 @@ document.addEventListener('DOMContentLoaded', function () {
         'stopLevelingAt',
         'gameMinGoldPickupThreshold',
         'vendorMinGoldToDrop',
+        'vendorAlwaysDropAct',
         'useCainIdentify',
         'game.disableIdentifyTome',
     ]);

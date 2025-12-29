@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -287,10 +290,32 @@ func SellJunk(lockConfig ...[][]int) {
 	}
 	// --- END OPTIMIZED LOGIC ---
 
-	// Check if we should drop items instead of selling based on gold threshold
+	// Check if we should drop items instead of selling
 	currentGold := ctx.Data.PlayerUnit.TotalPlayerGold()
 	minGoldToDrop := ctx.CharacterCfg.Vendor.MinGoldToDrop
-	shouldDrop := minGoldToDrop > 0 && currentGold >= minGoldToDrop
+	currentAct := ctx.Data.PlayerUnit.Area.Act()
+	alwaysDropAct := ctx.CharacterCfg.Vendor.AlwaysDropAct
+
+	// Determine if we should drop based on act or gold threshold
+	shouldDrop := false
+	dropNearStash := false
+	dropReason := ""
+
+	// If AlwaysDropAct is configured AND minGoldToDrop threshold is met, always drop in the configured act
+	if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+		shouldDrop = true
+		dropNearStash = true
+		dropReason = fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d) AND AlwaysDropAct is set to Act %d - dropping items near stash in Act %d", currentGold, minGoldToDrop, alwaysDropAct, alwaysDropAct)
+	} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && currentAct == alwaysDropAct {
+		// If AlwaysDropAct is configured and we're already in that act, drop near stash
+		shouldDrop = true
+		dropNearStash = true
+		dropReason = fmt.Sprintf("AlwaysDropAct is set to Act %d - dropping items near stash", alwaysDropAct)
+	} else if minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+		// If only minGoldToDrop threshold is met (and AlwaysDropAct is not configured or we're not in that act)
+		shouldDrop = true
+		dropReason = fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d) - dropping items", currentGold, minGoldToDrop)
+	}
 
 	if shouldDrop {
 		// Ensure we're in town before dropping items
@@ -298,15 +323,20 @@ func SellJunk(lockConfig ...[][]int) {
 			ctx.Logger.Warn("Cannot drop items outside of town, selling instead")
 			shouldDrop = false
 		} else {
-			ctx.Logger.Info(fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d), dropping items instead of selling", currentGold, minGoldToDrop))
+			ctx.Logger.Info(fmt.Sprintf("Processing items: %s", dropReason))
 		}
 	}
 
-	// Process other junk items - drop or sell based on gold threshold
+	// Process other junk items - drop or sell based on configuration
 	itemsToProcess := ItemsToBeSold(lockConfig...)
 	if shouldDrop {
-		// Drop all items at once, keeping inventory open
-		dropItems(itemsToProcess)
+		if dropNearStash {
+			// Drop items near stash in the configured act
+			dropItemsNearStash(itemsToProcess, alwaysDropAct)
+		} else {
+			// Drop all items at once, keeping inventory open
+			dropItems(itemsToProcess)
+		}
 	} else {
 		// Sell items normally
 		for _, i := range itemsToProcess {
@@ -395,6 +425,156 @@ func dropItems(items []data.Item) {
 	// Close inventory after dropping all items
 	_ = closeAllMenus()
 	utils.PingSleep(utils.Medium, 170) // Medium operation: Clean up UI
+}
+
+// getTownAreaByAct returns the town area ID for a given act number
+func getTownAreaByAct(act int) area.ID {
+	switch act {
+	case 1:
+		return area.RogueEncampment
+	case 2:
+		return area.LutGholein
+	case 3:
+		return area.KurastDocks
+	case 4:
+		return area.ThePandemoniumFortress
+	case 5:
+		return area.Harrogath
+	default:
+		return area.RogueEncampment // Default to Act 1
+	}
+}
+
+// dropItemsNearStash drops items on the ground near the stash in the specified act
+func dropItemsNearStash(items []data.Item, targetAct int) {
+	if len(items) == 0 {
+		return
+	}
+
+	ctx := context.Get()
+	ctx.SetLastAction("dropItemsNearStash")
+
+	currentArea := ctx.Data.PlayerUnit.Area
+
+	// Verify we're in the target act's town
+	// Note: VendorRefill should have moved us here already, but double-check
+	if !currentArea.IsTown() || currentArea.Act() != targetAct {
+		ctx.Logger.Warn(fmt.Sprintf("Not in Act %d town (current: %s), dropping items at current position. VendorRefill should have moved us here.", targetAct, currentArea.Area().Name))
+		// Continue to drop at current position as fallback
+	}
+
+	// Find stash position - try to find Bank object first
+	ctx.RefreshGameData()
+	var stashPos data.Position
+	bank, found := ctx.Data.Objects.FindOne(object.Bank)
+	if found {
+		stashPos = bank.Position
+		ctx.Logger.Info(fmt.Sprintf("Found stash at position X:%d Y:%d in Act %d", stashPos.X, stashPos.Y, targetAct))
+		
+		// Move near stash using pathfinder - similar to action.MoveToCoords but without import cycle
+		if ctx.PathFinder != nil {
+			// Move to stash position in a loop until we're close enough (distance <= 6, like in drop.go)
+			maxAttempts := 10
+			targetDistance := 6
+			
+			for attempt := 0; attempt < maxAttempts; attempt++ {
+				ctx.RefreshGameData()
+				currentDistance := ctx.PathFinder.DistanceFromMe(stashPos)
+				
+				if currentDistance <= targetDistance {
+					ctx.Logger.Debug(fmt.Sprintf("Close enough to stash (distance: %d)", currentDistance))
+					break
+				}
+				
+				ctx.Logger.Debug(fmt.Sprintf("Moving to stash (attempt %d/%d, current distance: %d)", attempt+1, maxAttempts, currentDistance))
+				
+				// Get path to stash position
+				path, pathDistance, pathFound := ctx.PathFinder.GetPath(stashPos)
+				if !pathFound || pathDistance == 0 {
+					ctx.Logger.Warn("Could not find path to stash, trying direct click")
+					// Fallback: try direct click
+					screenX, screenY := ctx.PathFinder.GameCoordsToScreenCords(stashPos.X, stashPos.Y)
+					ctx.HID.Click(game.LeftButton, screenX, screenY)
+					utils.PingSleep(utils.Medium, 500)
+					break
+				}
+				
+				// Move through the path - use a reasonable walk duration
+				walkDuration := 2 * time.Second
+				if ctx.Data.CanTeleport() {
+					walkDuration = 500 * time.Millisecond
+				}
+				ctx.PathFinder.MoveThroughPath(path, walkDuration)
+				utils.PingSleep(utils.Medium, 300)
+			}
+			
+			// Final check
+			ctx.RefreshGameData()
+			finalDistance := ctx.PathFinder.DistanceFromMe(stashPos)
+			if finalDistance > targetDistance {
+				ctx.Logger.Warn(fmt.Sprintf("Still far from stash after movement (distance: %d), continuing anyway", finalDistance))
+			} else {
+				ctx.Logger.Debug(fmt.Sprintf("Successfully moved near stash (final distance: %d)", finalDistance))
+			}
+		}
+	} else {
+		ctx.Logger.Debug(fmt.Sprintf("Stash object not found in Act %d, dropping items at current position", targetAct))
+	}
+
+	// Close any open menus
+	_ = closeAllMenus()
+	utils.PingSleep(utils.Medium, 170)
+
+	// Open inventory once
+	ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+	utils.PingSleep(utils.Medium, 300)
+	ctx.RefreshGameData()
+
+	// Drop all items while keeping inventory open
+	for _, i := range items {
+		// Refresh item data to get current position (items may shift after previous drops)
+		ctx.RefreshGameData()
+		var currentItem data.Item
+		var found bool
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == i.UnitID {
+				currentItem = it
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			ctx.Logger.Debug(fmt.Sprintf("Item %s (UnitID: %d) not found in inventory, skipping", i.Name, i.UnitID))
+			continue
+		}
+
+		screenPos := ui.GetScreenCoordsForItem(currentItem)
+		ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+		utils.PingSleep(utils.Medium, 100)
+		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+		utils.PingSleep(utils.Medium, 200)
+
+		// Verify item was dropped
+		ctx.RefreshGameData()
+		stillInInventory := false
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == i.UnitID {
+				stillInInventory = true
+				ctx.Logger.Warn(fmt.Sprintf("Failed to drop item %s (UnitID: %d), still in inventory", i.Name, i.UnitID))
+				break
+			}
+		}
+		if !stillInInventory {
+			ctx.Logger.Debug(fmt.Sprintf("Successfully dropped item %s (UnitID: %d) near stash in Act %d", i.Name, i.UnitID, targetAct))
+		}
+	}
+
+	// Close inventory after dropping all items
+	_ = closeAllMenus()
+	utils.PingSleep(utils.Medium, 170)
+	
+	// Note: Return to original area is handled in VendorRefill after SellJunk completes
 }
 
 // SellItem sells a single item by Control-Clicking it.

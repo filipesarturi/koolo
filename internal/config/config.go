@@ -470,6 +470,7 @@ type CharacterCfg struct {
 	Shopping ShoppingConfig `yaml:"shopping"`
 	Vendor   struct {
 		MinGoldToDrop int `yaml:"minGoldToDrop"`
+		AlwaysDropAct int `yaml:"alwaysDropAct"` // Act number (1-5) where items should always be dropped instead of sold. 0 = disabled
 	} `yaml:"vendor"`
 	Runtime struct {
 		Rules     nip.Rules   `yaml:"-"`

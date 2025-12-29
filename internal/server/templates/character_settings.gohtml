@@ -572,6 +572,10 @@
                         Minimum Gold to Drop (will drop items instead of selling if gold >= this value)
                         <input min="0" type="number" name="vendorMinGoldToDrop" placeholder="{{ .Config.Vendor.MinGoldToDrop }}" value="{{ .Config.Vendor.MinGoldToDrop }}"/>
                     </label>
+                    <label>
+                        Always Drop Act (act number 1-5 where items should always be dropped instead of sold, 0 = disabled)
+                        <input min="0" max="5" type="number" name="vendorAlwaysDropAct" placeholder="{{ .Config.Vendor.AlwaysDropAct }}" value="{{ .Config.Vendor.AlwaysDropAct }}"/>
+                    </label>
                 </fieldset>
                 <fieldset class="grid">
                     <label>

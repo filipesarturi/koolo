@@ -1,9 +1,11 @@
 package action
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
@@ -17,6 +19,24 @@ import (
 	"github.com/lxn/win"
 )
 
+// getTownAreaByAct returns the town area ID for a given act number
+func getTownAreaByAct(act int) area.ID {
+	switch act {
+	case 1:
+		return area.RogueEncampment
+	case 2:
+		return area.LutGholein
+	case 3:
+		return area.KurastDocks
+	case 4:
+		return area.ThePandemoniumFortress
+	case 5:
+		return area.Harrogath
+	default:
+		return area.RogueEncampment // Default to Act 1
+	}
+}
+
 func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err error) {
 	ctx := botCtx.Get()
 	ctx.SetLastAction("VendorRefill")
@@ -28,6 +48,9 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 	}
 	shouldDrop := false
 	hasKeysToSell := false
+	var originalAreaForReturn area.ID
+	needsToMoveToAct := false
+	
 	if sellJunk {
 		// Check for excess keys that need to be sold
 		ctx.RefreshGameData()
@@ -43,7 +66,35 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 
 		currentGold := ctx.Data.PlayerUnit.TotalPlayerGold()
 		minGoldToDrop := ctx.CharacterCfg.Vendor.MinGoldToDrop
-		shouldDrop = minGoldToDrop > 0 && currentGold >= minGoldToDrop && ctx.Data.PlayerUnit.Area.IsTown()
+		currentAct := ctx.Data.PlayerUnit.Area.Act()
+		alwaysDropAct := ctx.CharacterCfg.Vendor.AlwaysDropAct
+
+		// Check if should drop based on act or gold threshold
+		// Priority: If AlwaysDropAct is configured AND minGoldToDrop threshold is met, always drop in configured act
+		if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+			// Need to drop in the configured act - move there if not already there
+			shouldDrop = true
+			if !ctx.Data.PlayerUnit.Area.IsTown() || currentAct != alwaysDropAct {
+				needsToMoveToAct = true
+				originalAreaForReturn = ctx.Data.PlayerUnit.Area
+				targetTownArea := getTownAreaByAct(alwaysDropAct)
+				ctx.Logger.Info(fmt.Sprintf("Moving to Act %d town to drop items near stash (gold threshold reached, current act: %d)", alwaysDropAct, currentAct))
+				if err := WayPoint(targetTownArea); err != nil {
+					ctx.Logger.Warn(fmt.Sprintf("Failed to move to Act %d town, dropping items at current location: %v", alwaysDropAct, err))
+					shouldDrop = false // Can't drop in configured act, so don't drop
+					needsToMoveToAct = false
+					originalAreaForReturn = area.ID(0) // Reset since we're not moving
+				} else {
+					ctx.RefreshGameData()
+				}
+			}
+		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && currentAct == alwaysDropAct {
+			// Already in the configured act, drop near stash
+			shouldDrop = ctx.Data.PlayerUnit.Area.IsTown()
+		} else if minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+			// Only minGoldToDrop threshold is met (AlwaysDropAct not configured or not in that act)
+			shouldDrop = ctx.Data.PlayerUnit.Area.IsTown()
+		}
 		
 		// Check if there are items to process
 		if shouldDrop {
@@ -61,11 +112,23 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 
 	// If dropping items and no keys to sell, process them without visiting vendor
 	if shouldDrop && !hasKeysToSell {
-		ctx.Logger.Info("Dropping items instead of visiting vendor (gold threshold reached, no keys to sell)")
+		ctx.Logger.Info("Dropping items instead of visiting vendor (gold threshold or AlwaysDropAct reached, no keys to sell)")
 		if len(lockConfig) > 0 {
 			town.SellJunk(lockConfig)
 		} else {
 			town.SellJunk()
+		}
+		// Return to original area if we moved to a different act
+		if needsToMoveToAct && originalAreaForReturn != area.ID(0) {
+			ctx.RefreshGameData()
+			if originalAreaForReturn != ctx.Data.PlayerUnit.Area {
+				ctx.Logger.Info(fmt.Sprintf("Returning to original area: %s", originalAreaForReturn.Area().Name))
+				if err := WayPoint(originalAreaForReturn); err != nil {
+					ctx.Logger.Warn(fmt.Sprintf("Failed to return to original area: %v", err))
+				} else {
+					ctx.RefreshGameData()
+				}
+			}
 		}
 		// Still need to buy consumables if forceRefill is true
 		if forceRefill {
