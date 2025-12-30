@@ -31,6 +31,11 @@ func IsPriorityMonster(m data.Monster) bool {
 		npc.MummyGenerator,
 		npc.BaalSubjectMummy,
 		npc.FetishShaman,
+		// Souls are dangerous and should be prioritized
+		npc.BlackSoul,
+		npc.BlackSoul2,
+		npc.BurningSoul,
+		npc.BurningSoul2,
 	}
 
 	for _, priorityMonster := range priorityMonsters {
@@ -63,6 +68,45 @@ func SortEnemiesByPriority(enemies *[]data.Monster) {
 
 		return distanceI < distanceJ
 	})
+}
+
+// FindSoulsInRange finds all souls within the specified radius from the player
+// Exported function for use in other packages
+func FindSoulsInRange(radius int) []data.Monster {
+	return findSoulsInRange(radius)
+}
+
+// findSoulsInRange finds all souls within the specified radius from the player
+func findSoulsInRange(radius int) []data.Monster {
+	ctx := context.Get()
+	playerPos := ctx.Data.PlayerUnit.Position
+	soulNPCs := []npc.ID{
+		npc.BlackSoul,
+		npc.BlackSoul2,
+		npc.BurningSoul,
+		npc.BurningSoul2,
+	}
+
+	var souls []data.Monster
+	for _, m := range ctx.Data.Monsters.Enemies() {
+		for _, soulNPC := range soulNPCs {
+			if m.Name == soulNPC && m.Stats[stat.Life] > 0 {
+				distance := pather.DistanceFromPoint(playerPos, m.Position)
+				if distance <= radius {
+					souls = append(souls, m)
+					break
+				}
+			}
+		}
+	}
+
+	return souls
+}
+
+// checkForSoulsInRange checks if there are any souls within the specified radius
+func checkForSoulsInRange(radius int) bool {
+	souls := findSoulsInRange(radius)
+	return len(souls) > 0
 }
 
 // MonsterFilterExcludingDollsAndSouls returns a filter that excludes dangerous dolls and souls
