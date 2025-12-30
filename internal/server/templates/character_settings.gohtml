@@ -942,10 +942,18 @@
                 <label>
                     Game name pattern
                     <input name="companionGameNameTemplate" placeholder="{{ .Config.Companion.GameNameTemplate }}" value="{{ .Config.Companion.GameNameTemplate }}"/>
+                    <small style="display: block; color: #888; margin-top: 4px;">Used when publicGameNames is not set. Example: "game-" will create "game-1", "game-2", etc.</small>
                 </label>
                 <label>
                     Game password (leave blank for public games)
                     <input name="companionGamePassword" placeholder="{{ .Config.Companion.GamePassword }}" value="{{ .Config.Companion.GamePassword }}"/>
+                </label>
+            </fieldset>
+            <fieldset class="grid">
+                <label>
+                    Public game names (comma-separated)
+                    <input name="publicGameNames" placeholder="game1, game2, game3" value="{{ range $index, $name := .Config.Game.PublicGameNames }}{{ if $index }}, {{ end }}{{ $name }}{{ end }}"/>
+                    <small style="display: block; color: #888; margin-top: 4px;">If set, bot will alternate between these names instead of using the pattern above. Leave empty to use pattern + counter.</small>
                 </label>
             </fieldset>
             <fieldset class="grid">

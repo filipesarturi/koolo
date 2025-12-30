@@ -133,6 +133,7 @@ type CharacterOverview struct {
 	NextExp         uint64 // Changed to uint64 - D2R stores XP as unsigned 32-bit, levels 93+ exceed int32 max
 	Difficulty      string
 	Area            string
+	AreaLevel       int
 	Ping            int
 	PlayerCount     int // Current number of players in the game
 	MaxPlayers      int // Maximum players allowed (8 in D2R)

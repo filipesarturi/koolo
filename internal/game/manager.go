@@ -115,7 +115,7 @@ func (gm *Manager) clearGameNameOrPasswordField() {
 	}
 }
 
-func (gm *Manager) CreateLobbyGame(gameCounter int) (string, error) {
+func (gm *Manager) CreateLobbyGame(gameName string) (string, error) {
 
 	// Click "Create game" tab
 	gm.hid.Click(LeftButton, 845, 54)
@@ -137,7 +137,6 @@ func (gm *Manager) CreateLobbyGame(gameCounter int) (string, error) {
 	// Click the game name textbox, delete text and type new game name
 	gm.hid.Click(LeftButton, 1000, 116)
 	gm.clearGameNameOrPasswordField()
-	gameName := cfg.Companion.GameNameTemplate + fmt.Sprintf("%d", gameCounter)
 	for _, ch := range gameName {
 		gm.hid.PressKey(gm.hid.GetASCIICode(fmt.Sprintf("%c", ch)))
 	}
@@ -162,9 +161,9 @@ func (gm *Manager) CreateLobbyGame(gameCounter int) (string, error) {
 
 		panel := gm.gr.GetPanel("DismissableModal")
 		if panel.PanelName != "" && panel.PanelEnabled && panel.PanelVisible {
-			gm.hid.PressKey(win.VK_ESCAPE)
-			utils.Sleep(1000)
-			return gameName, errors.New("error creating game! Got error message")
+			// Return error with modal info - caller will check text and dismiss if needed
+			// Don't dismiss here to allow caller to read the text
+			return gameName, fmt.Errorf("error creating game! Got error message")
 		}
 	}
 

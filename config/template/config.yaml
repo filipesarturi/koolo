@@ -116,6 +116,10 @@ game:
   # terror_zone: will detect current TZ and clear it
   # development: keeps the bot attached for manual play/debugging, skips town routines entirely
   runs: [stony_tomb, pit, arachnid_lair]
+  createLobbyGames: false # If true, bot will create public lobby games instead of private games
+  # publicGameNames: [] # Optional: List of predefined game names to rotate through (e.g., ["game1", "game2", "game3"])
+  #                     # If provided, bot will cycle through these names instead of using gameNameTemplate + counter
+  #                     # If empty, bot will use the gameNameTemplate from companion settings
 
   # Specific runs settings
   countess:

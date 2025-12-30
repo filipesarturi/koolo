@@ -587,6 +587,9 @@ func (s *HttpServer) getStatusData() IndexData {
 				areaStr = fmt.Sprint(data.PlayerUnit.Area)
 			}
 
+			// Calculate area level based on area ID and difficulty
+			areaLevel := calculateAreaLevel(data.PlayerUnit.Area, data.CharacterCfg.Game.Difficulty)
+
 			stats.UI = bot.CharacterOverview{
 				Class:           data.CharacterCfg.Character.Class,
 				Level:           lvl,
@@ -595,6 +598,7 @@ func (s *HttpServer) getStatusData() IndexData {
 				NextExp:         nextExp,
 				Difficulty:      diffStr,
 				Area:            areaStr,
+				AreaLevel:       areaLevel,
 				Ping:            data.Game.Ping,
 				PlayerCount:     len(data.Roster),
 				MaxPlayers:      config.GetLobbyMaxPlayers(),
@@ -609,6 +613,7 @@ func (s *HttpServer) getStatusData() IndexData {
 				ColdResist:      cr,
 				LightningResist: lr,
 				PoisonResist:    pr,
+				GameName:        data.Game.LastGameName,
 			}
 		}
 
@@ -1532,6 +1537,21 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			cfg.Companion.LeaderName = values.Get("companionLeaderName")
 			cfg.Companion.GameNameTemplate = values.Get("companionGameNameTemplate")
 			cfg.Companion.GamePassword = values.Get("companionGamePassword")
+
+			// Public game names
+			publicGameNamesStr := values.Get("publicGameNames")
+			if publicGameNamesStr != "" {
+				names := strings.Split(publicGameNamesStr, ",")
+				cfg.Game.PublicGameNames = make([]string, 0, len(names))
+				for _, name := range names {
+					trimmed := strings.TrimSpace(name)
+					if trimmed != "" {
+						cfg.Game.PublicGameNames = append(cfg.Game.PublicGameNames, trimmed)
+					}
+				}
+			} else {
+				cfg.Game.PublicGameNames = []string{}
+			}
 
 			// Gambling
 			cfg.Gambling.Enabled = values.Has("gamblingEnabled")
@@ -2467,6 +2487,21 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Companion.GameNameTemplate = r.Form.Get("companionGameNameTemplate")
 		cfg.Companion.GamePassword = r.Form.Get("companionGamePassword")
 
+		// Public game names
+		publicGameNamesStr := r.Form.Get("publicGameNames")
+		if publicGameNamesStr != "" {
+			names := strings.Split(publicGameNamesStr, ",")
+			cfg.Game.PublicGameNames = make([]string, 0, len(names))
+			for _, name := range names {
+				trimmed := strings.TrimSpace(name)
+				if trimmed != "" {
+					cfg.Game.PublicGameNames = append(cfg.Game.PublicGameNames, trimmed)
+				}
+			}
+		} else {
+			cfg.Game.PublicGameNames = []string{}
+		}
+
 		// Back to town config
 		cfg.BackToTown.NoHpPotions = r.Form.Has("noHpPotions")
 		cfg.BackToTown.NoMpPotions = r.Form.Has("noMpPotions")
@@ -3084,4 +3119,87 @@ func buildTZGroups() []TZGroup {
 	})
 
 	return result
+}
+
+// calculateAreaLevel calculates the area level based on area ID and difficulty
+// In Diablo 2, area levels follow a pattern based on act and difficulty:
+// - Normal: Base level varies by act and specific area
+// - Nightmare: +37 to normal level
+// - Hell: +67 to normal level
+// Some areas have fixed levels (like level 85 areas in Hell)
+func calculateAreaLevel(areaID area.ID, diff difficulty.Difficulty) int {
+	// Level 85 areas in Hell difficulty
+	level85Areas := []area.ID{
+		area.Mausoleum,
+		area.UndergroundPassageLevel2,
+		area.PitLevel1,
+		area.PitLevel2,
+		area.StonyTombLevel1,
+		area.StonyTombLevel2,
+		area.MaggotLairLevel3,
+		area.AncientTunnels,
+		area.SwampyPitLevel1,
+		area.SwampyPitLevel2,
+		area.SwampyPitLevel3,
+		area.SpiderCave,
+		area.SewersLevel1Act3,
+		area.SewersLevel2Act3,
+		area.DisusedFane,
+		area.RuinedTemple,
+		area.ForgottenReliquary,
+		area.ForgottenTemple,
+		area.RuinedFane,
+		area.DisusedReliquary,
+		area.RiverOfFlame,
+		area.ChaosSanctuary,
+		area.Abaddon,
+		area.PitOfAcheron,
+		area.InfernalPit,
+		area.DrifterCavern,
+		area.IcyCellar,
+		area.TheWorldStoneKeepLevel1,
+		area.TheWorldStoneKeepLevel2,
+		area.TheWorldStoneKeepLevel3,
+		area.ThroneOfDestruction,
+	}
+
+	// Check if it's a level 85 area in Hell
+	if diff == difficulty.Hell {
+		for _, l85Area := range level85Areas {
+			if areaID == l85Area {
+				return 85
+			}
+		}
+	}
+
+	// Get base level by act (approximate values for normal difficulty)
+	act := areaID.Act()
+	baseLevel := 0
+
+	switch act {
+	case 1:
+		baseLevel = 1
+	case 2:
+		baseLevel = 12
+	case 3:
+		baseLevel = 20
+	case 4:
+		baseLevel = 24
+	case 5:
+		baseLevel = 28
+	default:
+		baseLevel = 1
+	}
+
+	// Apply difficulty modifiers
+	switch diff {
+	case difficulty.Normal:
+		return baseLevel
+	case difficulty.Nightmare:
+		return baseLevel + 37
+	case difficulty.Hell:
+		return baseLevel + 67
+	default:
+		return baseLevel
+	}
 }

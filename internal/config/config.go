@@ -304,6 +304,8 @@ type CharacterCfg struct {
 		Runs                   []Run                 `yaml:"runs"`
 		CreateLobbyGames       bool                  `yaml:"createLobbyGames"`
 		PublicGameCounter      int                   `yaml:"-"`
+		PublicGameNames        PublicGameNamesList   `yaml:"publicGameNames"` // List of predefined game names (comma-separated or array)
+		PublicGameNameIndex    int                   `yaml:"-"`              // Current index in the PublicGameNames list
 		MaxFailedMenuAttempts  int                   `yaml:"maxFailedMenuAttempts"`
 		Pindleskin             struct {
 			SkipOnImmunities []stat.Resist `yaml:"skipOnImmunities"`
@@ -482,6 +484,34 @@ type CharacterCfg struct {
 }
 
 type BeltColumns [4]string
+
+// PublicGameNamesList supports both YAML array format and comma-separated string
+type PublicGameNamesList []string
+
+// UnmarshalYAML allows parsing both array and comma-separated string formats
+func (p *PublicGameNamesList) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var str string
+	if err := unmarshal(&str); err == nil {
+		// Try to parse as comma-separated string
+		if str != "" {
+			names := strings.Split(str, ",")
+			for i := range names {
+				names[i] = strings.TrimSpace(names[i])
+			}
+			*p = names
+			return nil
+		}
+	}
+
+	// Try to parse as array
+	var arr []string
+	if err := unmarshal(&arr); err == nil {
+		*p = arr
+		return nil
+	}
+
+	return fmt.Errorf("publicGameNames must be either an array or a comma-separated string")
+}
 
 func GetCharacter(name string) (*CharacterCfg, bool) {
 	cfgMux.RLock()

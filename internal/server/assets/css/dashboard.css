@@ -268,7 +268,8 @@ body {
 .co-classlevel,
 .co-difficulty,
 .co-area,
-.co-ping {
+.co-ping,
+.co-gamename {
   color: var(--co-text);
   font-weight: 500;
 }

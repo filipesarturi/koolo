@@ -566,14 +566,19 @@ func getItemPickupPriority(itm data.Item) int {
 		return 5
 	}
 
-	// Priority 6: Potions, Scrolls, Gold - pick up last
-	if itm.IsPotion() || strings.Contains(string(itm.Name), "Scroll") || itm.Name == "Gold" {
+	// Priority 6: Potions, Gold - pick up last
+	if itm.IsPotion() || itm.Name == "Gold" {
 		return 6
 	}
 
-	// Priority 7: Keys - lowest priority, only pick up if not at capacity
+	// Priority 7: Keys - low priority, only pick up if not at capacity
 	if itm.Name == item.Key {
 		return 7
+	}
+
+	// Priority 8: Scrolls - lowest priority, only pick up if tome exists and not at capacity
+	if strings.Contains(string(itm.Name), "Scroll") {
+		return 8
 	}
 
 	// Default priority for anything else
@@ -668,6 +673,46 @@ func shouldBePickedUp(i data.Item) bool {
 			return true
 		}
 		return false
+	}
+
+	// Pick up scrolls if we have the corresponding tome and it's not full (low priority pickup)
+	const maxScrollsInTome = 20 // Maximum scrolls a tome can hold
+	if i.Name == item.ScrollOfTownPortal {
+		portalTome, found := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
+		if !found {
+			return false // Don't pick up scrolls if we don't have the tome
+		}
+
+		qty, found := portalTome.FindStat(stat.Quantity, 0)
+		if !found {
+			// If no quantity stat, assume tome is empty
+			return true
+		}
+
+		// Only pick up if tome has less than maximum capacity
+		return qty.Value < maxScrollsInTome
+	}
+
+	if i.Name == item.ScrollOfIdentify {
+		// Respect end-game setting: completely disable ID tome for non-leveling characters
+		_, isLevelingChar := ctx.Char.(context.LevelingCharacter)
+		if ctx.CharacterCfg.Game.DisableIdentifyTome && !isLevelingChar {
+			return false
+		}
+
+		idTome, found := ctx.Data.Inventory.Find(item.TomeOfIdentify, item.LocationInventory)
+		if !found {
+			return false // Don't pick up scrolls if we don't have the tome
+		}
+
+		qty, found := idTome.FindStat(stat.Quantity, 0)
+		if !found {
+			// If no quantity stat, assume tome is empty
+			return true
+		}
+
+		// Only pick up if tome has less than maximum capacity
+		return qty.Value < maxScrollsInTome
 	}
 
 	// If total gold is below the minimum threshold, pick up magic and better items for selling.

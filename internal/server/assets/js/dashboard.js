@@ -114,6 +114,8 @@ function createCharacterCard(key) {
                         </div>
                           <span class="co-dot"> • </span>
                           <span class="co-difficulty">Difficulty</span>
+                          <span class="co-dot"> • </span>
+                          <span class="co-gamename">—</span>
                       </div>
                     </div>
                   </div>
@@ -625,6 +627,7 @@ function updateCharacterOverview(card, ui, status) {
   const gfEl = card.querySelector(".co-gf");
   const goldEl = card.querySelector(".co-gold");
   const resEl = card.querySelector(".co-res");
+  const gameNameEl = card.querySelector(".co-gamename");
 
   // If not running, show placeholders
   const isActive =
@@ -641,6 +644,7 @@ function updateCharacterOverview(card, ui, status) {
     if (gfEl) gfEl.textContent = "GF: —";
     if (goldEl) goldEl.textContent = "Gold: —";
     if (resEl) resEl.textContent = "Res: —";
+    if (gameNameEl) gameNameEl.textContent = "—";
     const xpFill = card.querySelector(".xp-bar-fill");
     const xpPct = card.querySelector(".xp-percent");
     if (xpFill) xpFill.style.width = "0%";
@@ -861,9 +865,20 @@ function updateCharacterOverview(card, ui, status) {
     xpFill.style.width = `${Math.max(0, Math.min(100, pct * 100)).toFixed(1)}%`;
   if (xpPct) xpPct.textContent = pctText;
   if (diffEl) diffEl.textContent = `${diff}`;
-  if (areaEl) areaEl.textContent = `${area}`;
+  const areaLevel = ui.AreaLevel ?? 0;
+  if (areaEl) {
+    if (areaLevel > 0) {
+      areaEl.textContent = `${area} (lvl ${areaLevel})`;
+    } else {
+      areaEl.textContent = `${area}`;
+    }
+  }
   if (pingEl) pingEl.textContent = `${ping}ms`;
   if (playersEl) playersEl.textContent = `Players: ${playerCount}/${maxPlayers}`;
+  if (gameNameEl) {
+    const gameName = ui.GameName || "";
+    gameNameEl.textContent = gameName ? `Game: ${gameName}` : "—";
+  }
   if (lifeEl) lifeEl.textContent = `Life: ${life}/${maxLife}`;
   if (manaEl) manaEl.textContent = `Mana: ${mana}/${maxMana}`;
   if (mfEl) mfEl.textContent = `MF: ${mf}%`;
