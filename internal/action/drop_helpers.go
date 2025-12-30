@@ -40,6 +40,7 @@ func IsDropProtected(i data.Item) bool {
 	}
 
 	// Protect keys based on KeyCount configuration
+	// Allow dropping excess keys, but keep at least KeyCount
 	if i.Name == item.Key {
 		keyCount := getKeyCount()
 		if keyCount <= 0 {
@@ -61,10 +62,24 @@ func IsDropProtected(i data.Item) bool {
 			}
 		}
 
-		// Only allow dropping keys if we have more than the configured amount
+		// If we have at or below the configured amount, protect all keys
 		if totalKeys <= keyCount {
 			return true // Protect keys if we have at or below the configured amount
 		}
+
+		// We have excess keys, check if dropping this specific key would leave us below KeyCount
+		keysInThisStack := 1
+		if qty, found := i.FindStat(stat.Quantity, 0); found {
+			keysInThisStack = qty.Value
+		}
+
+		// If dropping this key would leave us with less than KeyCount, protect it
+		if totalKeys-keysInThisStack < keyCount {
+			return true // Protect this key to maintain at least KeyCount
+		}
+
+		// This key is excess, allow dropping it
+		return false
 	}
 
 	if selected {
@@ -188,7 +203,7 @@ func DropVendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) erro
 	// Switch to tab 4 (keys are usually in tab 4) and buy keys if needed
 	SwitchVendorTab(4)
 	ctx.RefreshGameData()
-	
+
 	if needsBuyKeys && ctx.Data.PlayerUnit.Class != data.Assassin {
 		// Buy keys using the same logic as BuyConsumables
 		keyQuantity, _ := town.ShouldBuyKeys()

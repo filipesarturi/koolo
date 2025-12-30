@@ -29,6 +29,36 @@ var questItems = []item.Name{
 	"HellforgeHammer",
 }
 
+// isInLockedInventorySlot checks if an item is in a locked inventory slot
+func isInLockedInventorySlot(itm data.Item, lockConfig [][]int) bool {
+	// Check if item is in inventory
+	if itm.Location.LocationType != item.LocationInventory {
+		return false
+	}
+
+	// If no lock config provided, check from context
+	if len(lockConfig) == 0 {
+		ctx := context.Get()
+		lockConfig = ctx.CharacterCfg.Inventory.InventoryLock
+	}
+
+	if len(lockConfig) == 0 {
+		return false
+	}
+
+	// Calculate row and column in inventory
+	row := itm.Position.Y
+	col := itm.Position.X
+
+	// Check if position is within bounds
+	if row >= len(lockConfig) || col >= len(lockConfig[0]) {
+		return false
+	}
+
+	// 0 means locked, 1 means unlocked
+	return lockConfig[row][col] == 0
+}
+
 func BuyConsumables(forceRefill bool) {
 	ctx := context.Get()
 
@@ -207,9 +237,20 @@ func SellJunk(lockConfig ...[][]int) {
 	ctx.Logger.Debug("--- SellJunk() function entered ---")
 	ctx.Logger.Debug("Selling junk items and excess keys...")
 
+	// Get lock config
+	var currentLockConfig [][]int
+	if len(lockConfig) > 0 {
+		currentLockConfig = lockConfig[0]
+	} else {
+		currentLockConfig = ctx.CharacterCfg.Inventory.InventoryLock
+	}
+
 	// --- OPTIMIZED LOGIC FOR SELLING EXCESS KEYS ---
-	var allKeyStacks []data.Item
+	// Separate keys into locked and unlocked slots
+	var lockedKeyStacks []data.Item
+	var unlockedKeyStacks []data.Item
 	totalKeys := 0
+	lockedKeys := 0
 
 	// Iterate through ALL items in the inventory to find all key stacks
 	// Make sure to re-fetch inventory data before this loop if it hasn't been refreshed recently
@@ -217,95 +258,238 @@ func SellJunk(lockConfig ...[][]int) {
 	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
 		if itm.Name == item.Key {
 			if qty, found := itm.FindStat(stat.Quantity, 0); found {
-				allKeyStacks = append(allKeyStacks, itm)
 				totalKeys += qty.Value
+				// Check if this key stack is in a locked slot
+				if isInLockedInventorySlot(itm, currentLockConfig) {
+					lockedKeyStacks = append(lockedKeyStacks, itm)
+					lockedKeys += qty.Value
+				} else {
+					unlockedKeyStacks = append(unlockedKeyStacks, itm)
+				}
 			}
 		}
 	}
 
-	ctx.Logger.Debug(fmt.Sprintf("Total keys found across all stacks in inventory: %d", totalKeys))
+	ctx.Logger.Debug(fmt.Sprintf("Total keys found: %d (locked: %d, unlocked: %d)", totalKeys, lockedKeys, totalKeys-lockedKeys))
 
-	if totalKeys > 12 {
-		excessCount := totalKeys - 12
-		ctx.Logger.Info(fmt.Sprintf("Found %d excess keys (total %d). Selling them.", excessCount, totalKeys))
+	// Only sell excess keys from unlocked slots
+	// Calculate excess considering only unlocked keys
+	unlockedKeys := totalKeys - lockedKeys
+	keyCount := getKeyCount()
+	if keyCount <= 0 {
+		keyCount = 12 // Default to 12 if not configured
+	}
 
-		keysSold := 0
+	// Calculate how many keys we need to keep (at least keyCount, but respect locked keys)
+	keysToKeep := keyCount
+	if lockedKeys > keyCount {
+		// If we have more locked keys than keyCount, we need to keep all locked keys
+		keysToKeep = lockedKeys
+	}
 
-		// Sort key stacks by quantity in descending order to sell larger stacks first
-		slices.SortFunc(allKeyStacks, func(a, b data.Item) int {
+	// Calculate excess from unlocked slots only
+	excessFromUnlocked := unlockedKeys
+	if totalKeys > keysToKeep {
+		excessFromUnlocked = unlockedKeys - (keysToKeep - lockedKeys)
+		if excessFromUnlocked < 0 {
+			excessFromUnlocked = 0
+		}
+	} else {
+		excessFromUnlocked = 0
+	}
+
+	if excessFromUnlocked > 0 {
+		ctx.Logger.Info(fmt.Sprintf("Found %d excess keys in unlocked slots (total: %d, locked: %d, target: %d). Dropping them.", excessFromUnlocked, totalKeys, lockedKeys, keysToKeep))
+
+		keysDropped := 0
+		keysToDrop := excessFromUnlocked
+
+		// Sort unlocked key stacks by quantity in descending order to drop larger stacks first
+		slices.SortFunc(unlockedKeyStacks, func(a, b data.Item) int {
 			qtyA, _ := a.FindStat(stat.Quantity, 0)
 			qtyB, _ := b.FindStat(stat.Quantity, 0)
 			return qtyB.Value - qtyA.Value // Descending order
 		})
 
-		// 1. Sell full stacks until we are close to the target
-		stacksToProcess := make([]data.Item, len(allKeyStacks))
-		copy(stacksToProcess, allKeyStacks)
+		// Ensure we're in town before dropping
+		if !ctx.Data.PlayerUnit.Area.IsTown() {
+			ctx.Logger.Warn("Cannot drop excess keys outside of town, skipping")
+		} else {
+			// Close any open menus first
+			_ = closeAllMenus()
+			utils.PingSleep(utils.Medium, 170)
 
-		for _, keyStack := range stacksToProcess {
-			if keysSold >= excessCount {
-				break // We've sold enough
-			}
+			// Open inventory once
+			ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+			utils.PingSleep(utils.Medium, 300)
+			ctx.RefreshGameData()
 
-			qtyInStack, found := keyStack.FindStat(stat.Quantity, 0)
-			if !found {
-				continue
-			}
-
-			// If selling this entire stack still leaves us with at least 12 keys
-			// Or if this stack exactly equals the remaining excess to sell
-			if (totalKeys-qtyInStack.Value >= 12) || (qtyInStack.Value == excessCount-keysSold) {
-				ctx.Logger.Debug(fmt.Sprintf("Selling full stack of %d keys from %v", qtyInStack.Value, keyStack.Position))
-				SellItemFullStack(keyStack)
-				keysSold += qtyInStack.Value
-				totalKeys -= qtyInStack.Value     // Update total keys count
-				ctx.RefreshGameData()             // Refresh after selling a full stack
-				utils.PingSleep(utils.Light, 200) // Light operation: Short delay for UI update
-			}
-		}
-
-		// Re-evaluate total keys after selling full stacks
-		ctx.RefreshGameData()
-		totalKeys = 0
-		allKeyStacks = []data.Item{} // Clear and re-populate allKeyStacks
-		for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
-			if itm.Name == item.Key {
-				if qty, found := itm.FindStat(stat.Quantity, 0); found {
-					allKeyStacks = append(allKeyStacks, itm)
-					totalKeys += qty.Value
+			// 1. Drop full stacks from unlocked slots
+			for _, keyStack := range unlockedKeyStacks {
+				if keysDropped >= keysToDrop {
+					break // We've dropped enough
 				}
-			}
-		}
 
-		// 2. If there's still excess, sell individual keys from one of the remaining stacks
-		if totalKeys > 12 {
-			excessCount = totalKeys - 12 // Recalculate excess after full stack sales
-			ctx.Logger.Info(fmt.Sprintf("Still have %d excess keys. Selling individually from a remaining stack.", excessCount))
-
-			// Find *any* remaining key stack to sell from
-			var remainingKeyStack data.Item
-			for _, itm := range allKeyStacks {
-				if itm.Name == item.Key {
-					remainingKeyStack = itm
-					break
+				// Double-check that this stack is still unlocked (safety check)
+				ctx.RefreshGameData()
+				var currentStack data.Item
+				found := false
+				for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+					if itm.UnitID == keyStack.UnitID {
+						currentStack = itm
+						found = true
+						break
+					}
 				}
-			}
 
-			if remainingKeyStack.Name != "" { // Check if a stack was found
-				for i := 0; i < excessCount; i++ {
-					SellItem(remainingKeyStack)
-					keysSold++
+				if !found || isInLockedInventorySlot(currentStack, currentLockConfig) {
+					ctx.Logger.Warn(fmt.Sprintf("Skipping key stack at %v - it's in a locked slot or not found", keyStack.Position))
+					continue
+				}
+
+				qtyInStack, found := currentStack.FindStat(stat.Quantity, 0)
+				if !found {
+					continue
+				}
+
+				// Calculate if dropping this stack would leave us with enough keys
+				remainingAfterDrop := totalKeys - qtyInStack.Value
+				if remainingAfterDrop >= keysToKeep {
+					ctx.Logger.Debug(fmt.Sprintf("Dropping full stack of %d keys from unlocked slot %v", qtyInStack.Value, currentStack.Position))
+					screenPos := ui.GetScreenCoordsForItem(currentStack)
+					ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+					utils.PingSleep(utils.Medium, 100)
+					ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+					utils.PingSleep(utils.Medium, 200)
+
+					// Verify item was dropped
 					ctx.RefreshGameData()
-					utils.PingSleep(utils.Light, 100) // Light operation: Individual sell delay
+					stillInInventory := false
+					for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+						if it.UnitID == currentStack.UnitID {
+							stillInInventory = true
+							break
+						}
+					}
+					if !stillInInventory {
+						keysDropped += qtyInStack.Value
+						totalKeys -= qtyInStack.Value
+						ctx.Logger.Debug(fmt.Sprintf("Successfully dropped key stack of %d keys", qtyInStack.Value))
+					} else {
+						ctx.Logger.Warn(fmt.Sprintf("Failed to drop key stack, still in inventory"))
+					}
+				}
+			}
+
+			// Re-evaluate after dropping full stacks
+			ctx.RefreshGameData()
+			totalKeys = 0
+			unlockedKeyStacks = []data.Item{}
+			for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+				if itm.Name == item.Key {
+					if qty, found := itm.FindStat(stat.Quantity, 0); found {
+						totalKeys += qty.Value
+						if !isInLockedInventorySlot(itm, currentLockConfig) {
+							unlockedKeyStacks = append(unlockedKeyStacks, itm)
+						}
+					}
+				}
+			}
+
+			// Recalculate excess after full stack drops
+			unlockedKeys = 0
+			for _, itm := range unlockedKeyStacks {
+				if qty, found := itm.FindStat(stat.Quantity, 0); found {
+					unlockedKeys += qty.Value
+				}
+			}
+
+			// Recalculate keys to keep
+			lockedKeys = totalKeys - unlockedKeys
+			if lockedKeys > keyCount {
+				keysToKeep = lockedKeys
+			} else {
+				keysToKeep = keyCount
+			}
+
+			excessFromUnlocked = unlockedKeys
+			if totalKeys > keysToKeep {
+				excessFromUnlocked = unlockedKeys - (keysToKeep - lockedKeys)
+				if excessFromUnlocked < 0 {
+					excessFromUnlocked = 0
 				}
 			} else {
-				ctx.Logger.Warn("No remaining key stacks found to sell individual keys from, despite excess reported.")
+				excessFromUnlocked = 0
 			}
+
+			// 2. If there's still excess, drop individual keys from unlocked stacks
+			if excessFromUnlocked > 0 {
+				ctx.Logger.Info(fmt.Sprintf("Still have %d excess keys in unlocked slots. Dropping individually.", excessFromUnlocked))
+
+				// Find an unlocked key stack to drop from
+				var remainingKeyStack data.Item
+				for _, itm := range unlockedKeyStacks {
+					if !isInLockedInventorySlot(itm, currentLockConfig) {
+						remainingKeyStack = itm
+						break
+					}
+				}
+
+				if remainingKeyStack.Name != "" {
+					for i := 0; i < excessFromUnlocked && keysDropped < keysToDrop; i++ {
+						// Double-check before each drop
+						ctx.RefreshGameData()
+						var currentStack data.Item
+						found := false
+						for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+							if itm.UnitID == remainingKeyStack.UnitID {
+								currentStack = itm
+								found = true
+								break
+							}
+						}
+
+						if !found || isInLockedInventorySlot(currentStack, currentLockConfig) {
+							ctx.Logger.Warn("Key stack moved to locked slot or disappeared, stopping individual key drops")
+							break
+						}
+
+						screenPos := ui.GetScreenCoordsForItem(currentStack)
+						ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+						utils.PingSleep(utils.Medium, 100)
+						ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+						utils.PingSleep(utils.Medium, 200)
+
+						// Verify item was dropped
+						ctx.RefreshGameData()
+						stillInInventory := false
+						for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+							if it.UnitID == currentStack.UnitID {
+								stillInInventory = true
+								break
+							}
+						}
+						if !stillInInventory {
+							keysDropped++
+							ctx.Logger.Debug("Successfully dropped individual key")
+						} else {
+							ctx.Logger.Warn("Failed to drop individual key, still in inventory")
+							break // Stop if we can't drop
+						}
+					}
+				} else {
+					ctx.Logger.Warn("No unlocked key stacks found to drop individual keys from, despite excess reported.")
+				}
+			}
+
+			// Close inventory after dropping
+			_ = closeAllMenus()
+			utils.PingSleep(utils.Medium, 170)
 		}
 
-		ctx.Logger.Info(fmt.Sprintf("Finished selling excess keys. Keys sold: %d. Estimated remaining: %d", keysSold, totalKeys-keysSold))
+		ctx.Logger.Info(fmt.Sprintf("Finished dropping excess keys. Keys dropped: %d", keysDropped))
 	} else {
-		ctx.Logger.Debug("No excess keys to sell (12 or less).")
+		ctx.Logger.Debug(fmt.Sprintf("No excess keys to drop (total: %d, locked: %d, target: %d)", totalKeys, lockedKeys, keysToKeep))
 	}
 	// --- END OPTIMIZED LOGIC ---
 

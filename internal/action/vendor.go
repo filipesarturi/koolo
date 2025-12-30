@@ -113,14 +113,16 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 	// If dropping items and no keys to sell, process them without visiting vendor
 	if shouldDrop && !hasKeysToSell {
 		ctx.Logger.Info("Dropping items instead of visiting vendor (gold threshold or AlwaysDropAct reached, no keys to sell)")
+		// First, drop excess keys and other junk items
 		if len(lockConfig) > 0 {
 			town.SellJunk(lockConfig)
 		} else {
 			town.SellJunk()
 		}
+		// Refresh after dropping to get accurate key count
+		ctx.RefreshGameData()
 		// Return to original area if we moved to a different act
 		if needsToMoveToAct && originalAreaForReturn != area.ID(0) {
-			ctx.RefreshGameData()
 			if originalAreaForReturn != ctx.Data.PlayerUnit.Area {
 				ctx.Logger.Info(fmt.Sprintf("Returning to original area: %s", originalAreaForReturn.Area().Name))
 				if err := WayPoint(originalAreaForReturn); err != nil {
@@ -130,7 +132,7 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 				}
 			}
 		}
-		// Check if we need to buy consumables (forceRefill or missing keys)
+		// Check if we need to buy consumables (forceRefill or missing keys) AFTER dropping excess
 		_, needsBuyKeys := town.ShouldBuyKeys()
 		if forceRefill || needsBuyKeys {
 			ctx.Logger.Info("Visiting vendor for consumables...", slog.Bool("forceRefill", forceRefill), slog.Bool("needsBuyKeys", needsBuyKeys))
@@ -172,16 +174,27 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 
 	ctx.Logger.Info("Visiting vendor...", slog.Bool("forceRefill", forceRefill))
 
+	// First, drop excess keys if we're selling junk (this happens before checking if we need to buy)
+	if sellJunk {
+		if len(lockConfig) > 0 {
+			town.SellJunk(lockConfig)
+		} else {
+			town.SellJunk()
+		}
+		// Refresh after dropping excess keys to get accurate key count
+		ctx.RefreshGameData()
+	}
+
+	// Now check if we need to buy keys (after dropping excess)
 	vendorNPC := town.GetTownByArea(ctx.Data.PlayerUnit.Area).RefillNPC()
+	_, needsBuyKeys := town.ShouldBuyKeys()
 	if vendorNPC == npc.Drognan {
-		_, needsBuy := town.ShouldBuyKeys()
-		if needsBuy && ctx.Data.PlayerUnit.Class != data.Assassin {
+		if needsBuyKeys && ctx.Data.PlayerUnit.Class != data.Assassin {
 			vendorNPC = npc.Lysander
 		}
 	}
 	if vendorNPC == npc.Ormus {
-		_, needsBuy := town.ShouldBuyKeys()
-		if needsBuy && ctx.Data.PlayerUnit.Class != data.Assassin {
+		if needsBuyKeys && ctx.Data.PlayerUnit.Class != data.Assassin {
 			if err := FindHratliEverywhere(); err != nil {
 				// If moveToHratli returns an error, it means a forced game quit is required.
 				return err
@@ -202,13 +215,17 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 		ctx.HID.KeySequence(win.VK_HOME, win.VK_DOWN, win.VK_RETURN)
 	}
 
-	if sellJunk {
-		if len(lockConfig) > 0 {
-			town.SellJunk(lockConfig)
-		} else {
-			town.SellJunk()
+	// If we didn't sell junk yet (because sellJunk was false), do it now
+	// But this should be rare since we usually want to sell junk
+	if !sellJunk {
+		// Even if sellJunk is false, we might still want to drop excess keys
+		// But only if we're not visiting vendor just for consumables
+		if forceRefill {
+			// Just refresh and proceed to buy consumables
+			ctx.RefreshGameData()
 		}
 	}
+
 	SwitchVendorTab(4)
 	ctx.RefreshGameData()
 	town.BuyConsumables(forceRefill)

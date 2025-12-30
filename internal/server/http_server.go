@@ -613,7 +613,6 @@ func (s *HttpServer) getStatusData() IndexData {
 				ColdResist:      cr,
 				LightningResist: lr,
 				PoisonResist:    pr,
-				GameName:        data.Game.LastGameName,
 			}
 		}
 
