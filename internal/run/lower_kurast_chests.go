@@ -353,8 +353,50 @@ func (run LowerKurastChests) canUseTelekinesisForObject(obj data.Object) bool {
 	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
 		return false
 	}
-	// Telekinesis works on chests, super chests, and shrines
-	return obj.IsChest() || obj.IsSuperChest() || obj.IsShrine()
+	
+	// Object must be selectable to use Telekinesis
+	if !obj.Selectable {
+		return false
+	}
+	
+	// Telekinesis works on all interactable objects: chests, super chests, shrines, breakables, etc.
+	if obj.IsChest() || obj.IsSuperChest() || obj.IsShrine() {
+		return true
+	}
+	
+	// Include breakable objects (barrels, urns, caskets, logs, etc.)
+	breakableObjects := []object.Name{
+		object.Barrel, object.Urn2, object.Urn3, object.Casket,
+		object.Casket5, object.Casket6, object.LargeUrn1, object.LargeUrn4,
+		object.LargeUrn5, object.Crate, object.HollowLog, object.Sarcophagus,
+	}
+	for _, breakableName := range breakableObjects {
+		if obj.Name == breakableName {
+			return true
+		}
+	}
+	
+	// Include weapon racks and armor stands
+	if obj.Name == object.ArmorStandRight || obj.Name == object.ArmorStandLeft ||
+		obj.Name == object.WeaponRackRight || obj.Name == object.WeaponRackLeft {
+		return true
+	}
+	
+	// Include corpses, bodies, and other interactable containers
+	if !obj.IsDoor() {
+		desc := obj.Desc()
+		if desc.Name != "" {
+			name := strings.ToLower(desc.Name)
+			if strings.Contains(name, "chest") || strings.Contains(name, "casket") || strings.Contains(name, "urn") ||
+				strings.Contains(name, "barrel") || strings.Contains(name, "corpse") || strings.Contains(name, "body") ||
+				strings.Contains(name, "sarcophagus") || strings.Contains(name, "log") || strings.Contains(name, "crate") ||
+				strings.Contains(name, "wood") || strings.Contains(name, "rack") || strings.Contains(name, "stand") {
+				return true
+			}
+		}
+	}
+	
+	return false
 }
 
 // interactObjectWithForcedTK interacts with an object forcing Telekinesis usage
