@@ -726,20 +726,25 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 
 	cfg := s.bot.ctx.CharacterCfg
 	initialNameIndex := cfg.Game.PublicGameNameIndex
-	initialCounter := cfg.Game.PublicGameCounter
-	maxAttempts := 1
 	
-	// If using predefined names and enabled, try all names once if game exists
+	// For predefined names: try all names once
+	// For template mode: try up to 20 different counter values for "game exists" errors
+	maxGameExistsAttempts := 20
+	gameExistsAttempts := 0
+	
+	maxAttempts := 1
 	if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 {
 		maxAttempts = len(cfg.Game.PublicGameNames)
-	} else {
-		// If using template mode, allow multiple attempts for "game already exists" errors
-		maxAttempts = 10 // Try up to 10 different counter values
 	}
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; ; attempt++ {
+		// For predefined names, limit by maxAttempts
+		if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 && attempt >= maxAttempts {
+			break
+		}
+		
 		gameName := s.getNextGameName()
-		s.bot.ctx.Logger.Debug(fmt.Sprintf("[Menu Flow]: Attempting to create game with name: %s (attempt %d/%d)", gameName, attempt+1, maxAttempts))
+		s.bot.ctx.Logger.Debug(fmt.Sprintf("[Menu Flow]: Attempting to create game with name: %s", gameName))
 
 		// USE THE NEW TIMEOUT FUNCTION
 		createGameFunc := func() error {
@@ -799,38 +804,31 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 			}
 		}
 
-		// If game exists and we're using predefined names and enabled, try next name
-		// Also try next name if we got an error and modal (might be game exists even if we can't detect the exact message)
-		if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 && attempt < maxAttempts-1 {
-			if gameExists || (isDismissableModalPresent && err != nil) {
-				if gameExists {
-					s.bot.ctx.Logger.Info(fmt.Sprintf("[Menu Flow]: Game '%s' already exists, trying next name in list", gameName))
-				} else {
-					s.bot.ctx.Logger.Info(fmt.Sprintf("[Menu Flow]: Error creating game '%s' (modal detected), trying next name in list", gameName))
-				}
-				// Dismiss modal if present before trying next name
+		// If game exists, try next name/counter
+		if gameExists {
+			gameExistsAttempts++
+			
+			// Check if we've exceeded max "game exists" attempts
+			if gameExistsAttempts >= maxGameExistsAttempts {
+				s.bot.ctx.Logger.Warn(fmt.Sprintf("[Menu Flow]: Game already exists %d times consecutively, stopping", maxGameExistsAttempts))
+				return fmt.Errorf("[Menu Flow]: Failed to create lobby game: too many existing games")
+			}
+			
+			if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 {
+				s.bot.ctx.Logger.Info(fmt.Sprintf("[Menu Flow]: Game '%s' already exists, trying next name in list", gameName))
 				dismissModal()
-				// Advance to next name
 				cfg.Game.PublicGameNameIndex = (cfg.Game.PublicGameNameIndex + 1) % len(cfg.Game.PublicGameNames)
-				continue // Try next name
-			}
-		}
-
-		// If using template mode and game exists, increment counter and try next
-		if (!cfg.Game.PublicGameNamesEnabled || len(cfg.Game.PublicGameNames) == 0) && attempt < maxAttempts-1 {
-			if gameExists {
+			} else {
 				s.bot.ctx.Logger.Info(fmt.Sprintf("[Menu Flow]: Game '%s' already exists, incrementing counter and trying next", gameName))
-				// Dismiss modal if present before trying next name
 				dismissModal()
-				// Increment counter for next attempt
 				cfg.Game.PublicGameCounter++
-				continue // Try next counter
 			}
+			continue // Try next name/counter
 		}
 
-		// If not using predefined names or disabled or all names tried, handle error normally
+		// Handle other errors (not "game exists")
 		if !cfg.Game.PublicGameNamesEnabled || len(cfg.Game.PublicGameNames) == 0 {
-			// Only increment counter if using template mode
+			// Only increment counter if using template mode (for other errors)
 			cfg.Game.PublicGameCounter++
 		}
 		
@@ -857,13 +855,7 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 		return fmt.Errorf("[Menu Flow]: Failed to create lobby game: %w", err)
 	}
 
-	// If we tried all names and none worked, reset to initial and return error
-	if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 {
-		cfg.Game.PublicGameNameIndex = initialNameIndex
-		return fmt.Errorf("[Menu Flow]: Failed to create lobby game with any of the predefined names")
-	}
-	
-	// Reset counter to initial value if all template attempts failed
-	cfg.Game.PublicGameCounter = initialCounter
-	return fmt.Errorf("[Menu Flow]: Failed to create lobby game after trying %d counter values", maxAttempts)
+	// If we tried all predefined names and none worked, reset index to initial and return error
+	cfg.Game.PublicGameNameIndex = initialNameIndex
+	return fmt.Errorf("[Menu Flow]: Failed to create lobby game with any of the predefined names")
 }
