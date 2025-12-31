@@ -282,7 +282,12 @@ func (d *DiabloPublic) killSealElite(boss string) error {
 	d.ctx.Logger.Debug(fmt.Sprintf("Starting kill sequence for %s", boss))
 	startTime := time.Now()
 
-	timeout := 20 * time.Second
+	// PUBLIC GAME OPTIMIZATION: Reduced timeout for faster runs
+	// Lord De Seis often spawns far away, so use shorter timeout
+	timeout := 5 * time.Second
+	if boss == "Lord De Seis" {
+		timeout = 3 * time.Second
+	}
 
 	_, isLevelingChar := d.ctx.Char.(context.LevelingCharacter)
 	sealElite := data.Monster{}
