@@ -1,6 +1,7 @@
 package action
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -18,12 +19,84 @@ import (
 
 // Track weapon swap failures to prevent infinite rebuff loops
 var (
-	weaponSwapFailures     = make(map[string]int)    // per-character failure count
-	lastSwapFailureTime    = make(map[string]time.Time)
-	weaponSwapFailuresMu   sync.Mutex
-	maxSwapFailures        = 3                       // max failures before cooldown
-	swapFailureCooldown    = 60 * time.Second        // cooldown after max failures
+	weaponSwapFailures   = make(map[string]int) // per-character failure count
+	lastSwapFailureTime  = make(map[string]time.Time)
+	weaponSwapFailuresMu sync.Mutex
+	maxSwapFailures      = 3                // max failures before cooldown
+	swapFailureCooldown  = 60 * time.Second // cooldown after max failures
 )
+
+// skillToState maps buff skills to their corresponding player states for verification
+var skillToState = map[skill.ID]state.State{
+	skill.EnergyShield:  state.Energyshield,
+	skill.FrozenArmor:   state.Frozenarmor,
+	skill.ShiverArmor:   state.Shiverarmor,
+	skill.ChillingArmor: state.Chillingarmor,
+	skill.HolyShield:    state.Holyshield,
+	skill.CycloneArmor:  state.Cyclonearmor,
+	skill.BattleOrders:  state.Battleorders,
+	skill.BattleCommand: state.Battlecommand,
+	skill.Shout:         state.Shout,
+	skill.Fade:          state.Fade,
+	skill.BurstOfSpeed:  state.Quickness, // Burst of Speed state
+	skill.Hurricane:     state.Hurricane,
+	skill.BoneArmor:     state.Bonearmor,
+	skill.ThunderStorm:  state.Thunderstorm,
+}
+
+// castBuffWithVerify casts a buff skill and verifies it was applied by checking the player state.
+// Returns true if the buff was successfully applied, false otherwise.
+func castBuffWithVerify(ctx *context.Status, kb data.KeyBinding, buffSkill skill.ID, expectedState state.State, maxRetries int) bool {
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			ctx.Logger.Debug("Retrying buff cast",
+				slog.String("skill", buffSkill.Desc().Name),
+				slog.Int("attempt", attempt+1),
+				slog.Int("maxRetries", maxRetries),
+			)
+			// Small delay before retry
+			utils.Sleep(200)
+		}
+
+		// Cast the buff
+		utils.Sleep(100)
+		ctx.HID.PressKeyBinding(kb)
+		utils.Sleep(220)
+		ctx.HID.Click(game.RightButton, 640, 340)
+		utils.Sleep(120)
+
+		// Wait a bit for the state to be applied (network delay)
+		utils.PingSleep(utils.Light, 250)
+
+		// Verify buff was applied
+		ctx.RefreshGameData()
+		if ctx.Data.PlayerUnit.States.HasState(expectedState) {
+			if attempt > 0 {
+				ctx.Logger.Debug("Buff applied after retry",
+					slog.String("skill", buffSkill.Desc().Name),
+					slog.Int("attempt", attempt+1),
+				)
+			}
+			return true
+		}
+	}
+
+	// All retries exhausted
+	ctx.Logger.Warn("Failed to apply buff after retries",
+		slog.String("skill", buffSkill.Desc().Name),
+		slog.Int("attempts", maxRetries),
+	)
+	return false
+}
+
+// castBuff casts a buff skill without verification (for skills without verifiable states)
+func castBuff(ctx *context.Status, kb data.KeyBinding) {
+	utils.Sleep(100)
+	ctx.HID.PressKeyBinding(kb)
+	utils.Sleep(180)
+	ctx.HID.Click(game.RightButton, 640, 340)
+	utils.Sleep(100)
+}
 
 // BuffIfRequired checks if rebuff is needed and moves to a safe position before buffing.
 // - checks if rebuff is needed,
@@ -142,18 +215,22 @@ func Buff() {
 
 	// --- Post-CTA class buffs (with optional weapon swap) ---
 
-	// Collect post-CTA buff keybindings as before.
-	postKeys := make([]data.KeyBinding, 0)
+	// Collect post-CTA buff skills and their keybindings
+	type buffEntry struct {
+		skill skill.ID
+		kb    data.KeyBinding
+	}
+	postBuffs := make([]buffEntry, 0)
 	for _, buff := range ctx.Char.BuffSkills() {
 		kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff)
 		if !found {
 			ctx.Logger.Info("Key binding not found, skipping buff", slog.String("skill", buff.Desc().Name))
 		} else {
-			postKeys = append(postKeys, kb)
+			postBuffs = append(postBuffs, buffEntry{skill: buff, kb: kb})
 		}
 	}
 
-	if len(postKeys) > 0 {
+	if len(postBuffs) > 0 {
 		swappedForBuffs := false
 
 		// Optionally swap to offhand (CTA / buff weapon) before class buffs.
@@ -177,24 +254,36 @@ func Buff() {
 			}
 		}
 
-		ctx.Logger.Debug("Post CTA Buffing...", slog.Int("buffCount", len(postKeys)))
-		buffTimeout := time.Now().Add(10 * time.Second) // Timeout for all post-CTA buffs
-		for i, kb := range postKeys {
+		ctx.Logger.Debug("Post CTA Buffing...", slog.Int("buffCount", len(postBuffs)))
+		buffTimeout := time.Now().Add(20 * time.Second)
+		const maxRetries = 3
+
+		for i, entry := range postBuffs {
 			// Check timeout to prevent hanging
 			if time.Now().After(buffTimeout) {
 				ctx.Logger.Warn("Post CTA buffing timeout reached, skipping remaining buffs",
 					slog.Int("completed", i),
-					slog.Int("total", len(postKeys)),
+					slog.Int("total", len(postBuffs)),
 				)
 				break
 			}
 
-			ctx.Logger.Debug("Casting post-CTA buff", slog.Int("index", i+1), slog.Int("total", len(postKeys)))
-			utils.Sleep(100)
-			ctx.HID.PressKeyBinding(kb)
-			utils.Sleep(180)
-			ctx.HID.Click(game.RightButton, 640, 340)
-			utils.Sleep(100)
+			// Get skill name for logging
+			skillName := entry.skill.Desc().Name
+			if skillName == "" {
+				skillName = fmt.Sprintf("SkillID(%d)", entry.skill)
+			}
+
+			ctx.Logger.Debug("Casting buff", slog.String("skill", skillName))
+
+			// Check if this skill has a verifiable state for retry logic
+			if expectedState, canVerify := skillToState[entry.skill]; canVerify {
+				// Use verification with retry for skills with known states
+				castBuffWithVerify(ctx, entry.kb, entry.skill, expectedState, maxRetries)
+			} else {
+				// Use simple cast for skills without verifiable states (summons, etc.)
+				castBuff(ctx, entry.kb)
+			}
 		}
 		ctx.Logger.Debug("Post CTA Buffing completed")
 
@@ -324,27 +413,27 @@ func buffCTA(shouldSwapBack bool) bool {
 	// Refresh data after swap to ensure we have current keybindings
 	ctx.RefreshGameData()
 
-	// Cast Battle Command
+	const maxCTARetries = 3
+
+	// Cast Battle Command with verification and retry
 	if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleCommand); found {
-		ctx.HID.PressKeyBinding(kb)
-		utils.Sleep(180)
-		ctx.HID.Click(game.RightButton, 300, 300)
-		utils.Sleep(100)
+		if !castBuffWithVerify(ctx, kb, skill.BattleCommand, state.Battlecommand, maxCTARetries) {
+			ctx.Logger.Warn("Failed to apply Battle Command after retries")
+		}
 	} else {
 		ctx.Logger.Warn("BattleCommand keybinding not found on CTA")
 	}
 
-	// Cast Battle Orders
+	// Cast Battle Orders with verification and retry
 	if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.BattleOrders); found {
-		ctx.HID.PressKeyBinding(kb)
-		utils.Sleep(180)
-		ctx.HID.Click(game.RightButton, 300, 300)
-		utils.Sleep(100)
+		if !castBuffWithVerify(ctx, kb, skill.BattleOrders, state.Battleorders, maxCTARetries) {
+			ctx.Logger.Warn("Failed to apply Battle Orders after retries")
+		}
 	} else {
 		ctx.Logger.Warn("BattleOrders keybinding not found on CTA")
 	}
 
-	utils.PingSleep(utils.Light, 400)
+	utils.PingSleep(utils.Light, 200)
 
 	// Only swap back to main weapon if requested
 	if shouldSwapBack {
