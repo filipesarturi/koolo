@@ -6,13 +6,12 @@ import (
 	"os"
 
 	"github.com/lxn/win"
-	cp "github.com/otiai10/copy"
 )
 
 var userProfile = os.Getenv("USERPROFILE")
 var settingsPath = userProfile + "\\Saved Games\\Diablo II Resurrected"
 
-func ReplaceGameSettings(modName string) error {
+func ReplaceGameSettings(modName string, autoPartyInvite bool) error {
 	modDirPath := settingsPath + "\\mods\\" + modName
 	modSettingsPath := modDirPath + "\\Settings.json"
 
@@ -35,7 +34,33 @@ func ReplaceGameSettings(modName string) error {
 		}
 	}
 
-	return cp.Copy(BasePath+"/config/Settings.json", modSettingsPath)
+	// Read the base settings file
+	baseSettingsPath := BasePath + "/config/Settings.json"
+	data, err := os.ReadFile(baseSettingsPath)
+	if err != nil {
+		return fmt.Errorf("error reading base settings: %w", err)
+	}
+
+	// Parse the JSON settings
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("error parsing settings JSON: %w", err)
+	}
+
+	// Set the Auto Party Invite value (1 = enabled, 0 = disabled)
+	autoPartyValue := 0
+	if autoPartyInvite {
+		autoPartyValue = 1
+	}
+	settings["Auto Party Invite"] = autoPartyValue
+
+	// Write the modified settings
+	modifiedData, err := json.MarshalIndent(settings, "", "    ")
+	if err != nil {
+		return fmt.Errorf("error encoding settings JSON: %w", err)
+	}
+
+	return os.WriteFile(modSettingsPath, modifiedData, 0644)
 }
 
 func InstallMod() error {

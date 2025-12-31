@@ -140,6 +140,7 @@ type CharacterCfg struct {
 	UseCentralizedPickit bool   `yaml:"useCentralizedPickit"`
 	HidePortraits        bool   `yaml:"hidePortraits"`
 	AutoStart            bool   `yaml:"autoStart"`
+	AutoPartyInvite      bool   `yaml:"autoPartyInvite"`
 
 	ConfigFolderName string `yaml:"-"`
 

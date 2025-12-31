@@ -249,7 +249,7 @@ func (mng *SupervisorManager) buildSupervisor(supervisorName string, logger *slo
 		}
 	} else {
 		var err error
-		pid, hwnd, err = game.StartGame(cfg.Username, cfg.Password, cfg.AuthMethod, cfg.AuthToken, cfg.Realm, cfg.CommandLineArgs, config.Koolo.UseCustomSettings)
+		pid, hwnd, err = game.StartGame(cfg.Username, cfg.Password, cfg.AuthMethod, cfg.AuthToken, cfg.Realm, cfg.CommandLineArgs, config.Koolo.UseCustomSettings, cfg.AutoPartyInvite)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error starting game: %w", err)
 		}

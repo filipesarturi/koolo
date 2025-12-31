@@ -722,6 +722,10 @@
                     <input id="hide_portraits" type="checkbox" name="hide_portraits" {{ if .Config.HidePortraits }}checked{{ end }}/>
                     Hide Portraits
                 </label>
+                <label>
+                    <input id="auto_party_invite" type="checkbox" name="auto_party_invite" {{ if .Config.AutoPartyInvite }}checked{{ end }}/>
+                    Auto Party Invite (automatically accept party invites)
+                </label>
             </fieldset>
             <h3>Battle.net settings</h3><br>
             <fieldset class="grid">

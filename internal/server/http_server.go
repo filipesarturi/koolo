@@ -1363,6 +1363,7 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		cfg.ClassicMode = values.Has("classic_mode")
 		cfg.CloseMiniPanel = values.Has("close_mini_panel")
 		cfg.HidePortraits = values.Has("hide_portraits")
+		cfg.AutoPartyInvite = values.Has("auto_party_invite")
 	}
 
 	// Scheduler
@@ -2003,6 +2004,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.ClassicMode = r.Form.Has("classic_mode")
 		cfg.CloseMiniPanel = r.Form.Has("close_mini_panel")
 		cfg.HidePortraits = r.Form.Has("hide_portraits")
+		cfg.AutoPartyInvite = r.Form.Has("auto_party_invite")
 
 		// Health config
 		cfg.Health.HealingPotionAt, _ = strconv.Atoi(r.Form.Get("healingPotionAt"))

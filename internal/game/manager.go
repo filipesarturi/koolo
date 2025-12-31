@@ -217,7 +217,7 @@ func (gm *Manager) InGame() bool {
 	return gm.gr.InGame()
 }
 
-func StartGame(username string, password string, authmethod string, authToken string, realm string, arguments string, useCustomSettings bool) (uint32, win.HWND, error) {
+func StartGame(username string, password string, authmethod string, authToken string, realm string, arguments string, useCustomSettings bool, autoPartyInvite bool) (uint32, win.HWND, error) {
 	// First check for other instances of the game and kill the handles, otherwise we will not be able to start the game
 	err := KillAllClientHandles()
 	if err != nil {
@@ -265,7 +265,7 @@ func StartGame(username string, password string, authmethod string, authToken st
 		}
 
 		// Replace game mod settings with the custom ones
-		err = config.ReplaceGameSettings(modName)
+		err = config.ReplaceGameSettings(modName, autoPartyInvite)
 		if err != nil {
 			return 0, 0, err
 		}
