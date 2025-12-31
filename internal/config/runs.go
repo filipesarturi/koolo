@@ -24,6 +24,7 @@ const (
 	TalRashaTombsRun    Run = "tal_rasha_tombs"
 	BaalRun             Run = "baal"
 	DiabloRun           Run = "diablo"
+	DiabloPublicRun     Run = "diablo_public"
 	CowsRun             Run = "cows"
 	LevelingRun         Run = "leveling"
 	LevelingSequenceRun Run = "leveling_sequence"
@@ -97,6 +98,7 @@ var AvailableRuns = map[Run]interface{}{
 	TalRashaTombsRun:    nil,
 	BaalRun:             nil,
 	DiabloRun:           nil,
+	DiabloPublicRun:     nil,
 	CowsRun:             nil,
 	LevelingRun:         nil,
 	LevelingSequenceRun: nil,
@@ -165,6 +167,7 @@ var SequencerRuns = []Run{
 	CubeRun,
 	DenRun,
 	DiabloRun,
+	DiabloPublicRun,
 	DrifterCavernRun,
 	DurielRun,
 	EldritchRun,

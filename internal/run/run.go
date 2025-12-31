@@ -76,6 +76,8 @@ func BuildRun(run string) Run {
 		return NewTravincal()
 	case string(config.DiabloRun):
 		return NewDiablo()
+	case string(config.DiabloPublicRun):
+		return NewDiabloPublic()
 	case string(config.EldritchRun):
 		return NewEldritch()
 	case string(config.PindleskinRun):

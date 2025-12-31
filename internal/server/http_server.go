@@ -2419,7 +2419,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Game.Diablo.KillDiablo = r.Form.Has("gameDiabloKillDiablo")
 		cfg.Game.Diablo.FocusOnElitePacks = r.Form.Has("gameDiabloFocusOnElitePacks")
 		cfg.Game.Diablo.DisableItemPickupDuringBosses = r.Form.Has("gameDiabloDisableItemPickupDuringBosses")
-		cfg.Game.Diablo.AttackFromDistance = s.getIntFromForm(r, "gameLevelingHellRequiredFireRes", 0, 25, 0)
+		cfg.Game.Diablo.AttackFromDistance = s.getIntFromForm(r, "gameDiabloAttackFromDistance", 0, 25, 0)
 		cfg.Game.Leveling.EnsurePointsAllocation = r.Form.Has("gameLevelingEnsurePointsAllocation")
 		cfg.Game.Leveling.EnsureKeyBinding = r.Form.Has("gameLevelingEnsureKeyBinding")
 		cfg.Game.Leveling.AutoEquip = r.Form.Has("gameLevelingAutoEquip")
@@ -2802,7 +2802,7 @@ func (s *HttpServer) applyRunDetails(values url.Values, cfg *config.CharacterCfg
 			cfg.Game.LowerKurastChest.OpenRacks = values.Has("gameLowerKurastChestOpenRacks")
 			cfg.Game.LowerKurastChest.OpenAllChests = values.Has("gameLowerKurastChestOpenAllChests")
 			cfg.Game.LowerKurastChest.ForceTelekinesis = values.Has("gameLowerKurastChestForceTelekinesis")
-		case "diablo":
+		case "diablo", "diablo_public":
 			cfg.Game.Diablo.KillDiablo = values.Has("gameDiabloKillDiablo")
 			cfg.Game.Diablo.DisableItemPickupDuringBosses = values.Has("gameDiabloDisableItemPickupDuringBosses")
 			cfg.Game.Diablo.StartFromStar = values.Has("gameDiabloStartFromStar")
