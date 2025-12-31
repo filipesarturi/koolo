@@ -34,15 +34,25 @@ func (pf *PathFinder) SetPacketSender(ps *game.PacketSender) {
 }
 
 func (pf *PathFinder) GetPath(to data.Position) (Path, int, bool) {
+	return pf.getPathInternal(to, true)
+}
+
+// GetPathIgnoreMonsters calculates a path to the destination ignoring monsters as obstacles.
+// Useful for "fight through" scenarios like Cow Level.
+func (pf *PathFinder) GetPathIgnoreMonsters(to data.Position) (Path, int, bool) {
+	return pf.getPathInternal(to, false)
+}
+
+func (pf *PathFinder) getPathInternal(to data.Position, addMonsterObstacles bool) (Path, int, bool) {
 	// First try direct path
-	if path, distance, found := pf.GetPathFrom(pf.data.PlayerUnit.Position, to); found {
+	if path, distance, found := pf.getPathFromInternal(pf.data.PlayerUnit.Position, to, addMonsterObstacles); found {
 		return path, distance, true
 	}
 
 	walkableTo, foundTo := pf.findNearbyWalkablePosition(to)
 	// If direct path fails, try to find nearby to walkable position
 	if foundTo {
-		path, distance, found := pf.GetPathFrom(pf.data.PlayerUnit.Position, walkableTo)
+		path, distance, found := pf.getPathFromInternal(pf.data.PlayerUnit.Position, walkableTo, addMonsterObstacles)
 		if found {
 			return path, distance, true
 		}
@@ -53,6 +63,17 @@ func (pf *PathFinder) GetPath(to data.Position) (Path, int, bool) {
 }
 
 func (pf *PathFinder) GetPathFrom(from, to data.Position) (Path, int, bool) {
+	return pf.getPathFromInternal(from, to, true)
+}
+
+// GetPathFromIgnoreMonsters calculates a path ignoring monsters as obstacles.
+// Useful for "fight through" scenarios like Cow Level where we need to path
+// through monster-dense areas.
+func (pf *PathFinder) GetPathFromIgnoreMonsters(from, to data.Position) (Path, int, bool) {
+	return pf.getPathFromInternal(from, to, false)
+}
+
+func (pf *PathFinder) getPathFromInternal(from, to data.Position, addMonsterObstacles bool) (Path, int, bool) {
 	a := pf.data.AreaData
 	canTeleport := pf.data.CanTeleport()
 
@@ -114,13 +135,15 @@ func (pf *PathFinder) GetPathFrom(from, to data.Position) (Path, int, bool) {
 		}
 	}
 
-	// Add monsters to the collision grid as obstacles
-	for _, m := range pf.data.Monsters {
-		if !grid.IsWalkable(m.Position) {
-			continue
+	// Add monsters to the collision grid as obstacles (unless ignored for fight-through scenarios)
+	if addMonsterObstacles {
+		for _, m := range pf.data.Monsters {
+			if !grid.IsWalkable(m.Position) {
+				continue
+			}
+			relativePos := grid.RelativePosition(m.Position)
+			grid.CollisionGrid[relativePos.Y][relativePos.X] = game.CollisionTypeMonster
 		}
-		relativePos := grid.RelativePosition(m.Position)
-		grid.CollisionGrid[relativePos.Y][relativePos.X] = game.CollisionTypeMonster
 	}
 
 	// set barricade tower as non walkable in act 5
@@ -217,9 +240,19 @@ func (pf *PathFinder) GetClosestWalkablePath(dest data.Position) (Path, int, boo
 }
 
 func (pf *PathFinder) GetClosestWalkablePathFrom(from, dest data.Position) (Path, int, bool) {
+	return pf.getClosestWalkablePathFromInternal(from, dest, true)
+}
+
+// GetClosestWalkablePathIgnoreMonsters finds a walkable path ignoring monsters as obstacles.
+// Useful for "fight through" scenarios like Cow Level.
+func (pf *PathFinder) GetClosestWalkablePathIgnoreMonsters(dest data.Position) (Path, int, bool) {
+	return pf.getClosestWalkablePathFromInternal(pf.data.PlayerUnit.Position, dest, false)
+}
+
+func (pf *PathFinder) getClosestWalkablePathFromInternal(from, dest data.Position, addMonsterObstacles bool) (Path, int, bool) {
 	a := pf.data.AreaData
 	if a.IsWalkable(dest) || !a.IsInside(dest) {
-		path, distance, found := pf.GetPath(dest)
+		path, distance, found := pf.getPathFromInternal(from, dest, addMonsterObstacles)
 		if found {
 			return path, distance, found
 		}
@@ -236,10 +269,10 @@ func (pf *PathFinder) GetClosestWalkablePathFrom(from, dest data.Position) (Path
 					cgY := dest.Y - pf.data.AreaOrigin.Y + j
 					cgX := dest.X - pf.data.AreaOrigin.X + i
 					if cgX > 0 && cgY > 0 && a.Height > cgY && a.Width > cgX && a.CollisionGrid[cgY][cgX] == game.CollisionTypeWalkable {
-						return pf.GetPathFrom(from, data.Position{
+						return pf.getPathFromInternal(from, data.Position{
 							X: dest.X + i,
 							Y: dest.Y + j,
-						})
+						}, addMonsterObstacles)
 					}
 				}
 			}

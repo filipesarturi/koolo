@@ -262,6 +262,16 @@ func selectNextEnemy(ctx *context.Status, pos data.Position, radius int, filters
 }
 
 func ClearThroughPath(pos data.Position, radius int, filter data.MonsterFilter) error {
+	return clearThroughPathInternal(pos, radius, filter, false)
+}
+
+// ClearThroughPathIgnoreMonsters clears through a path ignoring monsters in pathfinding.
+// Useful for "fight through" scenarios like Cow Level where monster density is very high.
+func ClearThroughPathIgnoreMonsters(pos data.Position, radius int, filter data.MonsterFilter) error {
+	return clearThroughPathInternal(pos, radius, filter, true)
+}
+
+func clearThroughPathInternal(pos data.Position, radius int, filter data.MonsterFilter, ignoreMonsters bool) error {
 	ctx := context.Get()
 
 	lastMovement := false
@@ -274,7 +284,13 @@ func ClearThroughPath(pos data.Position, radius int, filter data.MonsterFilter) 
 			return nil
 		}
 
-		path, _, found := ctx.PathFinder.GetPath(pos)
+		var path pather.Path
+		var found bool
+		if ignoreMonsters {
+			path, _, found = ctx.PathFinder.GetPathIgnoreMonsters(pos)
+		} else {
+			path, _, found = ctx.PathFinder.GetPath(pos)
+		}
 		if !found {
 			return fmt.Errorf("path could not be calculated")
 		}

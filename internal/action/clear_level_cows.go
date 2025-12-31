@@ -30,12 +30,12 @@ func ClearCurrentLevelCows(openChests bool, filter data.MonsterFilter) error {
 			return errDeath
 		}
 
-		// Aggressive “fight-through” movement to room center (no monster filter path-avoidance)
+		// Aggressive "fight-through" movement to room center (no monster filter path-avoidance)
 		if err := clearRoomCows(r, filter, moveClearRadius); err != nil {
 			ctx.Logger.Warn("Failed to clear room (cows)", slog.Any("error", err))
 		}
 
-		// Don’t loot-vacuum after every room
+		// Don't loot-vacuum after every room
 		if (i%pickupEveryRooms == 0) || (i == len(rooms)-1) {
 			if err := ItemPickup(pickupRadius); err != nil {
 				ctx.Logger.Warn("Failed to pickup items (cows)", slog.Any("error", err))
@@ -74,7 +74,8 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 	ctx := context.Get()
 	ctx.SetLastAction("clearRoomCows")
 
-	path, _, found := ctx.PathFinder.GetClosestWalkablePath(room.GetCenter())
+	// Use ignore-monsters pathfinding for Cow Level since we need to "fight through" dense packs
+	path, _, found := ctx.PathFinder.GetClosestWalkablePathIgnoreMonsters(room.GetCenter())
 	if !found {
 		return errors.New("failed to find a path to the room center")
 	}
@@ -84,8 +85,8 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 		Y: path.To().Y + ctx.Data.AreaOrigin.Y,
 	}
 
-	// Clear while moving so we don’t edge-hug around packs
-	if err := ClearThroughPath(to, moveClearRadius, filter); err != nil {
+	// Clear while moving (ignore monsters in pathfinding for cow density)
+	if err := ClearThroughPathIgnoreMonsters(to, moveClearRadius, filter); err != nil {
 		return fmt.Errorf("failed moving/clearing to room center: %w", err)
 	}
 
@@ -151,7 +152,7 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 	}
 }
 
-// Cow-only “alive AND (in-room OR near)” so you don’t target corpses near you.
+// Cow-only "alive AND (in-room OR near)" so you don't target corpses near you.
 func getMonstersInRoomCows(room data.Room, filter data.MonsterFilter) []data.Monster {
 	ctx := context.Get()
 
