@@ -1996,6 +1996,9 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.AuthMethod = r.Form.Get("authmethod")
 		cfg.AuthToken = r.Form.Get("AuthToken")
 		cfg.CommandLineArgs = r.Form.Get("commandLineArgs")
+		if v := r.Form.Get("maxGameLength"); v != "" {
+			cfg.MaxGameLength, _ = strconv.Atoi(v)
+		}
 		cfg.KillD2OnStop = r.Form.Has("kill_d2_process")
 		cfg.ClassicMode = r.Form.Has("classic_mode")
 		cfg.CloseMiniPanel = r.Form.Has("close_mini_panel")
