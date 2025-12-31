@@ -13,7 +13,6 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/action"
-	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/pather"
@@ -22,7 +21,6 @@ import (
 
 var minChestDistanceFromBonfire = 25
 var maxChestDistanceFromBonfire = 45
-const telekinesisRange = 15 // Telekinesis effective range (conservative to ensure reliability)
 
 type LowerKurastChests struct {
 	ctx *context.Status
@@ -205,42 +203,14 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 
 			// Check if we can use Telekinesis from current position
 			objDistance := run.ctx.PathFinder.DistanceFromMe(o.Position)
+			canUseTK := run.canUseTelekinesisForObject(o)
 			forceTK := run.ctx.CharacterCfg.Game.LowerKurastChest.ForceTelekinesis
-			
-			// Check TK availability (forceTK ignores global UseTelekinesis setting)
-			canUseTK := run.canUseTelekinesisForObject(o, forceTK)
 
-			// If ForceTelekinesis is enabled and TK is available, use TK directly
+			// If ForceTelekinesis is enabled and TK is available, let InteractObject handle movement
+			// InteractObject will move to TK range if needed, or use TK directly if in range
 			if forceTK && canUseTK {
-				// Move to TK range if out of range, otherwise use TK from current position
-				if objDistance > telekinesisRange {
-					// Move to TK range (not all the way to object)
-					err = run.moveToTelekinesisRange(o.Position)
-					if err != nil {
-						run.ctx.Logger.Debug("Failed moving to TK range, trying normal move", "error", err)
-						// Fallback to normal move
-						err = action.MoveToCoords(o.Position)
-						if err != nil {
-							continue
-						}
-					}
-				}
-				// Use Telekinesis directly via step.InteractObjectTelekinesis
-				// This bypasses the global UseTelekinesis check
-				err = run.interactWithTelekinesis(o)
-				if err != nil {
-					run.ctx.Logger.Debug("Telekinesis interaction failed, trying normal interaction", "error", err)
-					// Fallback to normal interaction
-					err = action.InteractObject(o, func() bool {
-						run.ctx.RefreshGameData()
-						obj, found := run.ctx.Data.Objects.FindByID(o.ID)
-						return !found || !obj.Selectable
-					})
-				}
-				if err != nil {
-					run.ctx.Logger.Debug("Failed interacting with object", "object", o.Name, "error", err)
-					continue
-				}
+				// Don't pre-move - let InteractObject handle it optimally
+				// InteractObject will check distance and move to TK range if needed
 			} else {
 				// Normal mode: move if not within Telekinesis range (or TK not available)
 				if !canUseTK || objDistance > telekinesisRange {
@@ -249,16 +219,29 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 						continue
 					}
 				}
-				// Interact with the object normally
+			}
+
+			// Interact with the object
+			// If ForceTelekinesis is enabled, use step.InteractObject directly to bypass global UseTelekinesis check
+			if forceTK && canUseTK {
+				// Force TK usage by calling step.InteractObject directly
+				// This bypasses the global UseTelekinesis check in action.InteractObject
+				err = run.interactObjectWithForcedTK(o, func() bool {
+					run.ctx.RefreshGameData()
+					obj, found := run.ctx.Data.Objects.FindByID(o.ID)
+					return !found || !obj.Selectable
+				})
+			} else {
+				// Normal interaction (InteractObject will use TK if available and in range)
 				err = action.InteractObject(o, func() bool {
 					run.ctx.RefreshGameData()
 					obj, found := run.ctx.Data.Objects.FindByID(o.ID)
 					return !found || !obj.Selectable
 				})
-				if err != nil {
-					run.ctx.Logger.Debug("Failed interacting with object", "object", o.Name, "error", err)
-					continue
-				}
+			}
+			if err != nil {
+				run.ctx.Logger.Debug("Failed interacting with object", "object", o.Name, "error", err)
+				continue
 			}
 
 			// Wait for items to drop from chest/stash (some have delays, stashes have longer animations)
@@ -353,45 +336,42 @@ func (run LowerKurastChests) getItemsNearPosition(pos data.Position, radius int)
 }
 
 // canUseTelekinesisForObject checks if Telekinesis can be used for the given object
-// If forceTK is true, ignores the global UseTelekinesis setting
-func (run LowerKurastChests) canUseTelekinesisForObject(obj data.Object, forceTK bool) bool {
+// If ForceTelekinesis is enabled, ignores the global UseTelekinesis setting
+func (run LowerKurastChests) canUseTelekinesisForObject(obj data.Object) bool {
 	ctx := run.ctx
+	forceTK := ctx.CharacterCfg.Game.LowerKurastChest.ForceTelekinesis
 	
-	// If forceTK is false, check global setting
+	// If ForceTelekinesis is enabled, ignore global UseTelekinesis setting
+	// Otherwise, check global setting
 	if !forceTK && !ctx.CharacterCfg.Character.UseTelekinesis {
 		return false
 	}
 	
-	// Check if character has Telekinesis skill
 	if ctx.Data.PlayerUnit.Skills[skill.Telekinesis].Level == 0 {
 		return false
 	}
-	
-	// Check if Telekinesis has a keybinding (required for HID interaction)
 	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
 		return false
 	}
-	
 	// Telekinesis works on chests, super chests, and shrines
 	return obj.IsChest() || obj.IsSuperChest() || obj.IsShrine()
 }
 
-// moveToTelekinesisRange moves to within Telekinesis range of the target object
-func (run LowerKurastChests) moveToTelekinesisRange(targetPos data.Position) error {
-	// Use step.MoveTo with distance to finish set to TK range
-	// This will move close enough for TK but not all the way to the object
-	return step.MoveTo(targetPos, step.WithDistanceToFinish(telekinesisRange-2), step.WithIgnoreMonsters())
-}
-
-// interactWithTelekinesis uses Telekinesis directly to interact with the object
-// This bypasses the global UseTelekinesis check when ForceTelekinesis is enabled
-func (run LowerKurastChests) interactWithTelekinesis(obj data.Object) error {
-	// Use step.InteractObjectTelekinesis directly, which doesn't check global UseTelekinesis
-	return step.InteractObjectTelekinesis(obj, func() bool {
-		run.ctx.RefreshGameData()
-		updatedObj, found := run.ctx.Data.Objects.FindByID(obj.ID)
-		return !found || !updatedObj.Selectable
-	})
+// interactObjectWithForcedTK interacts with an object forcing Telekinesis usage
+// This temporarily enables UseTelekinesis to bypass the global setting
+func (run LowerKurastChests) interactObjectWithForcedTK(obj data.Object, isCompletedFn func() bool) error {
+	ctx := run.ctx
+	
+	// Temporarily enable UseTelekinesis to force TK usage
+	originalUseTK := ctx.CharacterCfg.Character.UseTelekinesis
+	ctx.CharacterCfg.Character.UseTelekinesis = true
+	defer func() {
+		// Restore original setting
+		ctx.CharacterCfg.Character.UseTelekinesis = originalUseTK
+	}()
+	
+	// Now InteractObject will use Telekinesis
+	return action.InteractObject(obj, isCompletedFn)
 }
 
 func isChestWithinBonfireRange(chest data.Object, bonfirePosition data.Position) bool {
