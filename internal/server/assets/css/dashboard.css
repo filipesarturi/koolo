@@ -805,6 +805,13 @@ body {
   font-style: italic;
 }
 
+.current-game-time {
+  margin-top: var(--spacing-xs);
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 /* ========================================
    ATTACH POPUP
    ======================================== */

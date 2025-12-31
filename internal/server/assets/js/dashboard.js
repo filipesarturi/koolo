@@ -371,7 +371,7 @@ function updateCharacterCard(card, key, value, dropCount) {
   updateCharacterOverview(card, uiPayload, value.SupervisorStatus);
 
   if (statusDetails) {
-    updateStartedTime(statusDetails, value.StartedAt);
+    updateStartedTime(statusDetails, value.StartedAt, value.Games);
   }
 }
 
@@ -398,7 +398,7 @@ function updateStatus(statusBadge, statusDetails, status) {
     .replace(" ", "")}`;
 }
 
-function updateStartedTime(statusDetails, startedAt) {
+function updateStartedTime(statusDetails, startedAt, games) {
   const startTime = new Date(startedAt);
   const now = new Date();
 
@@ -409,19 +409,58 @@ function updateStartedTime(statusDetails, startedAt) {
     statusDetails.appendChild(runningForElement);
   }
 
+  // Update bot total running time
   if (startTime.getFullYear() === 1) {
     runningForElement.textContent = "Running for: N/A";
-    return;
+  } else {
+    const timeDiff = now - startTime;
+    if (timeDiff < 0) {
+      runningForElement.textContent = "Running for: N/A";
+    } else {
+      const duration = formatDuration(timeDiff);
+      runningForElement.textContent = `Running for: ${duration}`;
+    }
   }
 
-  const timeDiff = now - startTime;
-  if (timeDiff < 0) {
-    runningForElement.textContent = "Running for: N/A";
-    return;
+  // Update current game time
+  let currentGameElement = statusDetails.querySelector(".current-game-time");
+  if (!currentGameElement) {
+    currentGameElement = document.createElement("div");
+    currentGameElement.className = "current-game-time";
+    statusDetails.appendChild(currentGameElement);
   }
 
-  const duration = formatDuration(timeDiff);
-  runningForElement.textContent = `Running for: ${duration}`;
+  // Find the current game (last game without FinishedAt)
+  const currentGame = games && games.length > 0 
+    ? games[games.length - 1] 
+    : null;
+
+  if (currentGame && currentGame.StartedAt) {
+    const gameStartTime = new Date(currentGame.StartedAt);
+    const finishedAtStr = currentGame.FinishedAt || "";
+    const isGameFinished = finishedAtStr !== "" && finishedAtStr !== "0001-01-01T00:00:00Z";
+    
+    // Only show if game is still running (not finished)
+    if (!isGameFinished) {
+      if (gameStartTime.getFullYear() === 1) {
+        currentGameElement.textContent = "Current game: N/A";
+      } else {
+        const gameTimeDiff = now - gameStartTime;
+        if (gameTimeDiff < 0) {
+          currentGameElement.textContent = "Current game: N/A";
+        } else {
+          const gameDuration = formatDuration(gameTimeDiff);
+          currentGameElement.textContent = `Current game: ${gameDuration}`;
+        }
+      }
+    } else {
+      // Game is finished, don't show current game time
+      currentGameElement.textContent = "";
+    }
+  } else {
+    // No current game
+    currentGameElement.textContent = "";
+  }
 }
 
 function maybeShowAutoStartPrompt(data) {
