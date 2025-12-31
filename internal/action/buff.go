@@ -110,8 +110,8 @@ func BuffIfRequired() {
 	}
 
 	const (
-		safeDistanceForBuff = 20 // Minimum distance from monsters to safely buff
-		maxSearchDistance   = 35 // Maximum distance to search for a safe position
+		safeDistanceForBuff = 35 // Minimum distance from monsters to safely buff
+		maxSearchDistance   = 55 // Maximum distance to search for a safe position
 	)
 
 	// Check if MoveToSafePositionForBuff is enabled in config
