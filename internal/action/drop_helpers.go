@@ -40,45 +40,16 @@ func IsDropProtected(i data.Item) bool {
 	}
 
 	// Protect keys based on KeyCount configuration
-	// Allow dropping excess keys, but keep at least KeyCount
+	// Always protect keys in locked inventory slots
+	// Always drop keys in unlocked slots (they should not be in unlocked slots)
 	if i.Name == item.Key {
-		keyCount := getKeyCount()
-		if keyCount <= 0 {
-			// If KeyCount is 0 or disabled, never drop keys
+		// Always protect keys that are in locked inventory slots
+		if IsInLockedInventorySlot(i) {
 			return true
 		}
 
-		// Count current keys in inventory
-		totalKeys := 0
-		if ctx != nil {
-			for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
-				if itm.Name == item.Key {
-					if qty, found := itm.FindStat(stat.Quantity, 0); found {
-						totalKeys += qty.Value
-					} else {
-						totalKeys++ // If no quantity stat, assume stack of 1
-					}
-				}
-			}
-		}
-
-		// If we have at or below the configured amount, protect all keys
-		if totalKeys <= keyCount {
-			return true // Protect keys if we have at or below the configured amount
-		}
-
-		// We have excess keys, check if dropping this specific key would leave us below KeyCount
-		keysInThisStack := 1
-		if qty, found := i.FindStat(stat.Quantity, 0); found {
-			keysInThisStack = qty.Value
-		}
-
-		// If dropping this key would leave us with less than KeyCount, protect it
-		if totalKeys-keysInThisStack < keyCount {
-			return true // Protect this key to maintain at least KeyCount
-		}
-
-		// This key is excess, allow dropping it
+		// Keys in unlocked slots should always be dropped
+		// The locked area is where keys should be kept
 		return false
 	}
 

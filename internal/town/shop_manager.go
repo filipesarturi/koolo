@@ -673,88 +673,17 @@ func ItemsToBeSold(lockConfig ...[][]int) (items []data.Item) {
 			continue
 		}
 
-		// Handle keys: include excess keys from unlocked slots in items to be sold/dropped
+		// Handle keys: always sell/drop keys from unlocked slots
+		// Keys in locked slots are always kept
 		if itm.Name == item.Key {
 			// Check if this key is in a locked slot - if so, always keep it
 			if isInLockedInventorySlot(itm, currentLockConfig) {
 				continue
 			}
 
-			// Calculate total keys and locked keys to determine excess
-			totalKeys := 0
-			lockedKeys := 0
-			unlockedKeys := 0
-			for _, keyItem := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
-				if keyItem.Name == item.Key {
-					if qty, found := keyItem.FindStat(stat.Quantity, 0); found {
-						totalKeys += qty.Value
-						if isInLockedInventorySlot(keyItem, currentLockConfig) {
-							lockedKeys += qty.Value
-						} else {
-							unlockedKeys += qty.Value
-						}
-					}
-				}
-			}
-
-			keyCount := getKeyCount()
-			if keyCount <= 0 {
-				keyCount = 12 // Default to 12 if not configured
-			}
-
-			// Calculate how many keys we need to keep (at least keyCount, but respect locked keys)
-			keysToKeep := keyCount
-			if lockedKeys > keyCount {
-				keysToKeep = lockedKeys
-			}
-
-			// If we have excess keys, include unlocked key stacks that are excess
-			if totalKeys > keysToKeep {
-				// Calculate how many keys we need to keep from unlocked slots
-				unlockedKeysNeeded := keysToKeep - lockedKeys
-				if unlockedKeysNeeded < 0 {
-					unlockedKeysNeeded = 0
-				}
-
-				// If we have more unlocked keys than needed, this key stack might be excess
-				if unlockedKeys > unlockedKeysNeeded {
-					// Count unlocked keys in stacks that come before this one (by position)
-					keysBeforeThis := 0
-					for _, keyItem := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
-						if keyItem.Name == item.Key && !isInLockedInventorySlot(keyItem, currentLockConfig) {
-							// Check if this key comes before the current item (by position)
-							if keyItem.Position.Y < itm.Position.Y || (keyItem.Position.Y == itm.Position.Y && keyItem.Position.X < itm.Position.X) {
-								if qty, found := keyItem.FindStat(stat.Quantity, 0); found {
-									keysBeforeThis += qty.Value
-								} else {
-									keysBeforeThis++ // Single key
-								}
-							}
-						}
-					}
-
-					// If keys before this already cover what we need, this stack is excess
-					if keysBeforeThis >= unlockedKeysNeeded {
-						items = append(items, itm)
-					} else {
-						// We need some keys from this stack, check if this stack has excess
-						qtyInStack, found := itm.FindStat(stat.Quantity, 0)
-						if found {
-							keysNeededFromThis := unlockedKeysNeeded - keysBeforeThis
-							if qtyInStack.Value > keysNeededFromThis {
-								// This stack has excess, include it
-								items = append(items, itm)
-							}
-						} else {
-							// Single key, if we already have enough before this, include it
-							if keysBeforeThis >= unlockedKeysNeeded {
-								items = append(items, itm)
-							}
-						}
-					}
-				}
-			}
-			// If no excess, skip this key
+			// Keys in unlocked slots should always be sold/dropped
+			// The locked area is where keys should be kept
+			items = append(items, itm)
 			continue
 		}
 
