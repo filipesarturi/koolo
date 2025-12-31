@@ -82,6 +82,13 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 		action.Buff()
 	}
 
+	// Open TP at entrance if leader option is enabled
+	if d.ctx.CharacterCfg.Companion.Leader {
+		action.OpenTPIfLeader()
+		action.Buff()
+		action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
+	}
+
 	d.ctx.Logger.Debug(fmt.Sprintf("StartFromStar value: %t", d.ctx.CharacterCfg.Game.Diablo.StartFromStar))
 	if d.ctx.CharacterCfg.Game.Diablo.StartFromStar {
 		if d.ctx.Data.CanTeleport() {
@@ -93,8 +100,10 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 				return err
 			}
 		}
+
+		// Open TP at star if leader option is enabled and no TP nearby
 		if d.ctx.CharacterCfg.Companion.Leader {
-			action.OpenTPIfLeader()
+			d.openTPIfNoNearbyPortal(diabloSpawnPosition, 40)
 			action.Buff()
 			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
 		}
@@ -109,11 +118,6 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 			d.ctx.Logger.Debug("Successfully cleared path to Vizier from star")
 		}
 	} else {
-		if d.ctx.CharacterCfg.Companion.Leader {
-			action.OpenTPIfLeader()
-			action.Buff()
-			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
-		}
 		err := action.MoveToCoords(chaosNavToPosition, step.WithClearPathOverride(30), step.WithMonsterFilter(d.getMonsterFilter()))
 		if err != nil {
 			return err
@@ -558,4 +562,32 @@ func (d DiabloPublic) trySkipCinematic() {
 		action.HoldKey(win.VK_SPACE, 2000)
 		utils.Sleep(2000)
 	}
+}
+
+// openTPIfNoNearbyPortal opens a town portal only if there's no existing portal nearby
+func (d *DiabloPublic) openTPIfNoNearbyPortal(position data.Position, radius int) {
+	d.ctx.RefreshGameData()
+
+	radiusSquared := float64(radius * radius)
+
+	// Check if there's already a town portal nearby
+	for _, obj := range d.ctx.Data.Objects {
+		if obj.IsPortal() {
+			distanceSquared := d.distanceSquared(obj.Position, position)
+			if distanceSquared <= radiusSquared {
+				d.ctx.Logger.Debug(fmt.Sprintf("Town portal already exists nearby (within radius %d), skipping TP creation", radius))
+				return
+			}
+		}
+	}
+
+	d.ctx.Logger.Debug("No nearby town portal found, opening new TP at star")
+	action.OpenTPIfLeader()
+}
+
+// distanceSquared calculates the squared distance between two positions (avoids sqrt for performance)
+func (d *DiabloPublic) distanceSquared(p1, p2 data.Position) float64 {
+	dx := float64(p1.X - p2.X)
+	dy := float64(p1.Y - p2.Y)
+	return dx*dx + dy*dy
 }
