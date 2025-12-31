@@ -543,10 +543,10 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				continue
 			} else {
 				pathErrors++
-				//Try some randome movements to help pathfinding (not sure that it helps)
+				// Try smart escape movement to help pathfinding
 				if pathErrors < 5 {
-					ctx.Logger.Warn("No path found, trying random movement to fix")
-					ctx.PathFinder.RandomMovement()
+					ctx.Logger.Warn("No path found, trying smart escape movement to fix")
+					ctx.PathFinder.SmartEscapeMovement()
 					utils.Sleep(200)
 					continue
 				} else {
@@ -711,14 +711,14 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				continue
 			} else if errors.Is(moveErr, step.ErrPlayerStuck) || errors.Is(moveErr, step.ErrPlayerRoundTrip) {
 				if (!ctx.Data.CanTeleport() || stuck) || ctx.Data.PlayerUnit.Area.IsTown() {
-					ctx.PathFinder.RandomMovement()
-					time.Sleep(time.Millisecond * 200)
+					ctx.PathFinder.SmartEscapeMovement()
+					time.Sleep(time.Millisecond * 150)
 				}
 				stuck = true
 				continue
 			} else if errors.Is(moveErr, step.ErrNoPath) && pathStep > 0 {
-				ctx.PathFinder.RandomMovement()
-				time.Sleep(time.Millisecond * 200)
+				ctx.PathFinder.SmartEscapeMovement()
+				time.Sleep(time.Millisecond * 150)
 				continue
 			}
 

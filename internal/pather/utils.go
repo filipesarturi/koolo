@@ -24,6 +24,85 @@ func (pf *PathFinder) RandomMovement() {
 	utils.Sleep(50)
 }
 
+// SmartEscapeMovement attempts to move the character out of a stuck position
+// by trying multiple directions and checking for walkable positions.
+// Returns true if a valid escape direction was found and movement was attempted.
+func (pf *PathFinder) SmartEscapeMovement() bool {
+	playerPos := pf.data.PlayerUnit.Position
+
+	// 8 directions to try: N, NE, E, SE, S, SW, W, NW
+	// Using game coordinates where Y increases going down-right
+	directions := []struct {
+		dx, dy int
+		name   string
+	}{
+		{0, -5, "N"},
+		{5, -5, "NE"},
+		{5, 0, "E"},
+		{5, 5, "SE"},
+		{0, 5, "S"},
+		{-5, 5, "SW"},
+		{-5, 0, "W"},
+		{-5, -5, "NW"},
+	}
+
+	// Shuffle directions to avoid getting stuck in patterns
+	rand.Shuffle(len(directions), func(i, j int) {
+		directions[i], directions[j] = directions[j], directions[i]
+	})
+
+	// Try each direction looking for a walkable position
+	for _, dir := range directions {
+		testPos := data.Position{
+			X: playerPos.X + dir.dx,
+			Y: playerPos.Y + dir.dy,
+		}
+
+		// Check if the position is inside the area bounds and walkable
+		if pf.data.AreaData.IsInside(testPos) && pf.data.AreaData.IsWalkable(testPos) {
+			// Check line of sight to avoid moving through walls
+			if pf.LineOfSight(playerPos, testPos) {
+				screenX, screenY := pf.GameCoordsToScreenCords(testPos.X, testPos.Y)
+
+				// Ensure screen coordinates are valid
+				if screenX > 0 && screenY > 0 && screenX < pf.gr.GameAreaSizeX && screenY < pf.gr.GameAreaSizeY {
+					pf.hid.MovePointer(screenX, screenY)
+					pf.hid.PressKeyBinding(pf.data.KeyBindings.ForceMove)
+					utils.Sleep(100)
+					return true
+				}
+			}
+		}
+	}
+
+	// If no walkable direction found, try a larger radius
+	for radius := 7; radius <= 12; radius += 2 {
+		for _, dir := range directions {
+			testPos := data.Position{
+				X: playerPos.X + (dir.dx * radius / 5),
+				Y: playerPos.Y + (dir.dy * radius / 5),
+			}
+
+			if pf.data.AreaData.IsInside(testPos) && pf.data.AreaData.IsWalkable(testPos) {
+				if pf.LineOfSight(playerPos, testPos) {
+					screenX, screenY := pf.GameCoordsToScreenCords(testPos.X, testPos.Y)
+
+					if screenX > 0 && screenY > 0 && screenX < pf.gr.GameAreaSizeX && screenY < pf.gr.GameAreaSizeY {
+						pf.hid.MovePointer(screenX, screenY)
+						pf.hid.PressKeyBinding(pf.data.KeyBindings.ForceMove)
+						utils.Sleep(100)
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback to random movement if no valid escape found
+	pf.RandomMovement()
+	return false
+}
+
 func (pf *PathFinder) DistanceFromMe(p data.Position) int {
 	return DistanceFromPoint(pf.data.PlayerUnit.Position, p)
 }

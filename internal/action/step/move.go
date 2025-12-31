@@ -125,8 +125,10 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 	stepLastMonsterCheck := time.Time{}
 
 	blockThreshold := 200 * time.Millisecond
-	stuckThreshold := 2 * time.Second
+	stuckThreshold := 1500 * time.Millisecond // Reduced from 2s for faster response
 	stuckCheckStartTime := time.Now()
+	escapeAttempts := 0
+	const maxEscapeAttempts = 3
 
 	roundTripReferencePosition := ctx.Data.PlayerUnit.Position
 	roundTripCheckStartTime := time.Now()
@@ -291,19 +293,27 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		if currentPosition == previousPosition && !ctx.Data.PlayerUnit.States.HasState(state.Stunned) {
 			stuckTime := time.Since(stuckCheckStartTime)
 			if stuckTime > stuckThreshold {
-				//if stuck for too long, abort movement
+				// Try escape before giving up
+				if escapeAttempts < maxEscapeAttempts {
+					escapeAttempts++
+					ctx.PathFinder.SmartEscapeMovement()
+					stuckCheckStartTime = time.Now()
+					continue
+				}
+				// If stuck for too long after multiple escape attempts, abort movement
 				return ErrPlayerStuck
 			} else if stuckTime > blockThreshold {
-				//Detect blocked after short threshold
+				// Detect blocked after short threshold
 				blocked = true
 			}
 		} else {
-			//Player moved, reset stuck detection timer
+			// Player moved, reset stuck detection timer and escape attempts
 			stuckCheckStartTime = time.Now()
+			escapeAttempts = 0
 		}
 
 		if blocked {
-			//First check if there's a destructible nearby
+			// First check if there's a destructible nearby
 			if obj, found := ctx.PathFinder.GetClosestDestructible(ctx.Data.PlayerUnit.Position); found {
 				if !obj.Selectable {
 					// Already destroyed, move on
@@ -315,13 +325,15 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 				// Adaptive delay for obstacle interaction based on ping
 				time.Sleep(time.Millisecond * time.Duration(utils.PingMultiplier(utils.Light, 100)))
 			} else if door, found := ctx.PathFinder.GetClosestDoor(ctx.Data.PlayerUnit.Position); found {
-				//There's a door really close, try to open it
+				// There's a door really close, try to open it
 				doorToOpen := *door
 				InteractObject(doorToOpen, func() bool {
 					door, found := ctx.Data.Objects.FindByID(door.ID)
 					return found && !door.Selectable
 				})
 			}
+			// Note: SmartEscapeMovement is only called when stuckThreshold is reached,
+			// not during normal blocked detection to avoid interfering with combat
 		}
 
 		//Handle skills for navigation
