@@ -91,6 +91,7 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 
 	d.ctx.Logger.Debug(fmt.Sprintf("StartFromStar value: %t", d.ctx.CharacterCfg.Game.Diablo.StartFromStar))
 	if d.ctx.CharacterCfg.Game.Diablo.StartFromStar {
+		// Go directly to star
 		if d.ctx.Data.CanTeleport() {
 			if err := action.MoveToCoords(diabloSpawnPosition, step.WithIgnoreMonsters()); err != nil {
 				return err
@@ -101,10 +102,9 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 			}
 		}
 
-		// Open TP at star if leader option is enabled and no TP nearby
+		// Open TP at star if leader option is enabled
 		if d.ctx.CharacterCfg.Companion.Leader {
 			d.openTPIfNoNearbyPortal(diabloSpawnPosition, 40)
-			action.Buff()
 			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
 		}
 
@@ -118,9 +118,26 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 			d.ctx.Logger.Debug("Successfully cleared path to Vizier from star")
 		}
 	} else {
+		// Go through the path killing monsters, heading towards star
 		err := action.MoveToCoords(chaosNavToPosition, step.WithClearPathOverride(30), step.WithMonsterFilter(d.getMonsterFilter()))
 		if err != nil {
 			return err
+		}
+
+		// Now move to star and open TP there if leader
+		if d.ctx.CharacterCfg.Companion.Leader {
+			d.ctx.Logger.Debug("Leader mode: Moving to star to open TP for manual players")
+			if d.ctx.Data.CanTeleport() {
+				if err := action.MoveToCoords(diabloSpawnPosition, step.WithIgnoreMonsters()); err != nil {
+					return err
+				}
+			} else {
+				if err := action.MoveToCoords(diabloSpawnPosition, step.WithClearPathOverride(30), step.WithMonsterFilter(d.getMonsterFilter())); err != nil {
+					return err
+				}
+			}
+			d.openTPIfNoNearbyPortal(diabloSpawnPosition, 40)
+			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
 		}
 	}
 
