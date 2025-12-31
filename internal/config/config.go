@@ -305,6 +305,7 @@ type CharacterCfg struct {
 		CreateLobbyGames       bool                  `yaml:"createLobbyGames"`
 		PublicGameCounter      int                   `yaml:"-"`
 		PublicGameNames        PublicGameNamesList   `yaml:"publicGameNames"` // List of predefined game names (comma-separated or array)
+		PublicGameNamesEnabled bool                  `yaml:"publicGameNamesEnabled"` // Enable/disable using public game names
 		PublicGameNameIndex    int                   `yaml:"-"`              // Current index in the PublicGameNames list
 		MaxFailedMenuAttempts  int                   `yaml:"maxFailedMenuAttempts"`
 		Pindleskin             struct {
@@ -388,7 +389,9 @@ type CharacterCfg struct {
 			KillShenk bool `yaml:"killShenk"`
 		} `yaml:"eldritch"`
 		LowerKurastChest struct {
-			OpenRacks bool `yaml:"openRacks"`
+			OpenRacks       bool `yaml:"openRacks"`
+			OpenAllChests   bool `yaml:"openAllChests"`
+			ForceTelekinesis bool `yaml:"forceTelekinesis"`
 		} `yaml:"lowerkurastchests"`
 		TerrorZone struct {
 			FocusOnElitePacks bool          `yaml:"focusOnElitePacks"`

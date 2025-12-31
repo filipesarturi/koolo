@@ -596,8 +596,8 @@ func (s *SinglePlayerSupervisor) HandleStandardMenuFlow() error {
 	if atLobbyScreen && s.bot.ctx.CharacterCfg.Game.CreateLobbyGames {
 		s.bot.ctx.Logger.Debug("[Menu Flow]: We're at the lobby screen and we should create a lobby game ...")
 
-		// Only initialize counter if using template mode (not using predefined names)
-		if len(s.bot.ctx.CharacterCfg.Game.PublicGameNames) == 0 {
+		// Only initialize counter if using template mode (not using predefined names or disabled)
+		if !s.bot.ctx.CharacterCfg.Game.PublicGameNamesEnabled || len(s.bot.ctx.CharacterCfg.Game.PublicGameNames) == 0 {
 			if s.bot.ctx.CharacterCfg.Game.PublicGameCounter == 0 {
 				s.bot.ctx.CharacterCfg.Game.PublicGameCounter = 1
 			}
@@ -696,13 +696,13 @@ func (s *SinglePlayerSupervisor) tryEnterLobby() error {
 func (s *SinglePlayerSupervisor) getNextGameName() string {
 	cfg := s.bot.ctx.CharacterCfg
 	
-	// If we have predefined game names, just alternate between them (no counter)
-	if len(cfg.Game.PublicGameNames) > 0 {
+	// If we have predefined game names and they are enabled, just alternate between them (no counter)
+	if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 {
 		gameName := cfg.Game.PublicGameNames[cfg.Game.PublicGameNameIndex]
 		return gameName
 	}
 	
-	// If no predefined names, use template + counter (old behavior with increment)
+	// If no predefined names or disabled, use template + counter (old behavior with increment)
 	return cfg.Companion.GameNameTemplate + fmt.Sprintf("%d", cfg.Game.PublicGameCounter)
 }
 
@@ -728,8 +728,8 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 	initialNameIndex := cfg.Game.PublicGameNameIndex
 	maxAttempts := 1
 	
-	// If using predefined names, try all names once if game exists
-	if len(cfg.Game.PublicGameNames) > 0 {
+	// If using predefined names and enabled, try all names once if game exists
+	if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 {
 		maxAttempts = len(cfg.Game.PublicGameNames)
 	}
 
@@ -753,9 +753,9 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 		if err == nil && !isDismissableModalPresent {
 			s.bot.ctx.Logger.Debug(fmt.Sprintf("[Menu Flow]: Lobby game created successfully with name: %s", gameName))
 			// After successful creation:
-			// - If using predefined names: rotate to next name (no counter increment)
+			// - If using predefined names and enabled: rotate to next name (no counter increment)
 			// - If using template: increment counter for next game
-			if len(cfg.Game.PublicGameNames) > 0 {
+			if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 {
 				// Just alternate between predefined names (no counter)
 				cfg.Game.PublicGameNameIndex = (cfg.Game.PublicGameNameIndex + 1) % len(cfg.Game.PublicGameNames)
 			} else {
@@ -778,9 +778,9 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 			s.bot.ctx.Logger.Debug(fmt.Sprintf("[Menu Flow]: Error from CreateLobbyGame: '%s' (gameExists=%v)", errStr, gameExists))
 		}
 
-		// If game exists and we're using predefined names, try next name
+		// If game exists and we're using predefined names and enabled, try next name
 		// Also try next name if we got an error and modal (might be game exists even if we can't detect the exact message)
-		if len(cfg.Game.PublicGameNames) > 0 && attempt < maxAttempts-1 {
+		if cfg.Game.PublicGameNamesEnabled && len(cfg.Game.PublicGameNames) > 0 && attempt < maxAttempts-1 {
 			if gameExists || (isDismissableModalPresent && err != nil) {
 				if gameExists {
 					s.bot.ctx.Logger.Info(fmt.Sprintf("[Menu Flow]: Game '%s' already exists, trying next name in list", gameName))
@@ -807,8 +807,8 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 			}
 		}
 
-		// If not using predefined names or all names tried, handle error normally
-		if len(cfg.Game.PublicGameNames) == 0 {
+		// If not using predefined names or disabled or all names tried, handle error normally
+		if !cfg.Game.PublicGameNamesEnabled || len(cfg.Game.PublicGameNames) == 0 {
 			// Only increment counter if using template mode
 			cfg.Game.PublicGameCounter++
 		}

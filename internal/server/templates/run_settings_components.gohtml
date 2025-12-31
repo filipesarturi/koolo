@@ -134,6 +134,8 @@
 {{ define "lower_kurast_chest" }}
     <fieldset>
         <label><input type="checkbox" name="gameLowerKurastChestOpenRacks" {{ if .Config.Game.LowerKurastChest.OpenRacks }}checked{{ end }}> Weapon Racks + Armor Stands</label>
+        <label><input type="checkbox" name="gameLowerKurastChestOpenAllChests" {{ if .Config.Game.LowerKurastChest.OpenAllChests }}checked{{ end }}> Open all containers (chests, barrels, urns, corpses, etc.)</label>
+        <label><input type="checkbox" name="gameLowerKurastChestForceTelekinesis" {{ if .Config.Game.LowerKurastChest.ForceTelekinesis }}checked{{ end }}> Force Telekinesis (only move if TK unavailable)</label>
     </fieldset>
 {{ end }}
 

@@ -1538,6 +1538,7 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			cfg.Companion.GamePassword = values.Get("companionGamePassword")
 
 			// Public game names
+			cfg.Game.PublicGameNamesEnabled = values.Has("publicGameNamesEnabled")
 			publicGameNamesStr := values.Get("publicGameNames")
 			if publicGameNamesStr != "" {
 				names := strings.Split(publicGameNamesStr, ",")
@@ -1549,7 +1550,12 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 					}
 				}
 			} else {
-				cfg.Game.PublicGameNames = []string{}
+				// Only clear if checkbox is enabled (user wants to use but provided no names)
+				// If checkbox is disabled, keep existing names (temporary disable)
+				if cfg.Game.PublicGameNamesEnabled {
+					cfg.Game.PublicGameNames = []string{}
+				}
+				// If disabled, keep existing names (cfg.Game.PublicGameNames remains unchanged)
 			}
 
 			// Gambling
@@ -2406,6 +2412,8 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Game.Eldritch.KillShenk = r.Form.Has("gameEldritchKillShenk")
 
 		cfg.Game.LowerKurastChest.OpenRacks = r.Form.Has("gameLowerKurastChestOpenRacks")
+		cfg.Game.LowerKurastChest.OpenAllChests = r.Form.Has("gameLowerKurastChestOpenAllChests")
+		cfg.Game.LowerKurastChest.ForceTelekinesis = r.Form.Has("gameLowerKurastChestForceTelekinesis")
 
 		cfg.Game.Diablo.StartFromStar = r.Form.Has("gameDiabloStartFromStar")
 		cfg.Game.Diablo.KillDiablo = r.Form.Has("gameDiabloKillDiablo")
@@ -2487,6 +2495,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Companion.GamePassword = r.Form.Get("companionGamePassword")
 
 		// Public game names
+		cfg.Game.PublicGameNamesEnabled = r.Form.Has("publicGameNamesEnabled")
 		publicGameNamesStr := r.Form.Get("publicGameNames")
 		if publicGameNamesStr != "" {
 			names := strings.Split(publicGameNamesStr, ",")
@@ -2498,7 +2507,12 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else {
-			cfg.Game.PublicGameNames = []string{}
+			// Only clear if checkbox is enabled (user wants to use but provided no names)
+			// If checkbox is disabled, keep existing names (temporary disable)
+			if cfg.Game.PublicGameNamesEnabled {
+				cfg.Game.PublicGameNames = []string{}
+			}
+			// If disabled, keep existing names (cfg.Game.PublicGameNames remains unchanged)
 		}
 
 		// Back to town config
@@ -2786,6 +2800,8 @@ func (s *HttpServer) applyRunDetails(values url.Values, cfg *config.CharacterCfg
 			cfg.Game.Eldritch.KillShenk = values.Has("gameEldritchKillShenk")
 		case "lower_kurast_chest":
 			cfg.Game.LowerKurastChest.OpenRacks = values.Has("gameLowerKurastChestOpenRacks")
+			cfg.Game.LowerKurastChest.OpenAllChests = values.Has("gameLowerKurastChestOpenAllChests")
+			cfg.Game.LowerKurastChest.ForceTelekinesis = values.Has("gameLowerKurastChestForceTelekinesis")
 		case "diablo":
 			cfg.Game.Diablo.KillDiablo = values.Has("gameDiabloKillDiablo")
 			cfg.Game.Diablo.DisableItemPickupDuringBosses = values.Has("gameDiabloDisableItemPickupDuringBosses")

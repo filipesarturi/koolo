@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/action"
+	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/pather"
@@ -18,6 +22,7 @@ import (
 
 var minChestDistanceFromBonfire = 25
 var maxChestDistanceFromBonfire = 45
+const telekinesisRange = 15 // Telekinesis effective range (conservative to ensure reliability)
 
 type LowerKurastChests struct {
 	ctx *context.Status
@@ -77,6 +82,12 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 		)
 	}
 
+	// If OpenAllChests is enabled, clear the entire map
+	if run.ctx.CharacterCfg.Game.LowerKurastChest.OpenAllChests {
+		return run.clearAllInteractableObjects()
+	}
+
+	// Otherwise, use the bonfire-based approach for superchests
 	// Move to each of the bonfires one by one
 	for _, bonfirePos := range bonFirePositions {
 		// Move to the bonfire
@@ -88,7 +99,13 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 		// Find the interactable objects
 		var objects []data.Object
 		for _, o := range run.ctx.Data.Objects {
-			if slices.Contains(interactableObjects, o.Name) && isChestWithinBonfireRange(o, bonfirePos) {
+			// Check if object is within bonfire range
+			if !isChestWithinBonfireRange(o, bonfirePos) {
+				continue
+			}
+
+			// Only include specific interactable objects
+			if slices.Contains(interactableObjects, o.Name) {
 				objects = append(objects, o)
 			}
 		}
@@ -140,7 +157,297 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 	return nil
 }
 
+// clearAllInteractableObjects clears all interactable objects from the entire map
+// Optimized version based on ClearCurrentLevel but without monster clearing for maximum speed
+func (run LowerKurastChests) clearAllInteractableObjects() error {
+	run.ctx.Logger.Debug("Clearing all interactable objects from the entire map (optimized)")
+
+	const (
+		pickupRadius    = 20
+		telekinesisRange = 15
+	)
+
+	// Use optimized room traversal
+	rooms := run.ctx.PathFinder.OptimizeRoomsTraverseOrder()
+	
+	for _, r := range rooms {
+		run.ctx.PauseIfNotPriority()
+
+		// Move to room center quickly (no monster clearing for speed)
+		path, _, found := run.ctx.PathFinder.GetClosestWalkablePath(r.GetCenter())
+		if !found {
+			continue
+		}
+
+		to := data.Position{
+			X: path.To().X + run.ctx.Data.AreaOrigin.X,
+			Y: path.To().Y + run.ctx.Data.AreaOrigin.Y,
+		}
+		
+		// Quick movement without monster filter for speed
+		err := action.MoveToCoords(to)
+		if err != nil {
+			continue
+		}
+
+		// Refresh game data
+		run.ctx.RefreshGameData()
+
+		// Find and interact with all interactable objects in this room
+		for _, o := range run.ctx.Data.Objects {
+			if !r.IsInside(o.Position) {
+				continue
+			}
+
+			if !isInteractableObject(o) || !o.Selectable {
+				continue
+			}
+
+			// Check if we can use Telekinesis from current position
+			objDistance := run.ctx.PathFinder.DistanceFromMe(o.Position)
+			forceTK := run.ctx.CharacterCfg.Game.LowerKurastChest.ForceTelekinesis
+			
+			// Check TK availability (forceTK ignores global UseTelekinesis setting)
+			canUseTK := run.canUseTelekinesisForObject(o, forceTK)
+
+			// If ForceTelekinesis is enabled and TK is available, use TK directly
+			if forceTK && canUseTK {
+				// Move to TK range if out of range, otherwise use TK from current position
+				if objDistance > telekinesisRange {
+					// Move to TK range (not all the way to object)
+					err = run.moveToTelekinesisRange(o.Position)
+					if err != nil {
+						run.ctx.Logger.Debug("Failed moving to TK range, trying normal move", "error", err)
+						// Fallback to normal move
+						err = action.MoveToCoords(o.Position)
+						if err != nil {
+							continue
+						}
+					}
+				}
+				// Use Telekinesis directly via step.InteractObjectTelekinesis
+				// This bypasses the global UseTelekinesis check
+				err = run.interactWithTelekinesis(o)
+				if err != nil {
+					run.ctx.Logger.Debug("Telekinesis interaction failed, trying normal interaction", "error", err)
+					// Fallback to normal interaction
+					err = action.InteractObject(o, func() bool {
+						run.ctx.RefreshGameData()
+						obj, found := run.ctx.Data.Objects.FindByID(o.ID)
+						return !found || !obj.Selectable
+					})
+				}
+				if err != nil {
+					run.ctx.Logger.Debug("Failed interacting with object", "object", o.Name, "error", err)
+					continue
+				}
+			} else {
+				// Normal mode: move if not within Telekinesis range (or TK not available)
+				if !canUseTK || objDistance > telekinesisRange {
+					err = action.MoveToCoords(o.Position)
+					if err != nil {
+						continue
+					}
+				}
+				// Interact with the object normally
+				err = action.InteractObject(o, func() bool {
+					run.ctx.RefreshGameData()
+					obj, found := run.ctx.Data.Objects.FindByID(o.ID)
+					return !found || !obj.Selectable
+				})
+				if err != nil {
+					run.ctx.Logger.Debug("Failed interacting with object", "object", o.Name, "error", err)
+					continue
+				}
+			}
+
+			// Wait for items to drop from chest/stash (some have delays, stashes have longer animations)
+			run.waitForItemsToDrop(o.Position, o)
+		}
+
+		// Pick up items after clearing room (less frequent for speed)
+		err = action.ItemPickup(pickupRadius)
+		if err != nil {
+			run.ctx.Logger.Debug("Failed to pickup items", "error", err)
+		}
+	}
+
+	// Return to town
+	if err := action.ReturnTown(); err != nil {
+		return err
+	}
+
+	_, isLevelingChar := run.ctx.Char.(context.LevelingCharacter)
+
+	if !isLevelingChar {
+		// Move to A4 if possible to shorten the run time
+		err := action.WayPoint(area.ThePandemoniumFortress)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// waitForItemsToDrop waits for items to drop from opened chests/stashes
+// Some containers have delays before items appear on the ground
+// Stashes have longer animations and need more wait time
+func (run LowerKurastChests) waitForItemsToDrop(containerPos data.Position, obj data.Object) {
+	// Stashes have longer animations, need more wait time
+	isStash := obj.Name == object.Bank
+	
+	var (
+		initialDelay    int
+		maxWaitTime     int
+		checkInterval   = 100  // Check interval in ms
+		itemCheckRadius = 2    // Radius to check for items (small to avoid detecting items from nearby containers)
+	)
+
+	if isStash {
+		// Stashes have longer animations, wait more
+		initialDelay = 800  // Initial delay for stashes in ms
+		maxWaitTime = 3000  // Maximum total wait time for stashes in ms
+	} else {
+		// Regular chests and containers
+		initialDelay = 300  // Initial delay in ms
+		maxWaitTime = 1500  // Maximum total wait time in ms
+	}
+
+	utils.Sleep(initialDelay)
+
+	// Check if items appeared on ground near the container
+	run.ctx.RefreshGameData()
+	itemsNearby := run.getItemsNearPosition(containerPos, itemCheckRadius)
+
+	// If items already appeared, we're done
+	if len(itemsNearby) > 0 {
+		return
+	}
+
+	// Wait up to maxWaitTime for items to appear
+	elapsed := initialDelay
+	for elapsed < maxWaitTime {
+		utils.Sleep(checkInterval)
+		elapsed += checkInterval
+
+		run.ctx.RefreshGameData()
+		itemsNearby = run.getItemsNearPosition(containerPos, itemCheckRadius)
+		if len(itemsNearby) > 0 {
+			// Items appeared, we can continue
+			return
+		}
+	}
+}
+
+// getItemsNearPosition returns items on the ground near a position
+func (run LowerKurastChests) getItemsNearPosition(pos data.Position, radius int) []data.Item {
+	var items []data.Item
+	for _, itm := range run.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+		distance := pather.DistanceFromPoint(itm.Position, pos)
+		if distance <= radius {
+			items = append(items, itm)
+		}
+	}
+	return items
+}
+
+// canUseTelekinesisForObject checks if Telekinesis can be used for the given object
+// If forceTK is true, ignores the global UseTelekinesis setting
+func (run LowerKurastChests) canUseTelekinesisForObject(obj data.Object, forceTK bool) bool {
+	ctx := run.ctx
+	
+	// If forceTK is false, check global setting
+	if !forceTK && !ctx.CharacterCfg.Character.UseTelekinesis {
+		return false
+	}
+	
+	// Check if character has Telekinesis skill
+	if ctx.Data.PlayerUnit.Skills[skill.Telekinesis].Level == 0 {
+		return false
+	}
+	
+	// Check if Telekinesis has a keybinding (required for HID interaction)
+	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
+		return false
+	}
+	
+	// Telekinesis works on chests, super chests, and shrines
+	return obj.IsChest() || obj.IsSuperChest() || obj.IsShrine()
+}
+
+// moveToTelekinesisRange moves to within Telekinesis range of the target object
+func (run LowerKurastChests) moveToTelekinesisRange(targetPos data.Position) error {
+	// Use step.MoveTo with distance to finish set to TK range
+	// This will move close enough for TK but not all the way to the object
+	return step.MoveTo(targetPos, step.WithDistanceToFinish(telekinesisRange-2), step.WithIgnoreMonsters())
+}
+
+// interactWithTelekinesis uses Telekinesis directly to interact with the object
+// This bypasses the global UseTelekinesis check when ForceTelekinesis is enabled
+func (run LowerKurastChests) interactWithTelekinesis(obj data.Object) error {
+	// Use step.InteractObjectTelekinesis directly, which doesn't check global UseTelekinesis
+	return step.InteractObjectTelekinesis(obj, func() bool {
+		run.ctx.RefreshGameData()
+		updatedObj, found := run.ctx.Data.Objects.FindByID(obj.ID)
+		return !found || !updatedObj.Selectable
+	})
+}
+
 func isChestWithinBonfireRange(chest data.Object, bonfirePosition data.Position) bool {
 	distance := pather.DistanceFromPoint(chest.Position, bonfirePosition)
 	return distance >= minChestDistanceFromBonfire && distance <= maxChestDistanceFromBonfire
+}
+
+// isInteractableObject checks if an object can be opened/interacted with
+// Includes: chests, super chests, breakable objects (barrels, urns, caskets, etc.), and other selectable containers
+func isInteractableObject(o data.Object) bool {
+	if !o.Selectable {
+		return false
+	}
+
+	// Exclude special objects that shouldn't be opened
+	if o.IsWaypoint() || o.IsPortal() || o.IsRedPortal() || o.IsShrine() || o.Name == object.Bank {
+		return false
+	}
+
+	// Include chests and super chests
+	if o.IsChest() || o.IsSuperChest() {
+		return true
+	}
+
+	// Include breakable objects (barrels, urns, caskets, etc.)
+	breakableObjects := []object.Name{
+		object.Barrel, object.Urn2, object.Urn3, object.Casket,
+		object.Casket5, object.Casket6, object.LargeUrn1, object.LargeUrn4,
+		object.LargeUrn5, object.Crate, object.HollowLog, object.Sarcophagus,
+	}
+	if slices.Contains(breakableObjects, o.Name) {
+		return true
+	}
+
+	// Include weapon racks and armor stands
+	if o.Name == object.ArmorStandRight || o.Name == object.ArmorStandLeft ||
+		o.Name == object.WeaponRackRight || o.Name == object.WeaponRackLeft {
+		return true
+	}
+
+	// Include any other selectable object that might be a container
+	// This catches corpses and other interactable objects
+	// We check if it's not a door (doors are handled separately)
+	if !o.IsDoor() {
+		// Check if object description suggests it's a container
+		desc := o.Desc()
+		if desc.Name != "" {
+			name := strings.ToLower(desc.Name)
+			// Include objects with names suggesting containers
+			if strings.Contains(name, "chest") || strings.Contains(name, "casket") || strings.Contains(name, "urn") ||
+				strings.Contains(name, "barrel") || strings.Contains(name, "corpse") || strings.Contains(name, "body") ||
+				strings.Contains(name, "sarcophagus") || strings.Contains(name, "log") || strings.Contains(name, "crate") {
+				return true
+			}
+		}
+	}
+
+	return false
 }

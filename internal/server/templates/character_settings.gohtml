@@ -951,6 +951,10 @@
             </fieldset>
             <fieldset class="grid">
                 <label>
+                    <input type="checkbox" name="publicGameNamesEnabled" {{ if .Config.Game.PublicGameNamesEnabled }}checked{{ end }}/>
+                    Enable public game names
+                </label>
+                <label>
                     Public game names (comma-separated)
                     <input name="publicGameNames" placeholder="game1, game2, game3" value="{{ range $index, $name := .Config.Game.PublicGameNames }}{{ if $index }}, {{ end }}{{ $name }}{{ end }}"/>
                     <small style="display: block; color: #888; margin-top: 4px;">If set, bot will alternate between these names instead of using the pattern above. Leave empty to use pattern + counter.</small>
