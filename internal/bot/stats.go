@@ -148,6 +148,7 @@ type CharacterOverview struct {
 	LightningResist int
 	PoisonResist    int
 	Gold            int
+	GameName        string // Current game name
 }
 
 func (s Stats) TotalGames() int {
