@@ -1,8 +1,6 @@
 package action
 
 import (
-	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -76,24 +74,36 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 
 	// Use ignore-monsters pathfinding for Cow Level since we need to "fight through" dense packs
 	path, _, found := ctx.PathFinder.GetClosestWalkablePathIgnoreMonsters(room.GetCenter())
-	if !found {
-		return errors.New("failed to find a path to the room center")
-	}
+	if found {
+		to := data.Position{
+			X: path.To().X + ctx.Data.AreaOrigin.X,
+			Y: path.To().Y + ctx.Data.AreaOrigin.Y,
+		}
 
-	to := data.Position{
-		X: path.To().X + ctx.Data.AreaOrigin.X,
-		Y: path.To().Y + ctx.Data.AreaOrigin.Y,
-	}
-
-	// Clear while moving (ignore monsters in pathfinding for cow density)
-	if err := ClearThroughPathIgnoreMonsters(to, moveClearRadius, filter); err != nil {
-		return fmt.Errorf("failed moving/clearing to room center: %w", err)
+		// Clear while moving (ignore monsters in pathfinding for cow density)
+		if err := ClearThroughPathIgnoreMonsters(to, moveClearRadius, filter); err != nil {
+			ctx.Logger.Debug("Cows: failed moving to room center, clearing from current position",
+				slog.Any("error", err))
+		}
+	} else {
+		// If we can't path to the room center, just clear monsters around current position
+		ctx.Logger.Debug("Cows: no path to room center, clearing from current position")
+		ClearAreaAroundPlayer(moveClearRadius, filter)
 	}
 
 	pickupOnKill := ctx.CharacterCfg.Character.PickupOnKill
 
+	// Anti-stagnation: track iterations on the same target
+	const maxStagnantIterations = 5
+	var lastTargetID data.UnitID
+	stagnantCount := 0
+
+	// Blacklist for monsters we failed to kill in this room
+	skippedMonsters := make(map[data.UnitID]bool)
+
 	for {
 		ctx.PauseIfNotPriority()
+		ctx.RefreshGameData()
 
 		if err := checkPlayerDeath(ctx); err != nil {
 			return err
@@ -104,13 +114,40 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 			return nil
 		}
 
+		// Check if all monsters in the room are blacklisted
+		validMonstersExist := false
+		for _, m := range monsters {
+			if !skippedMonsters[m.UnitID] {
+				validMonstersExist = true
+				break
+			}
+		}
+		if !validMonstersExist {
+			ctx.Logger.Debug("Cows: all monsters in room are blacklisted, moving to next room")
+			return nil
+		}
+
 		SortEnemiesByPriority(&monsters)
 
 		target := data.Monster{}
 		for _, m := range monsters {
-			if ctx.Char.ShouldIgnoreMonster(m) {
+			// Skip monsters we already failed to kill
+			if skippedMonsters[m.UnitID] {
 				continue
 			}
+
+			if ctx.Char.ShouldIgnoreMonster(m) {
+				skippedMonsters[m.UnitID] = true
+				continue
+			}
+
+			// Verify path exists to the monster (ignore other monsters in path for cow density)
+			_, _, mPathFound := ctx.PathFinder.GetPathIgnoreMonsters(m.Position)
+			if !mPathFound && !ctx.Data.CanTeleport() {
+				skippedMonsters[m.UnitID] = true
+				continue
+			}
+
 			if m.IsMonsterRaiser() {
 				target = m
 				break
@@ -121,11 +158,32 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 		}
 
 		if target.UnitID == 0 {
+			// No valid target found even though monsters exist - they're all filtered out
+			ctx.Logger.Debug("Cows: no valid targets in room, moving to next room")
 			return nil
+		}
+
+		// Anti-stagnation check: if stuck on same target too long, blacklist and continue
+		if target.UnitID == lastTargetID {
+			stagnantCount++
+			if stagnantCount >= maxStagnantIterations {
+				ctx.Logger.Debug("Cows: stuck on same target, blacklisting and continuing",
+					slog.Any("targetID", target.UnitID),
+					slog.Int("iterations", stagnantCount))
+				skippedMonsters[target.UnitID] = true
+				stagnantCount = 0
+				continue
+			}
+		} else {
+			stagnantCount = 0
+			lastTargetID = target.UnitID
 		}
 
 		// Track target position for pickup after kill
 		targetPos := target.Position
+
+		// Store HP before attack to detect if we're dealing damage
+		monsterHPBefore := target.Stats[stat.Life]
 
 		ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
 			m, ok := d.Monsters.FindByID(target.UnitID)
@@ -135,10 +193,20 @@ func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius in
 			return 0, false
 		}, nil)
 
+		// After attack sequence, check if monster is still alive with same HP (unkillable)
+		ctx.RefreshGameData()
+		if m, stillExists := ctx.Data.Monsters.FindByID(target.UnitID); stillExists && m.Stats[stat.Life] > 0 {
+			if m.Stats[stat.Life] >= monsterHPBefore {
+				// Monster HP didn't decrease, likely unkillable - blacklist it
+				ctx.Logger.Debug("Cows: monster HP unchanged after attack, blacklisting",
+					slog.Any("targetID", target.UnitID))
+				skippedMonsters[target.UnitID] = true
+			}
+		}
+
 		// If PickupOnKill is enabled, pickup items after each kill
+		// Note: RefreshGameData was already called above, so we use current data
 		if pickupOnKill {
-			ctx.RefreshGameData()
-			// Check if monster was killed
 			m, stillExists := ctx.Data.Monsters.FindByID(target.UnitID)
 			if !stillExists || m.Stats[stat.Life] <= 0 {
 				if err := ItemPickup(pickupOnKillRadius); err != nil {
@@ -158,9 +226,22 @@ func getMonstersInRoomCows(room data.Room, filter data.MonsterFilter) []data.Mon
 
 	out := make([]data.Monster, 0)
 	for _, m := range ctx.Data.Monsters.Enemies(filter) {
-		if m.Stats[stat.Life] > 0 && (room.IsInside(m.Position) || ctx.PathFinder.DistanceFromMe(m.Position) < 30) {
-			out = append(out, m)
+		// Skip dead monsters
+		if m.Stats[stat.Life] <= 0 {
+			continue
 		}
+
+		// Skip monsters outside room and far from player
+		if !room.IsInside(m.Position) && ctx.PathFinder.DistanceFromMe(m.Position) >= 30 {
+			continue
+		}
+
+		// Skip monsters on non-walkable positions (ghost monsters)
+		if !ctx.Data.AreaData.IsWalkable(m.Position) {
+			continue
+		}
+
+		out = append(out, m)
 	}
 	return out
 }

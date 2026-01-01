@@ -243,8 +243,8 @@ func FindSafePositionForBuff(minSafeDistance int, maxSearchDistance int) (data.P
 	scoredPositions := []scoredPosition{}
 
 	for _, pos := range candidatePositions {
-		// Check if we can path to this position
-		_, _, pathFound := ctx.PathFinder.GetPath(pos)
+		// Check if we can path to this position (ignore monsters - we just want terrain walkability)
+		_, _, pathFound := ctx.PathFinder.GetPathIgnoreMonsters(pos)
 		if !pathFound {
 			continue
 		}
