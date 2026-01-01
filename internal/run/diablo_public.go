@@ -21,6 +21,9 @@ import (
 	"github.com/lxn/win"
 )
 
+// Position for opening TP at star (left of star to avoid Diablo spawn area)
+var diabloStarTPPosition = data.Position{X: 7760, Y: 5294}
+
 // DiabloPublic is an optimized version of Diablo run for public games.
 // It tolerates seals already opened and bosses already killed by other players.
 type DiabloPublic struct {
@@ -104,7 +107,17 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 
 		// Open TP at star if leader option is enabled
 		if d.ctx.CharacterCfg.Companion.Leader {
-			d.openTPIfNoNearbyPortal(diabloSpawnPosition, 40)
+			// Move to left of star to open TP (avoid Diablo spawn area)
+			if d.ctx.Data.CanTeleport() {
+				if err := action.MoveToCoords(diabloStarTPPosition, step.WithIgnoreMonsters()); err != nil {
+					return err
+				}
+			} else {
+				if err := action.MoveToCoords(diabloStarTPPosition, step.WithMonsterFilter(d.getMonsterFilter())); err != nil {
+					return err
+				}
+			}
+			d.openTPIfNoNearbyPortal(diabloStarTPPosition, 40)
 			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
 		}
 
@@ -127,16 +140,17 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 		// Now move to star and open TP there if leader
 		if d.ctx.CharacterCfg.Companion.Leader {
 			d.ctx.Logger.Debug("Leader mode: Moving to star to open TP for manual players")
+			// Move to left of star to open TP (avoid Diablo spawn area)
 			if d.ctx.Data.CanTeleport() {
-				if err := action.MoveToCoords(diabloSpawnPosition, step.WithIgnoreMonsters()); err != nil {
+				if err := action.MoveToCoords(diabloStarTPPosition, step.WithIgnoreMonsters()); err != nil {
 					return err
 				}
 			} else {
-				if err := action.MoveToCoords(diabloSpawnPosition, step.WithClearPathOverride(30), step.WithMonsterFilter(d.getMonsterFilter())); err != nil {
+				if err := action.MoveToCoords(diabloStarTPPosition, step.WithClearPathOverride(30), step.WithMonsterFilter(d.getMonsterFilter())); err != nil {
 					return err
 				}
 			}
-			d.openTPIfNoNearbyPortal(diabloSpawnPosition, 40)
+			d.openTPIfNoNearbyPortal(diabloStarTPPosition, 40)
 			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
 		}
 	}
