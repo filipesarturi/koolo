@@ -966,6 +966,13 @@
             </fieldset>
             <fieldset class="grid">
                 <label>
+                    Game counter (current number)
+                    <input type="number" name="publicGameCounter" min="0" placeholder="{{ .Config.Game.PublicGameCounter }}" value="{{ .Config.Game.PublicGameCounter }}"/>
+                    <small style="display: block; color: #888; margin-top: 4px;">Current game number used with the name pattern. This value is saved and persists across restarts.</small>
+                </label>
+            </fieldset>
+            <fieldset class="grid">
+                <label>
                     Game Difficulty
                     <select name="gameDifficulty" id="gameDifficulty">
                         <option value="normal" {{ if eq .Config.Game.Difficulty "normal" }}selected{{ end }}>Normal</option>

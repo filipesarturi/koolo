@@ -304,7 +304,7 @@ type CharacterCfg struct {
 		RandomizeRuns          bool                  `yaml:"randomizeRuns"`
 		Runs                   []Run                 `yaml:"runs"`
 		CreateLobbyGames       bool                  `yaml:"createLobbyGames"`
-		PublicGameCounter      int                   `yaml:"-"`
+		PublicGameCounter      int                   `yaml:"publicGameCounter"`
 		PublicGameNames        PublicGameNamesList   `yaml:"publicGameNames"` // List of predefined game names (comma-separated or array)
 		PublicGameNamesEnabled bool                  `yaml:"publicGameNamesEnabled"` // Enable/disable using public game names
 		PublicGameNameIndex    int                   `yaml:"-"`              // Current index in the PublicGameNames list

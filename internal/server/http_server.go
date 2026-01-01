@@ -1560,6 +1560,13 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 				// If disabled, keep existing names (cfg.Game.PublicGameNames remains unchanged)
 			}
 
+			// Public game counter
+			if counterStr := values.Get("publicGameCounter"); counterStr != "" {
+				if counter, err := strconv.Atoi(counterStr); err == nil && counter >= 0 {
+					cfg.Game.PublicGameCounter = counter
+				}
+			}
+
 			// Gambling
 			cfg.Gambling.Enabled = values.Has("gamblingEnabled")
 		}
@@ -2519,6 +2526,13 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 				cfg.Game.PublicGameNames = []string{}
 			}
 			// If disabled, keep existing names (cfg.Game.PublicGameNames remains unchanged)
+		}
+
+		// Public game counter
+		if counterStr := r.Form.Get("publicGameCounter"); counterStr != "" {
+			if counter, err := strconv.Atoi(counterStr); err == nil && counter >= 0 {
+				cfg.Game.PublicGameCounter = counter
+			}
 		}
 
 		// Back to town config
