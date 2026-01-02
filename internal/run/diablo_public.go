@@ -88,7 +88,7 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 	// Open TP at entrance if leader option is enabled
 	if d.ctx.CharacterCfg.Companion.Leader {
 		action.OpenTPIfLeader()
-		action.ClearAreaAroundPlayer(40, data.MonsterAnyFilter())
+		action.ClearAreaAroundPlayer(35, data.MonsterAnyFilter())
 		action.Buff()
 	}
 
