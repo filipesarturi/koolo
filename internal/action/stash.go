@@ -15,6 +15,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/action/step"
+	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/event"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -540,6 +541,20 @@ func blacklistItem(i data.Item) {
 func DropItem(i data.Item) {
 	ctx := context.Get()
 	ctx.SetLastAction("DropItem")
+
+	// Never drop essential items
+	if i.Name == item.TomeOfTownPortal || i.Name == item.TomeOfIdentify || i.Name == "HoradricCube" {
+		ctx.Logger.Debug(fmt.Sprintf("Skipping drop for protected item: %s", i.Name))
+		return
+	}
+
+	// Protect Wirt's Leg only if Cows run is active
+	if i.Name == "WirtsLeg" {
+		if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+			ctx.Logger.Debug(fmt.Sprintf("Skipping drop for Wirt's Leg (Cows run active): %s", i.Name))
+			return
+		}
+	}
 	utils.PingSleep(utils.Medium, 170) // Medium operation: Prepare for drop
 	step.CloseAllMenus()
 	utils.PingSleep(utils.Medium, 170) // Medium operation: Wait for menus to close

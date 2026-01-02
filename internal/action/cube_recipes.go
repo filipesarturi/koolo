@@ -7,6 +7,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/nip"
+	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
@@ -467,8 +468,15 @@ func CubeRecipes() error {
 				for _, it := range itemsInInv {
 					// If item is not in the protected slots, check if it should be stashed
 					if ctx.CharacterCfg.Inventory.InventoryLock[it.Position.Y][it.Position.X] == 1 {
+						// Never drop quest items or essential items
 						if it.Name == "Key" || it.IsPotion() || it.Name == item.TomeOfTownPortal || it.Name == item.TomeOfIdentify {
 							continue
+						}
+						// Protect Wirt's Leg only if Cows run is active
+						if it.Name == "WirtsLeg" {
+							if slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+								continue
+							}
 						}
 
 						shouldStash, _, reason, _ := shouldStashIt(it, false)

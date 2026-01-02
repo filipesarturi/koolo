@@ -2,12 +2,14 @@ package action
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/action/step"
+	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/ui"
@@ -55,6 +57,20 @@ func DropMouseItem() {
 func DropInventoryItem(i data.Item) error {
 	ctx := context.Get()
 	ctx.SetLastAction("DropInventoryItem")
+
+	// Never drop essential items
+	if i.Name == item.TomeOfTownPortal || i.Name == item.TomeOfIdentify || i.Name == "HoradricCube" {
+		ctx.Logger.Debug(fmt.Sprintf("Skipping drop for protected item: %s", i.Name))
+		return nil
+	}
+
+	// Protect Wirt's Leg only if Cows run is active
+	if i.Name == "WirtsLeg" {
+		if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+			ctx.Logger.Debug(fmt.Sprintf("Skipping drop for Wirt's Leg (Cows run active): %s", i.Name))
+			return nil
+		}
+	}
 
 	closeAttempts := 0
 

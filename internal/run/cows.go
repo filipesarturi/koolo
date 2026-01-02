@@ -80,6 +80,9 @@ func (a Cows) Run(parameters *RunParameters) error {
 			return err
 		}
 
+		// Check for Wirt's Leg on the ground in Act 1 before starting
+		a.checkForLegOnGround()
+
 		// Verify if cow portal already exists in town
 		if a.hasCowPortal() {
 			a.ctx.Logger.Info("Cow portal already exists, skipping leg collection")
@@ -203,7 +206,19 @@ func (a Cows) getWirtsLeg() error {
 		return err
 	}
 
-	return action.ReturnTown()
+	// Return to town first
+	if err := action.ReturnTown(); err != nil {
+		return err
+	}
+
+	// After returning from Tristram, check if we got the leg
+	if !a.hasWirtsLeg() {
+		// If we didn't get the leg, check for it on the ground in town
+		a.ctx.Logger.Info("Wirt's Leg not found after interacting with corpse, checking ground in town")
+		a.checkForLegOnGround()
+	}
+
+	return nil
 }
 
 func (a Cows) preparePortal() error {
@@ -335,4 +350,86 @@ func (a Cows) hasCowPortal() bool {
 func (a Cows) clearTristram() error {
 	a.ctx.Logger.Info("Clearing Tristram")
 	return action.ClearCurrentLevel(false, data.MonsterAnyFilter())
+}
+
+// checkForLegOnGround checks for Wirt's Leg on the ground in Act 1 town (Rogue Encampment) and picks it up if found
+func (a Cows) checkForLegOnGround() {
+	// Only check in Rogue Encampment (Act 1 town)
+	currentArea := a.ctx.Data.PlayerUnit.Area
+	if currentArea != area.RogueEncampment {
+		return
+	}
+
+	// Skip if we already have the leg
+	if a.hasWirtsLeg() {
+		return
+	}
+
+	// Refresh game data to get latest items
+	a.ctx.RefreshGameData()
+
+	// Check for Wirt's Leg on the ground
+	legFound := false
+	var legItem data.Item
+	for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+		if strings.EqualFold(string(itm.Name), "WirtsLeg") {
+			legFound = true
+			legItem = itm
+			break
+		}
+	}
+
+	if !legFound {
+		return
+	}
+
+	a.ctx.Logger.Info("Found Wirt's Leg on the ground, attempting to pick it up",
+		"area", currentArea.Area().Name,
+		"x", legItem.Position.X,
+		"y", legItem.Position.Y)
+
+	// Move close to the item if needed
+	distance := a.ctx.PathFinder.DistanceFromMe(legItem.Position)
+	if distance > 5 {
+		if err := action.MoveToCoords(legItem.Position); err != nil {
+			a.ctx.Logger.Warn("Failed to move to Wirt's Leg on ground", "error", err)
+			return
+		}
+		utils.Sleep(500)
+		a.ctx.RefreshGameData()
+
+		// Re-check if item still exists after moving
+		legStillExists := false
+		for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+			if itm.UnitID == legItem.UnitID {
+				legStillExists = true
+				legItem = itm
+				break
+			}
+		}
+		if !legStillExists {
+			// Item might have been picked up or disappeared
+			if a.hasWirtsLeg() {
+				a.ctx.Logger.Info("Wirt's Leg was picked up during movement")
+				return
+			}
+			return
+		}
+	}
+
+	// Try to pick up the item using step.PickupItem for more direct control
+	if err := step.PickupItem(legItem, 1); err != nil {
+		a.ctx.Logger.Warn("Failed to pickup Wirt's Leg from ground", "error", err)
+		// Fallback to ItemPickup if step.PickupItem fails
+		if err := action.ItemPickup(10); err != nil {
+			a.ctx.Logger.Warn("Fallback ItemPickup also failed", "error", err)
+		}
+	}
+
+	// Verify we got it
+	utils.Sleep(500)
+	a.ctx.RefreshGameData()
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("Successfully picked up Wirt's Leg from the ground")
+	}
 }

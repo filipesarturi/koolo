@@ -2,6 +2,7 @@ package action
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
@@ -9,6 +10,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 
 	"github.com/hectorgimenez/koolo/internal/action/step"
+	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/town"
@@ -37,6 +39,15 @@ func IsDropProtected(i data.Item) bool {
 	// Always keep the cube so the bot can continue farming afterward.
 	if i.Name == "HoradricCube" {
 		return true
+	}
+
+	// Protect Wirt's Leg only if Cows run is active
+	if i.Name == "WirtsLeg" {
+		if ctx != nil && ctx.CharacterCfg != nil {
+			if slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+				return true
+			}
+		}
 	}
 
 	// Protect keys based on KeyCount configuration
