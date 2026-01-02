@@ -75,26 +75,52 @@ func (a Cows) Run(parameters *RunParameters) error {
 		}
 		// If we dont have Wirstleg and Book in cube
 	} else {
-		// First clean up any extra tomes if needed
-		err := a.cleanupExtraPortalTomes()
-		if err != nil {
+		// First, go to Rogue Encampment (Act 1) to check if portal already exists
+		if err := action.WayPoint(area.RogueEncampment); err != nil {
 			return err
 		}
 
-		// Get Wrist leg
-		err = a.getWirtsLeg()
-		if err != nil {
-			return err
-		}
+		// Verify if cow portal already exists in town
+		if a.hasCowPortal() {
+			a.ctx.Logger.Info("Cow portal already exists, skipping leg collection")
+		} else {
+			// First clean up any extra tomes if needed
+			err := a.cleanupExtraPortalTomes()
+			if err != nil {
+				return err
+			}
 
-		utils.Sleep(500)
-		// Sell junk, refill potions, etc. (basically ensure space for getting the TP tome)
-		action.PreRun(false)
+			// Get Wrist leg
+			err = a.getWirtsLeg()
 
-		utils.Sleep(500)
-		err = a.preparePortal()
-		if err != nil {
-			return err
+			if err != nil {
+				// If failed to get leg, return to town and check if portal was already opened
+				a.ctx.Logger.Warn("Failed to get Wirt's Leg, checking if portal already exists")
+				if err := action.WayPoint(area.RogueEncampment); err != nil {
+					return err
+				}
+
+				if a.hasCowPortal() {
+					a.ctx.Logger.Info("Cow portal already exists, continuing without leg")
+				} else {
+					return err
+				}
+
+				utils.Sleep(500)
+				
+				// Sell junk, refill potions, etc. (basically ensure space for getting the TP tome)
+				action.PreRun(false)
+			} else {
+				utils.Sleep(500)
+				// Sell junk, refill potions, etc. (basically ensure space for getting the TP tome)
+				action.PreRun(false)
+
+				utils.Sleep(500)
+				err = a.preparePortal()
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 	// Make sure all menus are closed before interacting with cow portal
@@ -298,6 +324,12 @@ func (a Cows) hasWirtsLeg() bool {
 		item.LocationInventory,
 		item.LocationCube)
 	return found
+}
+
+func (a Cows) hasCowPortal() bool {
+	// Check if cow portal already exists in Rogue Encampment
+	portal, found := a.ctx.Data.Objects.FindOne(object.PermanentTownPortal)
+	return found && portal != (data.Object{})
 }
 
 func (a Cows) clearTristram() error {
