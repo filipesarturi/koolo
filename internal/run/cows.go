@@ -3,12 +3,10 @@ package run
 import (
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
-	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
@@ -169,73 +167,15 @@ func (a Cows) getWirtsLeg() error {
 	}
 	action.ClearAreaAroundPlayer(10, data.MonsterAnyFilter())
 
-	// Wait for portal to be ready (up to 15 seconds)
-	portalReady := false
-	portalWaitTimeout := 15 * time.Second
-	portalWaitStart := time.Now()
-
-	for time.Since(portalWaitStart) < portalWaitTimeout {
-		a.ctx.RefreshGameData()
-		portal, found := a.ctx.Data.Objects.FindOne(object.PermanentTownPortal)
-		if !found {
-			utils.Sleep(500)
-			continue
-		}
-
-		// Check if portal is fully opened and ready
-		if portal.Mode == mode.ObjectModeOpened && portal.Selectable {
-			portalReady = true
-			break
-		}
-
-		// Portal is still being created, wait a bit more
-		if portal.Mode == mode.ObjectModeOperating {
-			a.ctx.Logger.Debug("Portal is still being created, waiting...")
-			utils.Sleep(500)
-			continue
-		}
-
-		utils.Sleep(500)
-	}
-
-	if !portalReady {
-		return errors.New("tristram portal not found or not ready after timeout")
-	}
-
-	// Get the portal object again after refresh
 	portal, found := a.ctx.Data.Objects.FindOne(object.PermanentTownPortal)
 	if !found {
-		return errors.New("tristram portal not found")
+		return errors.New("tristram not found")
 	}
-
-	// Try to interact with portal with retry logic
-	maxInteractionAttempts := 3
-	var lastErr error
-	for attempt := 0; attempt < maxInteractionAttempts; attempt++ {
-		if attempt > 0 {
-			a.ctx.Logger.Debug("Retrying portal interaction", "attempt", attempt+1)
-			utils.Sleep(500)
-			a.ctx.RefreshGameData()
-			portal, found = a.ctx.Data.Objects.FindOne(object.PermanentTownPortal)
-			if !found {
-				return errors.New("tristram portal not found during retry")
-			}
-		}
-
-		err = action.InteractObject(portal, func() bool {
-			return a.ctx.Data.AreaData.Area == area.Tristram && a.ctx.Data.AreaData.IsInside(a.ctx.Data.PlayerUnit.Position)
-		})
-
-		if err == nil {
-			break
-		}
-
-		lastErr = err
-		a.ctx.Logger.Debug("Portal interaction failed", "attempt", attempt+1, "error", err)
-	}
-
+	err = action.InteractObject(portal, func() bool {
+		return a.ctx.Data.AreaData.Area == area.Tristram && a.ctx.Data.AreaData.IsInside(a.ctx.Data.PlayerUnit.Position)
+	})
 	if err != nil {
-		return lastErr
+		return err
 	}
 
 	// Clear Tristram before getting the leg if option is enabled
