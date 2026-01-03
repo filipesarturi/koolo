@@ -430,6 +430,19 @@ set REQUIRED_GARBLE_VERSION=0.14.2
 :: Change to the script's directory
 cd /d "%~dp0"
 
+:: Remove build folder if it exists
+if exist build (
+    call :print_step "Removing existing build folder"
+    rmdir /s /q build
+    if exist build (
+        call :print_error "Failed to delete build folder"
+        call :check_folder_permissions "build"
+        call :pause_and_exit 1
+    ) else (
+        call :print_success "Build folder removed successfully"
+    )
+)
+
 :: Use a static build folder to avoid temp paths being flagged by AV
 set "STATIC_BUILD_DIR=%cd%\build\tmp"
 if not exist "%STATIC_BUILD_DIR%" mkdir "%STATIC_BUILD_DIR%"
