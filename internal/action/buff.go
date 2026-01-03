@@ -292,6 +292,14 @@ func Buff() {
 		// Check if this is an armor skill
 		isArmorSkill := buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor
 		
+		// Skip Energy Shield if it's already active (was applied with Memory and still active)
+		if buff == skill.EnergyShield {
+			if ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+				ctx.Logger.Debug("Energy Shield already active (from Memory), skipping from rebuff list")
+				continue
+			}
+		}
+		
 		// Check if skill exists on character (has level > 0) with current weapon
 		skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
 		hasSkill := skillExists && skillData.Level > 0
@@ -389,6 +397,17 @@ func Buff() {
 
 			// Check if this is an armor skill
 			isArmorSkill := entry.skill == skill.FrozenArmor || entry.skill == skill.ShiverArmor || entry.skill == skill.ChillingArmor
+			
+			// Skip armor skill if any armor buff is already active (was applied with Memory on first run)
+			if isArmorSkill {
+				if ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) ||
+					ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) ||
+					ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+					ctx.Logger.Debug("Armor buff already active, skipping cast")
+					armorApplied = true // Mark as applied so we don't try fallback
+					continue
+				}
+			}
 
 			// Get skill name for logging
 			skillName := entry.skill.Desc().Name
