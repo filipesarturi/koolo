@@ -590,12 +590,31 @@ func Load() error {
 			continue
 		}
 
+		// Ignore known non-character directories
+		if entry.Name() == "template" {
+			continue
+		}
+
+		// Check if centralized pickit path is inside config directory and ignore it
+		if Koolo.CentralizedPickitPath != "" {
+			centralizedPickitAbsPath, err1 := filepath.Abs(Koolo.CentralizedPickitPath)
+			entryAbsPath, err2 := filepath.Abs(filepath.Join(BasePath, "config", entry.Name()))
+			if err1 == nil && err2 == nil {
+				centralizedPickitAbsPath = filepath.Clean(centralizedPickitAbsPath)
+				entryAbsPath = filepath.Clean(entryAbsPath)
+				if centralizedPickitAbsPath == entryAbsPath {
+					continue
+				}
+			}
+		}
+
 		charCfg := CharacterCfg{}
 
 		charConfigPath := getAbsPath(filepath.Join(BasePath, "config", entry.Name(), "config.yaml"))
 		r, err = os.Open(charConfigPath)
 		if err != nil {
-			return fmt.Errorf("error loading config.yaml: %w", err)
+			// If config.yaml doesn't exist, skip this directory (it's not a character)
+			continue
 		}
 
 		d := yaml.NewDecoder(r)
