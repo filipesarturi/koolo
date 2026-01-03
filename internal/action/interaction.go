@@ -18,7 +18,14 @@ import (
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
-const telekinesisRange = 15 // Telekinesis effective range (conservative to ensure reliability)
+// getTelekinesisRange returns the configured telekinesis range, defaulting to 23 if not set
+func getTelekinesisRange() int {
+	ctx := context.Get()
+	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
+		return ctx.CharacterCfg.Character.TelekinesisRange
+	}
+	return 23 // Default: 23 tiles (~15.3 yards)
+}
 
 func InteractNPC(npc npc.ID) error {
 	ctx := context.Get()
@@ -62,6 +69,7 @@ func InteractObject(o data.Object, isCompletedFn func() bool) error {
 	currentDistance := pather.DistanceFromPoint(ctx.Data.PlayerUnit.Position, o.Position)
 
 	// If Telekinesis is available and we're already in range, skip movement
+	telekinesisRange := getTelekinesisRange()
 	if canUseTK && currentDistance <= telekinesisRange {
 		ctx.Logger.Debug("Using Telekinesis from current position",
 			"object", o.Name,
@@ -89,6 +97,7 @@ func InteractObject(o data.Object, isCompletedFn func() bool) error {
 
 		// If Telekinesis is available, only move close enough for TK range
 		if canUseTK {
+			telekinesisRange := getTelekinesisRange()
 			distFinish = telekinesisRange - 2 // Stop a bit before max range for safety
 		}
 

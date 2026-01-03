@@ -1458,6 +1458,15 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		cfg.Character.StashToShared = values.Has("characterStashToShared")
 		cfg.Character.UseTeleport = values.Has("characterUseTeleport")
 		cfg.Character.UseTelekinesis = values.Has("characterUseTelekinesis")
+		if v := values.Get("telekinesisRange"); v != "" {
+			if rangeVal, err := strconv.Atoi(v); err == nil && rangeVal > 0 && rangeVal <= 50 {
+				cfg.Character.TelekinesisRange = rangeVal
+			} else {
+				cfg.Character.TelekinesisRange = 23 // Default if invalid
+			}
+		} else {
+			cfg.Character.TelekinesisRange = 23 // Default if not provided
+		}
 		cfg.Character.PickupOnKill = values.Has("characterPickupOnKill")
 		cfg.Character.UseExtraBuffs = values.Has("characterUseExtraBuffs")
 
@@ -2047,6 +2056,15 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Character.StashToShared = r.Form.Has("characterStashToShared")
 		cfg.Character.UseTeleport = r.Form.Has("characterUseTeleport")
 		cfg.Character.UseTelekinesis = r.Form.Has("characterUseTelekinesis")
+		if v := r.Form.Get("telekinesisRange"); v != "" {
+			if rangeVal, err := strconv.Atoi(v); err == nil && rangeVal > 0 && rangeVal <= 50 {
+				cfg.Character.TelekinesisRange = rangeVal
+			} else {
+				cfg.Character.TelekinesisRange = 23 // Default if invalid
+			}
+		} else {
+			cfg.Character.TelekinesisRange = 23 // Default if not provided
+		}
 		cfg.Character.PickupOnKill = r.Form.Has("characterPickupOnKill")
 		cfg.Character.UseExtraBuffs = r.Form.Has("characterUseExtraBuffs")
 		cfg.Character.UseSwapForBuffs = r.Form.Has("useSwapForBuffs")

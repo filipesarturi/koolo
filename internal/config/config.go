@@ -179,6 +179,7 @@ type CharacterCfg struct {
 		StashToShared                bool   `yaml:"stashToShared"`
 		UseTeleport                  bool   `yaml:"useTeleport"`
 		UseTelekinesis               bool   `yaml:"useTelekinesis"`
+		TelekinesisRange             int    `yaml:"telekinesisRange"` // Telekinesis range in tiles (default: 23, ~15.3 yards)
 		PickupOnKill                 bool   `yaml:"pickupOnKill"`
 		ClearPathDist                int    `yaml:"clearPathDist"`
 		ShouldHireAct2MercFrozenAura bool   `yaml:"shouldHireAct2MercFrozenAura"`

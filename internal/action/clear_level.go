@@ -75,6 +75,7 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 					canUseTK := canUseTelekinesisForObject(o)
 
 					// Only move if not within Telekinesis range (or TK not available)
+					telekinesisRange := getTelekinesisRange()
 					if !canUseTK || chestDistance > telekinesisRange {
 						err = MoveToCoords(o.Position)
 						if err != nil {

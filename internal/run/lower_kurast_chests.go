@@ -161,8 +161,7 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 	run.ctx.Logger.Debug("Clearing all interactable objects from the entire map (optimized)")
 
 	const (
-		pickupRadius    = 20
-		telekinesisRange = 15
+		pickupRadius = 20
 	)
 
 	// Use optimized room traversal
@@ -213,6 +212,7 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 				// InteractObject will check distance and move to TK range if needed
 			} else {
 				// Normal mode: move if not within Telekinesis range (or TK not available)
+				telekinesisRange := run.getTelekinesisRange()
 				if !canUseTK || objDistance > telekinesisRange {
 					err = action.MoveToCoords(o.Position)
 					if err != nil {
@@ -333,6 +333,15 @@ func (run LowerKurastChests) getItemsNearPosition(pos data.Position, radius int)
 		}
 	}
 	return items
+}
+
+// getTelekinesisRange returns the configured telekinesis range, defaulting to 23 if not set
+func (run LowerKurastChests) getTelekinesisRange() int {
+	ctx := run.ctx
+	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
+		return ctx.CharacterCfg.Character.TelekinesisRange
+	}
+	return 23 // Default: 23 tiles (~15.3 yards)
 }
 
 // canUseTelekinesisForObject checks if Telekinesis can be used for the given object

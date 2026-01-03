@@ -578,6 +578,7 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 			canUseTKForShrine := canUseTelekinesisForObject(shrine)
 
 			// Interact if within Telekinesis range OR if we've reached normal interaction distance
+			telekinesisRange := getTelekinesisRange()
 			if (canUseTKForShrine && shrineDistance <= telekinesisRange) || shrineDistance <= finishMoveDist {
 				// Clear enemies around the shrine before interacting if enabled
 				if ctx.CharacterCfg.Game.ClearAreaBeforeShrine {
@@ -610,6 +611,7 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 			canUseTKForChest := canUseTelekinesisForObject(chest)
 
 			// Interact if within Telekinesis range OR if we've reached normal interaction distance
+			telekinesisRange := getTelekinesisRange()
 			if (canUseTKForChest && chestDistance <= telekinesisRange) || chestDistance <= finishMoveDist {
 				// Check if we have keys before attempting to open locked chests
 				if !hasKeysInInventory() {

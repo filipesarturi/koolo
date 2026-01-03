@@ -20,9 +20,17 @@ const (
 	clickDelay                   = 25 * time.Millisecond
 	spiralDelay                  = 25 * time.Millisecond
 	pickupTimeout                = 3 * time.Second
-	telekinesisPickupMaxRange    = 15 // Telekinesis range for item pickup (conservative to ensure reliability)
 	telekinesisPickupMaxAttempts = 3
 )
+
+// getTelekinesisPickupMaxRange returns the configured telekinesis range for item pickup, defaulting to 23 if not set
+func getTelekinesisPickupMaxRange() int {
+	ctx := context.Get()
+	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
+		return ctx.CharacterCfg.Character.TelekinesisRange
+	}
+	return 23 // Default: 23 tiles (~15.3 yards)
+}
 
 var (
 	maxInteractions      = 24 // 25 attempts since we start at 0
@@ -105,6 +113,7 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 
 	// Check distance - Telekinesis has limited range
 	distance := ctx.PathFinder.DistanceFromMe(it.Position)
+	telekinesisPickupMaxRange := getTelekinesisPickupMaxRange()
 	if distance > telekinesisPickupMaxRange {
 		ctx.Logger.Debug("Item too far for Telekinesis pickup, falling back to normal pickup",
 			"item", it.Desc().Name,

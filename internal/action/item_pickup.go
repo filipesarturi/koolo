@@ -41,7 +41,14 @@ var midRunes = map[item.Name]bool{
 	"GulRune": true,
 }
 
-const telekinesisItemPickupRange = 15 // Telekinesis range for item pickup (conservative to ensure reliability)
+// getTelekinesisItemPickupRange returns the configured telekinesis range for item pickup, defaulting to 23 if not set
+func getTelekinesisItemPickupRange() int {
+	ctx := context.Get()
+	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
+		return ctx.CharacterCfg.Character.TelekinesisRange
+	}
+	return 23 // Default: 23 tiles (~15.3 yards)
+}
 
 func itemFitsInventory(i data.Item) bool {
 	invMatrix := context.Get().Data.Inventory.Matrix()
@@ -254,6 +261,7 @@ outer:
 			// Check if Telekinesis can be used for this item
 			canUseTK := canUseTelekinesisForItemPickup(itemToPickup)
 			distance := ctx.PathFinder.DistanceFromMe(itemToPickup.Position)
+			telekinesisItemPickupRange := getTelekinesisItemPickupRange()
 
 			// If Telekinesis is available and we're in range, skip movement
 			if canUseTK && distance <= telekinesisItemPickupRange && attempt == 1 {

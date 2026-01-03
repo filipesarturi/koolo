@@ -19,12 +19,20 @@ import (
 )
 
 const (
-	maxInteractionAttempts          = 5
-	portalSyncDelay                 = 200
-	maxPortalSyncAttempts           = 15
-	telekinesisMaxInteractionRange  = 15 // Telekinesis effective range (conservative to ensure reliability)
-	telekinesisInteractionAttempts  = 3
+	maxInteractionAttempts         = 5
+	portalSyncDelay                = 200
+	maxPortalSyncAttempts          = 15
+	telekinesisInteractionAttempts = 3
 )
+
+// getTelekinesisMaxInteractionRange returns the configured telekinesis range for object interaction, defaulting to 23 if not set
+func getTelekinesisMaxInteractionRange() int {
+	ctx := context.Get()
+	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
+		return ctx.CharacterCfg.Character.TelekinesisRange
+	}
+	return 23 // Default: 23 tiles (~15.3 yards)
+}
 
 // InteractObject routes to packet or mouse implementation based on config
 func InteractObject(obj data.Object, isCompletedFn func() bool) error {
@@ -210,6 +218,7 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 
 		// Check distance - Telekinesis has limited range
 		distance := ctx.PathFinder.DistanceFromMe(o.Position)
+		telekinesisMaxInteractionRange := getTelekinesisMaxInteractionRange()
 		if distance > telekinesisMaxInteractionRange {
 			ctx.Logger.Debug("Object too far for Telekinesis, falling back to mouse",
 				slog.String("object", string(o.Name)),
