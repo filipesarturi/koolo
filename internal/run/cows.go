@@ -10,6 +10,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/config"
@@ -144,6 +145,36 @@ func (a Cows) Run(parameters *RunParameters) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	// Wait for area to fully load
+	utils.Sleep(500)
+	a.ctx.RefreshGameData()
+
+	// Check if there are cows nearby before buffing
+	// Clear area around player if cows are detected
+	closeMonsters := a.ctx.Data.Monsters.Enemies(data.MonsterAnyFilter())
+	hasCloseMonsters := false
+	for _, m := range closeMonsters {
+		if m.Stats[stat.Life] > 0 {
+			distance := a.ctx.PathFinder.DistanceFromMe(m.Position)
+			if distance <= 30 {
+				hasCloseMonsters = true
+				break
+			}
+		}
+	}
+
+	if hasCloseMonsters {
+		a.ctx.Logger.Info("Cows detected near portal entrance, clearing area before buffing")
+		if err := action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter()); err != nil {
+			a.ctx.Logger.Warn("Failed to clear area before buffing", "error", err)
+		}
+	}
+
+	// Apply buff if configured (BuffOnNewArea)
+	if a.ctx.CharacterCfg.Character.BuffOnNewArea {
+		action.Buff()
 	}
 
 	return action.ClearCurrentLevelCows(a.ctx.CharacterCfg.Game.Cows.OpenChests, data.MonsterAnyFilter())
