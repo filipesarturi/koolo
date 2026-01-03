@@ -149,6 +149,7 @@ type CharacterOverview struct {
 	PoisonResist    int
 	Gold            int
 	GameName        string // Current game name
+	ActiveBuffs     map[string]int // Map of active buff names to their levels
 }
 
 func (s Stats) TotalGames() int {

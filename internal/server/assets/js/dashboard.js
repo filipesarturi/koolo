@@ -166,6 +166,10 @@ function createCharacterCard(key) {
               <span class="co-dot"> • </span>
               <span class="co-res">Res: -</span>
             </div>
+            <div class="co-line co-buffs" style="display:none;">
+              <span class="co-buffs-label">Buffs: </span>
+              <span class="co-buffs-list"></span>
+            </div>
             <div class="character-details">
                 <div class="status-details">
                     <span class="status-badge"></span>
@@ -667,6 +671,8 @@ function updateCharacterOverview(card, ui, status) {
   const goldEl = card.querySelector(".co-gold");
   const resEl = card.querySelector(".co-res");
   const gameNameEl = card.querySelector(".co-gamename");
+  const buffsLineEl = card.querySelector(".co-buffs");
+  const buffsListEl = card.querySelector(".co-buffs-list");
 
   // If not running, show placeholders
   const isActive =
@@ -684,6 +690,7 @@ function updateCharacterOverview(card, ui, status) {
     if (goldEl) goldEl.textContent = "Gold: —";
     if (resEl) resEl.textContent = "Res: —";
     if (gameNameEl) gameNameEl.textContent = "—";
+    if (buffsLineEl) buffsLineEl.style.display = "none";
     const xpFill = card.querySelector(".xp-bar-fill");
     const xpPct = card.querySelector(".xp-percent");
     if (xpFill) xpFill.style.width = "0%";
@@ -925,6 +932,24 @@ function updateCharacterOverview(card, ui, status) {
   if (goldEl) goldEl.textContent = `Gold: ${gold}`;
   if (resEl)
     resEl.innerHTML = `<span class="res-fr">FR: ${fr}</span> | <span class="res-cr">CR: ${cr}</span> | <span class="res-lr">LR: ${lr}</span> | <span class="res-pr">PR: ${pr}</span>`;
+  
+  // Update active buffs with levels
+  if (buffsListEl && buffsLineEl) {
+    const activeBuffs = ui.ActiveBuffs || {};
+    const buffEntries = Object.entries(activeBuffs);
+    if (buffEntries.length > 0) {
+      // Sort by name for consistent display
+      buffEntries.sort((a, b) => a[0].localeCompare(b[0]));
+      // Format as "Buff Name (lvl X), ..." - only show level if > 0
+      const buffText = buffEntries.map(([name, level]) => {
+        return level > 0 ? `${name} (lvl ${level})` : name;
+      }).join(", ");
+      buffsListEl.textContent = buffText;
+      buffsLineEl.style.display = "block";
+    } else {
+      buffsLineEl.style.display = "none";
+    }
+  }
 }
 
 // Helpers to prettify class/difficulty

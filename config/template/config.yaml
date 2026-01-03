@@ -75,6 +75,9 @@ character:
   clearPathDist: 7 # Distance (in game units) to clear enemies while walking through areas
   shouldHireAct2MercFrozenAura: false # If true, bot will try to hire Act 2 merc with Frozen Aura skill
   useExtraBuffs: false # If true, bot will enable the extra buffs functionality
+  use_swap_for_buffs: false # If true, bot will cast class buffs from weapon swap (offhand) instead of main hand
+  useMemoryBuff: false # If true, bot will use Memory staff from stash to cast Energy Shield and Armor buffs on first run
+  preferredArmorSkill: "" # Preferred armor skill: "frozen", "shiver", "chilling", or "" for auto (first available)
   buffOnNewArea: false # If true, bot will apply buffs when entering a new area
   buffAfterWP: false # If true, bot will apply buffs after using a waypoint
   moveToSafePositionForBuff: true # If true, bot will move to a safe position (away from monsters) before buffing

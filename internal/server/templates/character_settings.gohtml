@@ -690,6 +690,18 @@
                                 <input type="checkbox" id="useSwapForBuffs" name="useSwapForBuffs" {{ if .Config.Character.UseSwapForBuffs }}checked{{ end }}>ClassBuffs from SwapHand
                             </label>
                             <label>
+                                <input type="checkbox" id="useMemoryBuff" name="useMemoryBuff" {{ if .Config.Character.UseMemoryBuff }}checked{{ end }}>Use Memory staff for Energy Shield and Armor buffs (first run only)
+                            </label>
+                            <label>
+                                Preferred Armor Skill:
+                                <select id="preferredArmorSkill" name="preferredArmorSkill">
+                                    <option value="" {{ if eq .Config.Character.PreferredArmorSkill "" }}selected{{ end }}>Auto (use first available)</option>
+                                    <option value="chilling" {{ if eq .Config.Character.PreferredArmorSkill "chilling" }}selected{{ end }}>Chilling Armor</option>
+                                    <option value="shiver" {{ if eq .Config.Character.PreferredArmorSkill "shiver" }}selected{{ end }}>Shiver Armor</option>
+                                    <option value="frozen" {{ if eq .Config.Character.PreferredArmorSkill "frozen" }}selected{{ end }}>Frozen Armor</option>
+                                </select>
+                            </label>
+                            <label>
                                 <input type="checkbox" id="moveToSafePositionForBuff" name="moveToSafePositionForBuff" {{ if .Config.Character.MoveToSafePositionForBuff }}checked{{ end }}>Move to safe position before buff
                             </label>
                             <hr/>

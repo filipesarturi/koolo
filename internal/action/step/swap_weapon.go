@@ -2,6 +2,7 @@ package step
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
@@ -17,6 +18,59 @@ func SwapToMainWeapon() error {
 
 func SwapToCTA() error {
 	return swapWeapon(true)
+}
+
+// SwapToSlot swaps to a specific weapon slot (0 = main, 1 = secondary)
+func SwapToSlot(targetSlot int) error {
+	ctx := context.Get()
+	ctx.SetLastStep(fmt.Sprintf("SwapToSlot_%d", targetSlot))
+
+	// Timeout after 5 seconds to prevent infinite loop
+	timeout := time.Now().Add(5 * time.Second)
+	maxAttempts := 10
+	attempts := 0
+
+	for {
+		// Check timeout first
+		if time.Now().After(timeout) || attempts >= maxAttempts {
+			ctx.Logger.Warn("Weapon swap timeout reached",
+				"targetSlot", targetSlot,
+				"attempts", attempts,
+			)
+			return ErrWeaponSwapTimeout
+		}
+
+		// Pause the execution if the priority is not the same as the execution priority
+		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
+			ctx.Logger.Debug("Priority wait timeout in weapon swap, continuing...")
+		}
+
+		// Refresh game data to get current slot
+		ctx.RefreshGameData()
+
+		// Check if we already have the desired weapon slot
+		if ctx.Data.ActiveWeaponSlot == targetSlot {
+			return nil
+		}
+
+		// Press swap key
+		ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.SwapWeapons)
+		attempts++
+
+		// Wait for the swap to take effect
+		utils.PingSleep(utils.Light, 300)
+
+		// Refresh data after swap
+		ctx.RefreshGameData()
+
+		// Check again after swap
+		if ctx.Data.ActiveWeaponSlot == targetSlot {
+			return nil
+		}
+
+		// Small delay before next attempt
+		utils.Sleep(200)
+	}
 }
 
 func swapWeapon(toCTA bool) error {

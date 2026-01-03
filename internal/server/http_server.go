@@ -32,7 +32,9 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/difficulty"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+	"github.com/hectorgimenez/d2go/pkg/data/state"
 	"github.com/hectorgimenez/koolo/internal/bot"
 	"github.com/hectorgimenez/koolo/internal/config"
 	ctx "github.com/hectorgimenez/koolo/internal/context"
@@ -590,6 +592,9 @@ func (s *HttpServer) getStatusData() IndexData {
 			// Calculate area level based on area ID and difficulty
 			areaLevel := calculateAreaLevel(data.PlayerUnit.Area, data.CharacterCfg.Game.Difficulty)
 
+			// Collect active buffs with levels
+			activeBuffs := getActiveBuffs(data.PlayerUnit.States, &data.PlayerUnit)
+
 			stats.UI = bot.CharacterOverview{
 				Class:           data.CharacterCfg.Character.Class,
 				Level:           lvl,
@@ -614,6 +619,7 @@ func (s *HttpServer) getStatusData() IndexData {
 				LightningResist: lr,
 				PoisonResist:    pr,
 				GameName:        data.Game.LastGameName,
+				ActiveBuffs:     activeBuffs,
 			}
 		}
 
@@ -1478,6 +1484,11 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 
 		if sections.GeneralExtras {
 			cfg.Character.UseSwapForBuffs = values.Has("useSwapForBuffs")
+			cfg.Character.UseMemoryBuff = values.Has("useMemoryBuff")
+			preferredArmorSkill := values.Get("preferredArmorSkill")
+			if preferredArmorSkill == "frozen" || preferredArmorSkill == "shiver" || preferredArmorSkill == "chilling" || preferredArmorSkill == "" {
+				cfg.Character.PreferredArmorSkill = preferredArmorSkill
+			}
 			cfg.Character.BuffOnNewArea = values.Has("characterBuffOnNewArea")
 			cfg.Character.BuffAfterWP = values.Has("characterBuffAfterWP")
 			cfg.Character.MoveToSafePositionForBuff = values.Has("moveToSafePositionForBuff")
@@ -2038,6 +2049,11 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Character.PickupOnKill = r.Form.Has("characterPickupOnKill")
 		cfg.Character.UseExtraBuffs = r.Form.Has("characterUseExtraBuffs")
 		cfg.Character.UseSwapForBuffs = r.Form.Has("useSwapForBuffs")
+		cfg.Character.UseMemoryBuff = r.Form.Has("useMemoryBuff")
+		preferredArmorSkill := r.Form.Get("preferredArmorSkill")
+		if preferredArmorSkill == "frozen" || preferredArmorSkill == "shiver" || preferredArmorSkill == "chilling" || preferredArmorSkill == "" {
+			cfg.Character.PreferredArmorSkill = preferredArmorSkill
+		}
 		cfg.Character.BuffOnNewArea = r.Form.Has("characterBuffOnNewArea")
 		cfg.Character.BuffAfterWP = r.Form.Has("characterBuffAfterWP")
 		cfg.Character.MoveToSafePositionForBuff = r.Form.Has("moveToSafePositionForBuff")
@@ -3237,4 +3253,98 @@ func calculateAreaLevel(areaID area.ID, diff difficulty.Difficulty) int {
 	default:
 		return baseLevel
 	}
+}
+
+// getActiveBuffs returns a map of active buff names to their skill levels
+func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *data.PlayerUnit) map[string]int {
+	buffs := make(map[string]int)
+	
+	// Reverse map from skillToState in buff.go - maps state to skill ID
+	// Only include buffs that have a corresponding skill ID
+	stateToSkill := map[state.State]skill.ID{
+		state.Energyshield:  skill.EnergyShield,
+		state.Frozenarmor:   skill.FrozenArmor,
+		state.Shiverarmor:   skill.ShiverArmor,
+		state.Chillingarmor: skill.ChillingArmor,
+		state.Thunderstorm:  skill.ThunderStorm,
+		state.Holyshield:    skill.HolyShield,
+		state.Cyclonearmor:  skill.CycloneArmor,
+		state.Battleorders:  skill.BattleOrders,
+		state.Battlecommand: skill.BattleCommand,
+		state.Shout:         skill.Shout,
+		state.Fade:          skill.Fade,
+		state.Quickness:     skill.BurstOfSpeed,
+		state.Hurricane:     skill.Hurricane,
+		state.Bonearmor:     skill.BoneArmor,
+	}
+	
+	// Map of states to readable names (for states that may not have direct skill mapping)
+	stateToName := map[state.State]string{
+		// Sorceress buffs
+		state.Energyshield:  "Energy Shield",
+		state.Frozenarmor:   "Frozen Armor",
+		state.Shiverarmor:   "Shiver Armor",
+		state.Chillingarmor: "Chilling Armor",
+		state.Thunderstorm:  "Thunder Storm",
+		
+		// Paladin buffs (auras - may not have direct skill level)
+		state.Holyshield:    "Holy Shield",
+		state.Concentration: "Concentration",
+		state.Fanaticism:    "Fanaticism",
+		state.Might:         "Might",
+		state.Blessedaim:    "Blessed Aim",
+		state.Conviction:    "Conviction",
+		state.Redemption:    "Redemption",
+		state.Meditation:    "Meditation",
+		state.Cleansing:     "Cleansing",
+		state.Prayer:        "Prayer",
+		state.Resistfire:    "Resist Fire",
+		state.Resistcold:    "Resist Cold",
+		state.Resistlightning: "Resist Lightning",
+		state.Defiance:      "Defiance",
+		state.Holyfire:      "Holy Fire",
+		state.Holyshock:     "Holy Shock",
+		state.Sanctuary:     "Sanctuary",
+		state.Thorns:        "Thorns",
+		
+		// Barbarian buffs
+		state.Battleorders:  "Battle Orders",
+		state.Battlecommand: "Battle Command",
+		state.Shout:         "Shout",
+		
+		// Assassin buffs
+		state.Fade:          "Fade",
+		state.Quickness:     "Burst of Speed",
+		state.Shadowwarrior: "Shadow Warrior",
+		
+		// Druid buffs
+		state.Cyclonearmor:  "Cyclone Armor",
+		state.Hurricane:     "Hurricane",
+		state.Oaksage:       "Oak Sage",
+		
+		// Necromancer buffs
+		state.Bonearmor:     "Bone Armor",
+	}
+	
+	// Check each state and add to buffs map if active
+	for st, name := range stateToName {
+		if states.HasState(st) {
+			skillLevel := 0
+			
+			// Try to get skill level if there's a corresponding skill ID
+			// Use the actual skill level from the game data (base level)
+			// Note: This is the base level, not including +skills bonuses
+			// The game client calculates total level including bonuses, but we only have access to base level here
+			if skillID, hasSkill := stateToSkill[st]; hasSkill {
+				if skillData, skillExists := playerUnit.Skills[skillID]; skillExists {
+					skillLevel = int(skillData.Level)
+				}
+			}
+			
+			// Only show level if we have a skill ID mapping and the skill exists
+			buffs[name] = skillLevel
+		}
+	}
+	
+	return buffs
 }

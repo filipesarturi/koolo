@@ -184,6 +184,8 @@ type CharacterCfg struct {
 		ShouldHireAct2MercFrozenAura bool   `yaml:"shouldHireAct2MercFrozenAura"`
 		UseExtraBuffs                bool   `yaml:"useExtraBuffs"`
 		UseSwapForBuffs              bool   `yaml:"use_swap_for_buffs"`
+		UseMemoryBuff                bool   `yaml:"useMemoryBuff"`
+		PreferredArmorSkill          string `yaml:"preferredArmorSkill"` // "frozen", "shiver", "chilling", or empty for auto
 		BuffOnNewArea                bool   `yaml:"buffOnNewArea"`
 		BuffAfterWP                  bool   `yaml:"buffAfterWP"`
 		MoveToSafePositionForBuff    bool   `yaml:"moveToSafePositionForBuff"`
