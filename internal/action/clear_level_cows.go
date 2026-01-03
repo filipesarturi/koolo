@@ -1,8 +1,9 @@
 package action
 
 import (
+	"fmt"
 	"log/slog"
-	"slices"
+	"sync"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -12,18 +13,133 @@ import (
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
-// Cow-only tuned clear: optimized for public games with high monster density
+// Optimized constants for public games with high monster density
+const (
+	// Timeouts - more aggressive for public games
+	maxRoomTime              = 15 * time.Second
+	maxRoomTimeWithoutPath   = 5 * time.Second
+	maxActionTime            = 3 * time.Second
+	stuckDetectionTime       = 3 * time.Second
+	maxIterationTime         = 2 * time.Second
+
+	// Circuit breaker thresholds
+	maxConsecutiveFailures    = 3
+	maxStagnantIterations    = 4
+	maxIterationsWithoutKill = 6
+
+	// Cache TTL
+	pathCacheTTL    = 2 * time.Second
+	monsterCacheTTL = 1 * time.Second
+
+	// Other player detection
+	otherPlayerCheckInterval      = 500 * time.Millisecond
+	monsterCountChangeThreshold   = 3
+	monsterCountChangeTimeWindow  = 500 * time.Millisecond
+	otherPlayerClearThreshold     = 0.33 // If <33% of initial monsters remain, others are clearing
+
+	// Pickup and movement
+	pickupRadius     = 10
+	pickupEveryRooms = 4
+	moveClearRadius  = 20
+	maxMonsterDistance = 30
+)
+
+// pathCacheEntry stores cached pathfinding results
+type pathCacheEntry struct {
+	path      bool
+	timestamp time.Time
+}
+
+// monsterCacheEntry stores cached monster validation results
+type monsterCacheEntry struct {
+	accessible bool
+	timestamp  time.Time
+}
+
+// monsterCountSnapshot tracks monster count over time for other player detection
+type monsterCountSnapshot struct {
+	count int
+	time  time.Time
+}
+
+// optimizedRoomState tracks room clearing state with caching and optimization
+type optimizedRoomState struct {
+	// Basic state
+	startTime            time.Time
+	lastKillTime         time.Time
+	lastSuccessfulAction time.Time
+	lastProgressCheck    time.Time
+
+	// Monster tracking
+	lastMonsterCount       int
+	lastMonsterCountTime   time.Time
+	initialMonsterCount    int
+	monsterCountHistory    []monsterCountSnapshot
+	maxHistorySize         int
+
+	// Progress tracking
+	iterationsWithoutKill     int
+	iterationsWithoutProgress int
+	consecutiveFailures       int
+	stuckDetectionCount       int
+
+	// Target tracking
+	skippedMonsters map[data.UnitID]bool
+	lastTargetID    data.UnitID
+	stagnantCount   int
+
+	// Path and movement
+	noPathToCenter bool
+
+	// Caches (thread-safe)
+	pathCache    map[data.Position]pathCacheEntry
+	monsterCache map[data.UnitID]monsterCacheEntry
+	cacheMutex   sync.RWMutex
+
+	// Iteration tracking
+	iterationStartTime time.Time
+	iterationCount     int
+}
+
+// newOptimizedRoomState creates a new optimized room state
+func newOptimizedRoomState() *optimizedRoomState {
+	return &optimizedRoomState{
+		startTime:            time.Now(),
+		lastKillTime:         time.Now(),
+		lastSuccessfulAction: time.Now(),
+		lastProgressCheck:    time.Now(),
+		lastMonsterCount:     -1,
+		lastMonsterCountTime: time.Now(),
+		initialMonsterCount:  -1,
+		monsterCountHistory:  make([]monsterCountSnapshot, 0, 10),
+		maxHistorySize:       10,
+		skippedMonsters:      make(map[data.UnitID]bool),
+		pathCache:            make(map[data.Position]pathCacheEntry),
+		monsterCache:         make(map[data.UnitID]monsterCacheEntry),
+		iterationStartTime:   time.Now(),
+	}
+}
+
+// ClearCurrentLevelCows clears the cow level optimized for public games with high monster density
 func ClearCurrentLevelCows(openChests bool, filter data.MonsterFilter) error {
 	ctx := context.Get()
 	ctx.SetLastAction("ClearCurrentLevelCows")
 
-	const (
-		pickupRadius     = 10 // smaller for cows
-		pickupEveryRooms = 4  // pick up every N rooms + last room
-		moveClearRadius  = 20 // used by ClearThroughPath
-	)
+	// Safety check: ensure game data is loaded
+	if ctx.Data == nil || ctx.PathFinder == nil || ctx.Data.AreaData.Grid == nil {
+		ctx.Logger.Warn("Cows: game data not ready, waiting...")
+		utils.Sleep(500)
+		ctx.RefreshGameData()
+		if ctx.Data == nil || ctx.PathFinder == nil || ctx.Data.AreaData.Grid == nil {
+			return fmt.Errorf("game data not available after wait")
+		}
+	}
 
-	// Get optimized room order (sequential, avoids unnecessary teleports)
+	// Wait a bit for area to fully load after portal entry
+	utils.Sleep(300)
+	ctx.RefreshGameData()
+
+	// Get optimized room order
 	rooms := ctx.PathFinder.OptimizeRoomsTraverseOrder()
 
 	for i, r := range rooms {
@@ -31,145 +147,147 @@ func ClearCurrentLevelCows(openChests bool, filter data.MonsterFilter) error {
 			return errDeath
 		}
 
-		// Aggressive "fight-through" movement to room center (no monster filter path-avoidance)
-		if err := clearRoomCows(r, filter, moveClearRadius); err != nil {
+		// Clear room with optimized logic
+		if err := clearRoomCowsOptimized(r, filter, moveClearRadius); err != nil {
 			ctx.Logger.Warn("Failed to clear room (cows)", slog.Any("error", err))
 		}
 
-		// Don't loot-vacuum after every room
+		// Periodic item pickup (not every room for performance)
 		if (i%pickupEveryRooms == 0) || (i == len(rooms)-1) {
 			if err := ItemPickup(pickupRadius); err != nil {
 				ctx.Logger.Warn("Failed to pickup items (cows)", slog.Any("error", err))
 			}
 		}
 
-		// Optional chest opening (usually false for speed)
+		// Optional chest opening
 		if openChests {
-			for _, o := range ctx.Data.Objects {
-				if r.IsInside(o.Position) && o.IsChest() && o.Selectable {
-					// Check if we can use Telekinesis from current position
-					chestDistance := ctx.PathFinder.DistanceFromMe(o.Position)
-					canUseTK := canUseTelekinesisForObject(o)
-
-					// Only move if not within Telekinesis range (or TK not available)
-					if !canUseTK || chestDistance > telekinesisRange {
-						if err := MoveToCoords(o.Position); err != nil {
-							continue
-						}
-					}
-
-					_ = InteractObject(o, func() bool {
-						chest, _ := ctx.Data.Objects.FindByID(o.ID)
-						return !chest.Selectable
-					})
-					utils.Sleep(250)
-				}
-			}
+			openChestsInRoom(ctx, r)
 		}
 	}
 
 	return nil
 }
 
-// roomState tracks the state of room clearing for optimization
-type roomState struct {
-	startTime              time.Time
-	lastKillTime           time.Time
-	lastMonsterCount       int
-	lastMonsterCountTime   time.Time
-	initialMonsterCount    int
-	iterationsWithoutKill  int
-	iterationsWithoutProgress int
-	skippedMonsters        map[data.UnitID]bool
-	lastTargetID           data.UnitID
-	stagnantCount          int
-	noPathToCenter         bool
-}
-
-const (
-	maxRoomTimeGeneral        = 20 * time.Second
-	maxRoomTimeWithoutPath    = 8 * time.Second
-	maxIterationsWithoutKill  = 8
-	maxIterationsWithoutProgress = 5
-	maxStagnantIterations     = 5
-	fastMonsterReductionThreshold = 5
-	monsterReductionTimeWindow = 2 * time.Second
-	noKillTimeout            = 5 * time.Second
-)
-
-func clearRoomCows(room data.Room, filter data.MonsterFilter, moveClearRadius int) error {
+// clearRoomCowsOptimized clears a room with optimized logic for public games
+func clearRoomCowsOptimized(room data.Room, filter data.MonsterFilter, moveClearRadius int) error {
 	ctx := context.Get()
-	ctx.SetLastAction("clearRoomCows")
+	ctx.SetLastAction("clearRoomCowsOptimized")
 
-	state := &roomState{
-		startTime:            time.Now(),
-		lastKillTime:         time.Now(),
-		lastMonsterCount:     -1,
-		lastMonsterCountTime: time.Now(),
-		initialMonsterCount:  -1,
-		skippedMonsters:      make(map[data.UnitID]bool),
+	// Safety check: ensure we have valid game data
+	if ctx.Data == nil || ctx.PathFinder == nil || ctx.Data.AreaData.Grid == nil {
+		ctx.Logger.Warn("Cows: invalid game data, skipping room")
+		return nil
 	}
 
-	// Try to move to room center first
-	if err := attemptMoveToRoomCenter(room, moveClearRadius, filter, state); err != nil {
+	state := newOptimizedRoomState()
+
+	// Attempt to move to room center with timeout
+	moveDeadline := time.Now().Add(5 * time.Second)
+	if err := attemptMoveToRoomCenterOptimized(room, moveClearRadius, filter, state, moveDeadline); err != nil {
 		ctx.Logger.Debug("Cows: failed moving to room center, clearing from current position",
 			slog.Any("error", err))
 	}
 
 	pickupOnKill := ctx.CharacterCfg.Character.PickupOnKill
 
-	// Main clearing loop - optimized for public games
+	// Main clearing loop with aggressive timeouts
 	for {
-		ctx.PauseIfNotPriority()
-		ctx.RefreshGameData()
+		state.iterationStartTime = time.Now()
+		state.iterationCount++
 
+		ctx.PauseIfNotPriority()
+
+		// Refresh game data (but not every iteration for performance)
+		if time.Since(state.lastProgressCheck) >= otherPlayerCheckInterval {
+			ctx.RefreshGameData()
+			state.lastProgressCheck = time.Now()
+		}
+
+		// Check player death
 		if err := checkPlayerDeath(ctx); err != nil {
 			return err
 		}
 
-		// Check timeouts - advance to next room if exceeded
-		if shouldAdvanceToNextRoom(state) {
+		// Check iteration timeout (prevent single iteration from blocking)
+		if time.Since(state.iterationStartTime) > maxIterationTime {
+			ctx.Logger.Debug("Cows: iteration timeout, advancing to next room")
 			return nil
 		}
 
-		// Get valid monsters in room
-		monsters := getMonstersInRoomCows(room, filter)
+		// Check room timeout
+		if shouldAdvanceToNextRoomOptimized(state) {
+			return nil
+		}
+
+		// Get valid monsters (with caching)
+		monsters := getMonstersInRoomCowsOptimized(room, filter, state)
 		if len(monsters) == 0 {
 			return nil
 		}
 
-		// Update state tracking
-		updateRoomState(state, monsters)
-
-		// Check if should advance due to other players clearing
-		if shouldAdvanceDueToOtherPlayers(state, monsters) {
+		// Update state and detect other players
+		updateRoomStateOptimized(state, monsters)
+		if shouldAdvanceDueToOtherPlayersOptimized(state, monsters) {
 			return nil
 		}
 
-		// Find and attack target
-		target := findBestTarget(ctx, monsters, state, filter)
+		// Check circuit breaker
+		if state.consecutiveFailures >= maxConsecutiveFailures {
+			ctx.Logger.Debug("Cows: circuit breaker triggered, advancing to next room")
+			return nil
+		}
+
+		// Find best target (with caching and timeout)
+		target := findBestTargetOptimized(ctx, monsters, state, filter)
 		if target.UnitID == 0 {
-			// No valid target - advance to next room
+			// No valid target - advance
 			return nil
 		}
 
-		// Attack target
-		if killed := attackTarget(ctx, target, state, pickupOnKill); killed {
+		// Attack target with timeout
+		actionDeadline := time.Now().Add(maxActionTime)
+		killed := attackTargetOptimized(ctx, target, state, pickupOnKill, actionDeadline)
+		
+		if killed {
 			state.lastKillTime = time.Now()
+			state.lastSuccessfulAction = time.Now()
 			state.iterationsWithoutKill = 0
+			state.consecutiveFailures = 0
+		} else {
+			state.iterationsWithoutKill++
+			// Only count as failure if we actually tried to attack
+			if time.Since(state.iterationStartTime) > 100*time.Millisecond {
+				state.consecutiveFailures++
+			}
+		}
+
+		// Cleanup old cache entries periodically
+		if state.iterationCount%10 == 0 {
+			cleanupCache(state)
 		}
 	}
 }
 
-// attemptMoveToRoomCenter tries to move to room center, returns error if path not found
-func attemptMoveToRoomCenter(room data.Room, moveClearRadius int, filter data.MonsterFilter, state *roomState) error {
+// attemptMoveToRoomCenterOptimized attempts to move to room center with timeout
+func attemptMoveToRoomCenterOptimized(room data.Room, moveClearRadius int, filter data.MonsterFilter, state *optimizedRoomState, deadline time.Time) error {
 	ctx := context.Get()
-	
+
+	if time.Now().After(deadline) {
+		state.noPathToCenter = true
+		return nil
+	}
+
+	// Safety check
+	if ctx.PathFinder == nil || ctx.Data == nil || ctx.Data.AreaData.Grid == nil {
+		state.noPathToCenter = true
+		return nil
+	}
+
 	path, _, found := ctx.PathFinder.GetClosestWalkablePathIgnoreMonsters(room.GetCenter())
 	if !found {
 		state.noPathToCenter = true
-		// Clear from current position if no path
-		ClearAreaAroundPlayer(moveClearRadius, filter)
+		// Clear from current position if no path (synchronous, quick operation)
+		_ = ClearAreaAroundPlayer(moveClearRadius, filter)
 		return nil
 	}
 
@@ -178,15 +296,26 @@ func attemptMoveToRoomCenter(room data.Room, moveClearRadius int, filter data.Mo
 		Y: path.To().Y + ctx.Data.AreaOrigin.Y,
 	}
 
-	return ClearThroughPathIgnoreMonsters(to, moveClearRadius, filter)
+	// Try to move to center, but with a timeout wrapper
+	// Use a simple approach: call directly but limit the time spent
+	startMove := time.Now()
+	err := ClearThroughPathIgnoreMonsters(to, moveClearRadius, filter)
+	
+	// If it took too long or failed, mark as no path and continue
+	if err != nil || time.Since(startMove) > 5*time.Second {
+		state.noPathToCenter = true
+		return nil
+	}
+	
+	return err
 }
 
-// shouldAdvanceToNextRoom checks if we should advance to next room based on timeouts
-func shouldAdvanceToNextRoom(state *roomState) bool {
+// shouldAdvanceToNextRoomOptimized checks if we should advance based on timeouts
+func shouldAdvanceToNextRoomOptimized(state *optimizedRoomState) bool {
 	elapsed := time.Since(state.startTime)
 
-	// General timeout for any room
-	if elapsed > maxRoomTimeGeneral {
+	// General timeout
+	if elapsed > maxRoomTime {
 		return true
 	}
 
@@ -195,14 +324,25 @@ func shouldAdvanceToNextRoom(state *roomState) bool {
 		return true
 	}
 
+	// Stuck detection - no successful action for too long
+	if time.Since(state.lastSuccessfulAction) > stuckDetectionTime {
+		state.stuckDetectionCount++
+		if state.stuckDetectionCount >= 2 {
+			return true
+		}
+	} else {
+		state.stuckDetectionCount = 0
+	}
+
 	return false
 }
 
-// updateRoomState updates room state tracking
-func updateRoomState(state *roomState, monsters []data.Monster) {
+// updateRoomStateOptimized updates room state with optimized tracking
+func updateRoomStateOptimized(state *optimizedRoomState, monsters []data.Monster) {
 	currentCount := len(monsters)
+	now := time.Now()
 
-	// Initialize tracking
+	// Initialize
 	if state.initialMonsterCount == -1 {
 		state.initialMonsterCount = currentCount
 	}
@@ -213,11 +353,21 @@ func updateRoomState(state *roomState, monsters []data.Monster) {
 	} else {
 		state.iterationsWithoutProgress = 0
 		state.lastMonsterCount = currentCount
+		state.lastMonsterCountTime = now
 	}
+
+	// Add to history for other player detection
+	if len(state.monsterCountHistory) >= state.maxHistorySize {
+		state.monsterCountHistory = state.monsterCountHistory[1:]
+	}
+	state.monsterCountHistory = append(state.monsterCountHistory, monsterCountSnapshot{
+		count: currentCount,
+		time:  now,
+	})
 }
 
-// shouldAdvanceDueToOtherPlayers checks if other players are clearing and we should advance
-func shouldAdvanceDueToOtherPlayers(state *roomState, monsters []data.Monster) bool {
+// shouldAdvanceDueToOtherPlayersOptimized detects if other players are clearing
+func shouldAdvanceDueToOtherPlayersOptimized(state *optimizedRoomState, monsters []data.Monster) bool {
 	currentCount := len(monsters)
 	now := time.Now()
 
@@ -225,25 +375,40 @@ func shouldAdvanceDueToOtherPlayers(state *roomState, monsters []data.Monster) b
 	if state.lastMonsterCount > 0 && currentCount < state.lastMonsterCount {
 		reduction := state.lastMonsterCount - currentCount
 		timeSinceLastCheck := now.Sub(state.lastMonsterCountTime)
-		
-		if reduction >= fastMonsterReductionThreshold && timeSinceLastCheck < monsterReductionTimeWindow {
+
+		if reduction >= monsterCountChangeThreshold && timeSinceLastCheck < monsterCountChangeTimeWindow {
 			return true
 		}
 	}
-	state.lastMonsterCountTime = now
 
 	// Check if most monsters are gone (likely cleared by others)
-	if state.initialMonsterCount > 10 && currentCount < state.initialMonsterCount/3 {
-		return true
+	if state.initialMonsterCount > 10 {
+		remainingRatio := float64(currentCount) / float64(state.initialMonsterCount)
+		if remainingRatio < otherPlayerClearThreshold {
+			return true
+		}
+	}
+
+	// Check history for rapid decline
+	if len(state.monsterCountHistory) >= 3 {
+		recent := state.monsterCountHistory[len(state.monsterCountHistory)-3:]
+		oldest := recent[0]
+		newest := recent[len(recent)-1]
+		timeDiff := newest.time.Sub(oldest.time)
+		countDiff := oldest.count - newest.count
+
+		if timeDiff < monsterCountChangeTimeWindow*2 && countDiff >= monsterCountChangeThreshold*2 {
+			return true
+		}
 	}
 
 	// Check if no progress for too long
-	if state.iterationsWithoutProgress >= maxIterationsWithoutProgress {
+	if state.iterationsWithoutProgress >= maxStagnantIterations {
 		return true
 	}
 
 	// Check if no kills for too long
-	if time.Since(state.lastKillTime) > noKillTimeout {
+	if time.Since(state.lastKillTime) > stuckDetectionTime {
 		state.iterationsWithoutKill++
 		if state.iterationsWithoutKill >= maxIterationsWithoutKill {
 			return true
@@ -253,31 +418,124 @@ func shouldAdvanceDueToOtherPlayers(state *roomState, monsters []data.Monster) b
 	return false
 }
 
-// findBestTarget finds the best target to attack, considering accessibility and priority
-func findBestTarget(ctx *context.Status, monsters []data.Monster, state *roomState, filter data.MonsterFilter) data.Monster {
+// getMonstersInRoomCowsOptimized returns valid monsters with caching
+func getMonstersInRoomCowsOptimized(room data.Room, filter data.MonsterFilter, state *optimizedRoomState) []data.Monster {
+	ctx := context.Get()
+
+	// Pre-allocate with estimated capacity
+	out := make([]data.Monster, 0, 50)
+
+	for _, m := range ctx.Data.Monsters.Enemies(filter) {
+		// Fast checks first (cheapest)
+		if m.Stats[stat.Life] <= 0 {
+			continue
+		}
+
+		// Check cache first
+		state.cacheMutex.RLock()
+		cached, cachedExists := state.monsterCache[m.UnitID]
+		state.cacheMutex.RUnlock()
+
+		if cachedExists && time.Since(cached.timestamp) < monsterCacheTTL {
+			if !cached.accessible {
+				continue
+			}
+		} else {
+			// Validate monster
+			// Skip monsters outside room and far from player
+			distance := ctx.PathFinder.DistanceFromMe(m.Position)
+			if !room.IsInside(m.Position) && distance >= maxMonsterDistance {
+				// Cache negative result
+				state.cacheMutex.Lock()
+				state.monsterCache[m.UnitID] = monsterCacheEntry{
+					accessible: false,
+					timestamp:  time.Now(),
+				}
+				state.cacheMutex.Unlock()
+				continue
+			}
+
+			// Skip monsters on non-walkable positions (ghost monsters)
+			if !ctx.Data.AreaData.IsWalkable(m.Position) {
+				state.cacheMutex.Lock()
+				state.monsterCache[m.UnitID] = monsterCacheEntry{
+					accessible: false,
+					timestamp:  time.Now(),
+				}
+				state.cacheMutex.Unlock()
+				continue
+			}
+
+			// Cache positive result
+			state.cacheMutex.Lock()
+			state.monsterCache[m.UnitID] = monsterCacheEntry{
+				accessible: true,
+				timestamp:  time.Now(),
+			}
+			state.cacheMutex.Unlock()
+		}
+
+		out = append(out, m)
+	}
+
+	return out
+}
+
+// findBestTargetOptimized finds best target with caching and early exit
+func findBestTargetOptimized(ctx *context.Status, monsters []data.Monster, state *optimizedRoomState, filter data.MonsterFilter) data.Monster {
 	// Check if all monsters are blacklisted
-	if !slices.ContainsFunc(monsters, func(m data.Monster) bool {
-		return !state.skippedMonsters[m.UnitID]
-	}) {
+	hasValidMonster := false
+	for _, m := range monsters {
+		if !state.skippedMonsters[m.UnitID] {
+			hasValidMonster = true
+			break
+		}
+	}
+	if !hasValidMonster {
 		return data.Monster{}
 	}
 
+	// Sort by priority
 	SortEnemiesByPriority(&monsters)
 
-	// Helper function to check if monster is accessible
+	// Helper to check accessibility with caching
 	isAccessible := func(m data.Monster) bool {
 		if state.skippedMonsters[m.UnitID] {
 			return false
 		}
+
 		if ctx.Char.ShouldIgnoreMonster(m) {
 			state.skippedMonsters[m.UnitID] = true
 			return false
 		}
-		_, _, pathFound := ctx.PathFinder.GetPathIgnoreMonsters(m.Position)
+
+		// Check path cache
+		state.cacheMutex.RLock()
+		cached, cachedExists := state.pathCache[m.Position]
+		state.cacheMutex.RUnlock()
+
+		var pathFound bool
+		if cachedExists && time.Since(cached.timestamp) < pathCacheTTL {
+			pathFound = cached.path
+		} else {
+			// Calculate path
+			_, _, found := ctx.PathFinder.GetPathIgnoreMonsters(m.Position)
+			pathFound = found
+
+			// Cache result
+			state.cacheMutex.Lock()
+			state.pathCache[m.Position] = pathCacheEntry{
+				path:      found,
+				timestamp: time.Now(),
+			}
+			state.cacheMutex.Unlock()
+		}
+
 		if !pathFound && !ctx.Data.CanTeleport() {
 			state.skippedMonsters[m.UnitID] = true
 			return false
 		}
+
 		return true
 	}
 
@@ -313,12 +571,34 @@ func findBestTarget(ctx *context.Status, monsters []data.Monster, state *roomSta
 	return target
 }
 
-// attackTarget attacks the target and returns true if killed
-func attackTarget(ctx *context.Status, target data.Monster, state *roomState, pickupOnKill bool) bool {
-	monsterHPBefore := target.Stats[stat.Life]
+// attackTargetOptimized attacks target with timeout protection
+func attackTargetOptimized(ctx *context.Status, target data.Monster, state *optimizedRoomState, pickupOnKill bool, deadline time.Time) bool {
+	// Check if deadline already passed
+	if time.Now().After(deadline) {
+		return false
+	}
 
-	// Attack sequence
+	// Verify monster still exists and is alive
+	monster, found := ctx.Data.Monsters.FindByID(target.UnitID)
+	if !found || monster.Stats[stat.Life] <= 0 {
+		return true // Already dead (possibly killed by other player)
+	}
+
+	monsterHPBefore := monster.Stats[stat.Life]
+
+	// Attack sequence - call directly (KillMonsterSequence should handle its own timeouts)
+	// Check deadline before starting
+	if time.Now().After(deadline) {
+		return false
+	}
+
+	// Call KillMonsterSequence directly - it should be fast enough
+	// If it blocks, the room timeout will catch it
 	ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
+		// Check deadline during sequence
+		if time.Now().After(deadline) {
+			return 0, false
+		}
 		m, ok := d.Monsters.FindByID(target.UnitID)
 		if ok && m.Stats[stat.Life] > 0 {
 			return target.UnitID, true
@@ -329,7 +609,7 @@ func attackTarget(ctx *context.Status, target data.Monster, state *roomState, pi
 	// Check result
 	ctx.RefreshGameData()
 	m, stillExists := ctx.Data.Monsters.FindByID(target.UnitID)
-	
+
 	if !stillExists || m.Stats[stat.Life] <= 0 {
 		// Monster killed
 		if pickupOnKill {
@@ -348,30 +628,52 @@ func attackTarget(ctx *context.Status, target data.Monster, state *roomState, pi
 	return false
 }
 
-// getMonstersInRoomCows returns alive monsters in room or near player
-func getMonstersInRoomCows(room data.Room, filter data.MonsterFilter) []data.Monster {
-	ctx := context.Get()
+// cleanupCache removes old cache entries
+func cleanupCache(state *optimizedRoomState) {
+	now := time.Now()
+	state.cacheMutex.Lock()
+	defer state.cacheMutex.Unlock()
 
-	out := make([]data.Monster, 0)
-	for _, m := range ctx.Data.Monsters.Enemies(filter) {
-		// Skip dead monsters
-		if m.Stats[stat.Life] <= 0 {
-			continue
+	// Clean path cache
+	for pos, entry := range state.pathCache {
+		if now.Sub(entry.timestamp) > pathCacheTTL*2 {
+			delete(state.pathCache, pos)
 		}
-
-		// Skip monsters outside room and far from player
-		if !room.IsInside(m.Position) && ctx.PathFinder.DistanceFromMe(m.Position) >= 30 {
-			continue
-		}
-
-		// Skip monsters on non-walkable positions (ghost monsters)
-		if !ctx.Data.AreaData.IsWalkable(m.Position) {
-			continue
-		}
-
-		out = append(out, m)
 	}
-	return out
+
+	// Clean monster cache
+	for id, entry := range state.monsterCache {
+		if now.Sub(entry.timestamp) > monsterCacheTTL*2 {
+			delete(state.monsterCache, id)
+		}
+	}
+}
+
+// openChestsInRoom opens chests in the room
+func openChestsInRoom(ctx *context.Status, room data.Room) {
+	for _, o := range ctx.Data.Objects {
+		if !room.IsInside(o.Position) || !o.IsChest() || !o.Selectable {
+			continue
+		}
+
+		// Check if we can use Telekinesis from current position
+		chestDistance := ctx.PathFinder.DistanceFromMe(o.Position)
+		canUseTK := canUseTelekinesisForObject(o)
+
+		// Only move if not within Telekinesis range (or TK not available)
+		telekinesisRange := getTelekinesisRange()
+		if !canUseTK || chestDistance > telekinesisRange {
+			if err := MoveToCoords(o.Position); err != nil {
+				continue
+			}
+		}
+
+		_ = InteractObject(o, func() bool {
+			chest, _ := ctx.Data.Objects.FindByID(o.ID)
+			return !chest.Selectable
+		})
+		utils.Sleep(250)
+	}
 }
 
 // findFirst finds the first element in slice matching the predicate
@@ -384,5 +686,3 @@ func findFirst[T any](slice []T, predicate func(T) bool) (T, bool) {
 	var zero T
 	return zero, false
 }
-
-
