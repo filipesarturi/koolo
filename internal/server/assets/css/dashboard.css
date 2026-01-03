@@ -151,6 +151,28 @@ body {
   transform: translateY(-2px);
 }
 
+.fps-counter {
+  font-size: 0.8em;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  transition: background var(--transition-fast);
+  border: 1px solid var(--border-color);
+  font-family: "Courier New", monospace;
+}
+
+.fps-counter:hover {
+  background: var(--bg-hover);
+}
+
+.fps-counter #fps-value {
+  color: var(--primary);
+  font-weight: 700;
+}
+
 /* ========================================
    CHARACTER CARDS
    ======================================== */

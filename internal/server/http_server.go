@@ -620,6 +620,7 @@ func (s *HttpServer) getStatusData() IndexData {
 				PoisonResist:    pr,
 				GameName:        data.Game.LastGameName,
 				ActiveBuffs:     activeBuffs,
+				FPS:             data.Game.FPS,
 			}
 		}
 

@@ -674,6 +674,15 @@ function updateCharacterOverview(card, ui, status) {
   const buffsLineEl = card.querySelector(".co-buffs");
   const buffsListEl = card.querySelector(".co-buffs-list");
 
+  // Update game FPS if available
+  if (ui && ui.FPS !== undefined && ui.FPS > 0) {
+    const isActive = status === "In game" || status === "Paused" || status === "Starting";
+    if (isActive) {
+      currentGameFPS = ui.FPS;
+      updateGameFPS();
+    }
+  }
+
   // If not running, show placeholders
   const isActive =
     status === "In game" || status === "Paused" || status === "Starting";
@@ -1494,8 +1503,51 @@ function openDropManager() {
   window.location.href = url;
 }
 
+// Game FPS Counter - displays FPS from game data
+let currentGameFPS = 0;
+
+function updateGameFPS() {
+  const fpsValueEl = document.getElementById("fps-value");
+  if (fpsValueEl) {
+    // Get FPS from the first active character's game data
+    const cards = document.querySelectorAll(".character-card");
+    let foundFPS = false;
+    
+    for (const card of cards) {
+      const status = card.querySelector(".status-badge .status-value")?.textContent;
+      const isActive = status === "In game" || status === "Paused" || status === "Starting";
+      
+      if (isActive) {
+        // Try to get FPS from the character overview data
+        // The FPS is sent in the UI payload from the backend
+        // We'll update it when the dashboard updates
+        foundFPS = true;
+        break;
+      }
+    }
+    
+    if (!foundFPS) {
+      fpsValueEl.textContent = "--";
+    } else if (currentGameFPS > 0) {
+      fpsValueEl.textContent = currentGameFPS;
+    } else {
+      fpsValueEl.textContent = "--";
+    }
+  }
+}
+
+function startFPSCounter() {
+  // Update FPS display periodically
+  setInterval(updateGameFPS, 500);
+}
+
+function stopFPSCounter() {
+  // No cleanup needed for interval
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   fetchInitialData();
   connectWebSocket();
   restoreExpandedState();
+  startFPSCounter();
 });

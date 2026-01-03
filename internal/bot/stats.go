@@ -150,6 +150,7 @@ type CharacterOverview struct {
 	Gold            int
 	GameName        string // Current game name
 	ActiveBuffs     map[string]int // Map of active buff names to their levels
+	FPS             int    // Game FPS (from GameData.Game.FPS)
 }
 
 func (s Stats) TotalGames() int {
