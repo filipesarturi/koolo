@@ -447,34 +447,7 @@ func (a Cows) getWirtsLegWithTimeout() error {
 	// Find Wirt's corpse
 	wirtCorpse, found := a.ctx.Data.Objects.FindOne(object.WirtCorpse)
 	if !found {
-		// Corpse not found, try fallback: go to town and check for leg on ground or cow portal
-		a.ctx.Logger.Info("Wirt's corpse not found in Tristram, checking town for leg on ground or cow portal")
-		
-		// Return to town
-		if err := action.ReturnTown(); err != nil {
-			return fmt.Errorf("failed to return to town after corpse not found: %w", err)
-		}
-		
-		// Check for leg on the ground
-		a.checkForLegOnGround()
-		
-		// If we found the leg, we're done
-		if a.hasWirtsLeg() {
-			a.ctx.Logger.Info("Wirt's Leg found on ground in town")
-			return nil
-		}
-		
-		// Check if cow portal is already open
-		portalExists, err := a.checkCowPortalWithTimeout()
-		if err != nil {
-			a.ctx.Logger.Warn("Error checking for cow portal after corpse not found", "error", err)
-		} else if portalExists {
-			a.ctx.Logger.Info("Cow portal already exists, continuing without leg")
-			return nil
-		}
-		
-		// Neither leg nor portal found, return error
-		return errors.New("wirt corpse not found and no leg or portal available in town")
+		return errors.New("wirt corpse not found")
 	}
 
 	// Move to corpse
@@ -627,6 +600,7 @@ func (a Cows) preparePortalWithTimeout() error {
 func (a Cows) preparePortal() error {
 	return a.preparePortalWithTimeout()
 }
+
 // cleanupExtraPortalTomes cleans up extra portal tomes to make space
 func (a Cows) cleanupExtraPortalTomes() error {
 	// Refresh inventory to get latest data
@@ -667,6 +641,7 @@ func (a Cows) cleanupExtraPortalTomes() error {
 	}
 	return nil
 }
+
 // hasWristAndBookInCube checks if we have both Wirt's Leg and Tome of Town Portal in cube
 func (a Cows) hasWristAndBookInCube() bool {
 	a.ctx.RefreshInventory()
