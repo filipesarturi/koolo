@@ -116,7 +116,7 @@ for ctx.Data.PlayerUnit.Mode == mode.CastingSkill {
 ```go
 func waitForCharacterIdle(ctx *context.Status, timeout time.Duration) error {
     waitingStartTime := time.Now()
-    for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || 
+    for ctx.Data.PlayerUnit.Mode == mode.CastingSkill ||
         ctx.Data.PlayerUnit.Mode == mode.Running {
         if time.Since(waitingStartTime) > timeout {
             return ErrTimeout
@@ -159,6 +159,7 @@ func canUsePacketFor(operation string) bool {
 ### Identificar Padrões
 
 ✅ **Procurar por**:
+
 - Código similar em múltiplos arquivos
 - Funções com lógica quase idêntica
 - Validações repetidas
@@ -167,10 +168,12 @@ func canUsePacketFor(operation string) bool {
 ### Estratégias de Consolidação
 
 1. **Extrair para função auxiliar**:
+
    - Quando a lógica é idêntica ou muito similar
    - Colocar em pacote apropriado (utils, helpers)
 
 2. **Criar tipo/struct comum**:
+
    - Quando há dados relacionados que são passados juntos
    - Agrupar em struct para reduzir parâmetros
 
@@ -227,11 +230,13 @@ func PickupItem(it data.Item, itemPickupAttempt int) error {
 ### Código Limpo
 
 ✅ **Manter funções pequenas e focadas**:
+
 - Uma função, uma responsabilidade
 - Fácil de testar
 - Fácil de reutilizar
 
 ✅ **Nomes descritivos**:
+
 - Funções devem descrever claramente o que fazem
 - Variáveis devem ter nomes significativos
 
