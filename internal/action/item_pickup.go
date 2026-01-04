@@ -796,8 +796,13 @@ func shouldBePickedUp(i data.Item) bool {
 	ctx := context.Get()
 	ctx.SetLastAction("shouldBePickedUp")
 
-	// Always pick up runewords and Wirt's Leg.
-	if i.IsRuneword || i.Name == "WirtsLeg" {
+	// Always pick up runewords and Wirt's Leg (check multiple name variations)
+	if i.IsRuneword {
+		return true
+	}
+	// Check for Wirt's Leg with multiple name variations
+	legName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(string(i.Name), " ", ""), "'", ""))
+	if legName == "wirtsleg" || legName == "wirtleg" || strings.Contains(legName, "wirt") && strings.Contains(legName, "leg") {
 		return true
 	}
 

@@ -444,6 +444,16 @@ func (a Cows) getWirtsLegWithTimeout() error {
 		return fmt.Errorf("getWirtsLeg timeout before reaching corpse")
 	}
 
+	// Check if we already have the leg before interacting (might have been picked up automatically)
+	a.ctx.RefreshInventory()
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("Wirt's Leg already in inventory, skipping corpse interaction")
+		if err := action.ReturnTown(); err != nil {
+			return fmt.Errorf("failed to return to town: %w", err)
+		}
+		return nil
+	}
+
 	// Find Wirt's corpse
 	wirtCorpse, found := a.ctx.Data.Objects.FindOne(object.WirtCorpse)
 	if !found {
@@ -455,16 +465,167 @@ func (a Cows) getWirtsLegWithTimeout() error {
 		return fmt.Errorf("failed to move to Wirt's corpse: %w", err)
 	}
 
+	// Check again after moving (item might have been picked up during movement)
+	a.ctx.RefreshInventory()
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("Wirt's Leg found in inventory after moving to corpse")
+		if err := action.ReturnTown(); err != nil {
+			return fmt.Errorf("failed to return to town: %w", err)
+		}
+		return nil
+	}
+
 	// Interact with corpse (with timeout)
 	corpseInteractionStart := time.Now()
-	if err := action.InteractObject(wirtCorpse, func() bool {
+	interactionErr := action.InteractObject(wirtCorpse, func() bool {
 		// Check timeout
 		if time.Since(startTime) > getLegTimeout || time.Since(corpseInteractionStart) > 10*time.Second {
 			return true
 		}
+		// Refresh inventory during interaction to check if leg was obtained
+		a.ctx.RefreshInventory()
 		return a.hasWirtsLeg()
-	}); err != nil {
-		return fmt.Errorf("failed to interact with Wirt's corpse: %w", err)
+	})
+	
+	// Check if we got the leg even if interaction returned an error
+	utils.Sleep(300)
+	a.ctx.RefreshInventory()
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("Successfully obtained Wirt's Leg from corpse (despite interaction error)")
+		if err := action.ReturnTown(); err != nil {
+			return fmt.Errorf("failed to return to town: %w", err)
+		}
+		return nil
+	}
+	
+	// Only return error if we still don't have the leg
+	if interactionErr != nil {
+		a.ctx.Logger.Warn("Corpse interaction failed, but checking if leg is on ground", "error", interactionErr)
+		// Don't return error yet, check ground first
+	}
+
+	// Wait a bit for the item to appear (either in inventory or on ground)
+	utils.Sleep(800)
+	a.ctx.RefreshInventory()
+
+	// Check if we got it in inventory first
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("Successfully obtained Wirt's Leg from corpse")
+		if err := action.ReturnTown(); err != nil {
+			return fmt.Errorf("failed to return to town: %w", err)
+		}
+		return nil
+	}
+
+	// Check if leg dropped on ground in Tristram before leaving
+	a.ctx.RefreshGameData()
+	legFoundOnGround := false
+	var legItem data.Item
+	for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+		// Check for Wirt's Leg with flexible name matching (case-insensitive, ignore spaces/apostrophes)
+		itemName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(string(itm.Name), " ", ""), "'", ""))
+		if itemName == "wirtsleg" || itemName == "wirtleg" || (strings.Contains(itemName, "wirt") && strings.Contains(itemName, "leg")) {
+			legFoundOnGround = true
+			legItem = itm
+			a.ctx.Logger.Info("Found Wirt's Leg on ground in Tristram",
+				slog.String("itemName", string(itm.Name)),
+				slog.String("normalizedName", itemName),
+				slog.Int("unitID", int(itm.UnitID)))
+			break
+		}
+	}
+
+	if legFoundOnGround {
+		a.ctx.Logger.Info("Found Wirt's Leg on ground in Tristram, attempting to pick it up")
+
+		// Clear any "picked up" marking
+		delete(a.ctx.CurrentGame.PickedUpItems, int(legItem.UnitID))
+
+		// Move close if needed
+		distance := a.ctx.PathFinder.DistanceFromMe(legItem.Position)
+		if distance > 5 {
+			if err := action.MoveToCoords(legItem.Position); err != nil {
+				a.ctx.Logger.Warn("Failed to move to Wirt's Leg in Tristram", "error", err)
+			} else {
+				utils.Sleep(500)
+				a.ctx.RefreshGameData()
+				// Re-find the item after moving
+				for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+					if strings.EqualFold(string(itm.Name), "WirtsLeg") {
+						legItem = itm
+						delete(a.ctx.CurrentGame.PickedUpItems, int(legItem.UnitID))
+						break
+					}
+				}
+			}
+		}
+
+		// Try to pick it up
+		wasEnabled := a.ctx.CurrentGame.PickupItems
+		if !wasEnabled {
+			a.ctx.EnableItemPickup()
+		}
+		
+		pickupErr := step.PickupItem(legItem, 1)
+		
+		// Always verify pickup by checking inventory, not just if item disappeared from ground
+		utils.Sleep(600)
+		a.ctx.RefreshInventory()
+		
+		if a.hasWirtsLeg() {
+			a.ctx.Logger.Info("Successfully picked up Wirt's Leg in Tristram")
+			if !wasEnabled {
+				a.ctx.DisableItemPickup()
+			}
+			if err := action.ReturnTown(); err != nil {
+				return fmt.Errorf("failed to return to town: %w", err)
+			}
+			return nil
+		}
+		
+		// If pickup reported success but we don't have it, clear the marking and try again
+		if pickupErr == nil {
+			a.ctx.Logger.Warn("Pickup reported success but Wirt's Leg not in inventory, trying fallback")
+			// Clear the marking so we can try again
+			delete(a.ctx.CurrentGame.PickedUpItems, int(legItem.UnitID))
+		}
+		
+		if pickupErr != nil {
+			a.ctx.Logger.Warn("Failed to pickup Wirt's Leg in Tristram", "error", pickupErr)
+		}
+		
+		// Try ItemPickup as fallback
+		a.ctx.RefreshGameData()
+		// Re-check if item still exists
+		legStillExists := false
+		for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+			if strings.EqualFold(string(itm.Name), "WirtsLeg") {
+				legStillExists = true
+				delete(a.ctx.CurrentGame.PickedUpItems, int(itm.UnitID))
+				break
+			}
+		}
+		
+		if legStillExists {
+			action.ItemPickup(15)
+			// Verify again after fallback
+			utils.Sleep(600)
+			a.ctx.RefreshInventory()
+			if a.hasWirtsLeg() {
+				a.ctx.Logger.Info("Successfully picked up Wirt's Leg in Tristram using fallback")
+				if !wasEnabled {
+					a.ctx.DisableItemPickup()
+				}
+				if err := action.ReturnTown(); err != nil {
+					return fmt.Errorf("failed to return to town: %w", err)
+				}
+				return nil
+			}
+		}
+		
+		if !wasEnabled {
+			a.ctx.DisableItemPickup()
+		}
 	}
 
 	// Return to town
@@ -473,19 +634,29 @@ func (a Cows) getWirtsLegWithTimeout() error {
 	}
 
 	// After returning from Tristram, check if we got the leg
+	utils.Sleep(500)
+	a.ctx.RefreshInventory()
 	if !a.hasWirtsLeg() {
 		// If we didn't get the leg, check for it on the ground in town
 		a.ctx.Logger.Info("Wirt's Leg not found after interacting with corpse, checking ground in town")
 		a.checkForLegOnGround()
 	}
 
-	// Final verification
-	if !a.hasWirtsLeg() {
-		return errors.New("failed to obtain Wirt's Leg after all attempts")
+	// Final verification with multiple attempts
+	maxVerificationAttempts := 3
+	for i := 0; i < maxVerificationAttempts; i++ {
+		utils.Sleep(500)
+		a.ctx.RefreshInventory()
+		if a.hasWirtsLeg() {
+			a.ctx.Logger.Info("Successfully obtained Wirt's Leg", "elapsed", time.Since(startTime))
+			return nil
+		}
+		if i < maxVerificationAttempts-1 {
+			a.ctx.Logger.Debug("Wirt's Leg still not found, retrying verification", "attempt", i+1)
+		}
 	}
 
-	a.ctx.Logger.Info("Successfully obtained Wirt's Leg", "elapsed", time.Since(startTime))
-	return nil
+	return errors.New("failed to obtain Wirt's Leg after all attempts")
 }
 
 // getWirtsLeg is kept for backward compatibility but now uses the timeout version
@@ -727,15 +898,28 @@ func (a Cows) checkForLegOnGround() {
 	legFound := false
 	var legItem data.Item
 	for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
-		if strings.EqualFold(string(itm.Name), "WirtsLeg") {
+		// Check for Wirt's Leg with flexible name matching (case-insensitive, ignore spaces/apostrophes)
+		itemName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(string(itm.Name), " ", ""), "'", ""))
+		if itemName == "wirtsleg" || itemName == "wirtleg" || (strings.Contains(itemName, "wirt") && strings.Contains(itemName, "leg")) {
 			legFound = true
 			legItem = itm
+			a.ctx.Logger.Debug("Found Wirt's Leg on ground",
+				slog.String("itemName", string(itm.Name)),
+				slog.String("normalizedName", itemName),
+				slog.Int("unitID", int(itm.UnitID)))
 			break
 		}
 	}
 
 	if !legFound {
 		return
+	}
+
+	// Clear any "picked up" marking for Wirt's Leg to ensure it can be picked up
+	// This is important because the item may have been marked as picked up in a previous attempt
+	if _, wasMarked := a.ctx.CurrentGame.PickedUpItems[int(legItem.UnitID)]; wasMarked {
+		a.ctx.Logger.Debug("Clearing PickedUpItems marking for Wirt's Leg to allow pickup")
+		delete(a.ctx.CurrentGame.PickedUpItems, int(legItem.UnitID))
 	}
 
 	a.ctx.Logger.Info("Found Wirt's Leg on the ground, attempting to pick it up",
@@ -772,19 +956,109 @@ func (a Cows) checkForLegOnGround() {
 		}
 	}
 
+	// Ensure item pickup is enabled before attempting pickup
+	wasEnabled := a.ctx.CurrentGame.PickupItems
+	if !wasEnabled {
+		a.ctx.EnableItemPickup()
+	}
+
 	// Try to pick up the item using step.PickupItem for more direct control
-	if err := step.PickupItem(legItem, 1); err != nil {
-		a.ctx.Logger.Warn("Failed to pickup Wirt's Leg from ground", "error", err)
-		// Fallback to ItemPickup if step.PickupItem fails
-		if err := action.ItemPickup(10); err != nil {
+	// This bypasses the PickedUpItems filter in GetItemsToPickup
+	pickupErr := step.PickupItem(legItem, 1)
+	
+	// Always verify pickup by checking inventory, not just if item disappeared from ground
+	// The item might disappear from ground but not be in inventory (picked by another player, expired, etc.)
+	utils.Sleep(600)
+	a.ctx.RefreshInventory()
+	
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("Successfully picked up Wirt's Leg from the ground")
+		// Restore previous pickup state
+		if !wasEnabled {
+			a.ctx.DisableItemPickup()
+		}
+		return
+	}
+	
+	// If pickup reported success but we don't have it, clear the marking and try again
+	if pickupErr == nil {
+		a.ctx.Logger.Warn("Pickup reported success but Wirt's Leg not in inventory, item may have been picked by another player or expired")
+		// Clear the marking so we can try again
+		delete(a.ctx.CurrentGame.PickedUpItems, int(legItem.UnitID))
+	}
+	
+	if pickupErr != nil {
+		a.ctx.Logger.Warn("Failed to pickup Wirt's Leg from ground with step.PickupItem", "error", pickupErr)
+	}
+	
+	// Refresh game data to ensure we have the latest item state
+	utils.Sleep(300)
+	a.ctx.RefreshGameData()
+	
+	// Re-check if item still exists and clear marking again if needed
+	legStillOnGround := false
+	for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationGround) {
+		// Check for Wirt's Leg with flexible name matching
+		itemName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(string(itm.Name), " ", ""), "'", ""))
+		if itemName == "wirtsleg" || itemName == "wirtleg" || (strings.Contains(itemName, "wirt") && strings.Contains(itemName, "leg")) {
+			legStillOnGround = true
+			// Clear marking again before fallback
+			delete(a.ctx.CurrentGame.PickedUpItems, int(itm.UnitID))
+			legItem = itm
+			break
+		}
+	}
+	
+	if legStillOnGround {
+		// Fallback to ItemPickup if step.PickupItem failed or item still on ground
+		// Refresh game data first to ensure GetItemsToPickup sees the item
+		a.ctx.Logger.Info("Attempting fallback ItemPickup for Wirt's Leg",
+			slog.Int("unitID", int(legItem.UnitID)),
+			slog.String("itemName", string(legItem.Name)))
+		a.ctx.RefreshGameData()
+		
+		// Verify the item is still visible to GetItemsToPickup
+		itemsToPickup := action.GetItemsToPickup(15)
+		legInPickupList := false
+		for _, itm := range itemsToPickup {
+			itemName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(string(itm.Name), " ", ""), "'", ""))
+			if (itemName == "wirtsleg" || itemName == "wirtleg" || (strings.Contains(itemName, "wirt") && strings.Contains(itemName, "leg"))) && itm.UnitID == legItem.UnitID {
+				legInPickupList = true
+				a.ctx.Logger.Debug("Wirt's Leg found in GetItemsToPickup list")
+				break
+			}
+		}
+		
+		if !legInPickupList {
+			a.ctx.Logger.Warn("Wirt's Leg not found in GetItemsToPickup list, item may not be recognized by pickup system")
+		}
+		
+		if err := action.ItemPickup(15); err != nil {
 			a.ctx.Logger.Warn("Fallback ItemPickup also failed", "error", err)
+		}
+		
+		// Verify again after fallback
+		utils.Sleep(600)
+		a.ctx.RefreshInventory()
+		if a.hasWirtsLeg() {
+			a.ctx.Logger.Info("Successfully picked up Wirt's Leg using fallback ItemPickup")
+			// Restore previous pickup state
+			if !wasEnabled {
+				a.ctx.DisableItemPickup()
+			}
+			return
 		}
 	}
 
-	// Verify we got it
+	// Restore previous pickup state
+	if !wasEnabled {
+		a.ctx.DisableItemPickup()
+	}
+	
+	// Final verification with longer delay
 	utils.Sleep(500)
-	a.ctx.RefreshGameData()
+	a.ctx.RefreshInventory()
 	if a.hasWirtsLeg() {
-		a.ctx.Logger.Info("Successfully picked up Wirt's Leg from the ground")
+		a.ctx.Logger.Info("Successfully picked up Wirt's Leg from the ground (delayed verification)")
 	}
 }
