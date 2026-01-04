@@ -2,7 +2,6 @@ package action
 
 import (
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -15,59 +14,88 @@ import (
 	"github.com/hectorgimenez/koolo/internal/pather"
 )
 
-const pickupOnKillRadius = 15 // Pickup radius when PickupOnKill is enabled
+// Static maps for O(1) lookups
+var (
+	priorityMonstersMap = map[npc.ID]bool{
+		npc.FallenShaman:    true,
+		npc.CarverShaman:    true,
+		npc.DevilkinShaman:  true,
+		npc.DarkShaman:      true,
+		npc.WarpedShaman:    true,
+		npc.MummyGenerator:  true,
+		npc.BaalSubjectMummy: true,
+		npc.FetishShaman:    true,
+		npc.BlackSoul:       true,
+		npc.BlackSoul2:      true,
+		npc.BurningSoul:     true,
+		npc.BurningSoul2:    true,
+	}
+
+	soulNPCsMap = map[npc.ID]bool{
+		npc.BlackSoul:    true,
+		npc.BlackSoul2:   true,
+		npc.BurningSoul:  true,
+		npc.BurningSoul2: true,
+	}
+
+	dangerousNPCsMap = map[npc.ID]bool{
+		npc.UndeadStygianDoll:  true,
+		npc.UndeadStygianDoll2: true,
+		npc.UndeadSoulKiller:   true,
+		npc.UndeadSoulKiller2:  true,
+		npc.BlackSoul:          true,
+		npc.BlackSoul2:         true,
+		npc.BurningSoul:        true,
+		npc.BurningSoul2:       true,
+	}
+)
 
 func ClearAreaAroundPlayer(radius int, filter data.MonsterFilter) error {
 	return ClearAreaAroundPosition(context.Get().Data.PlayerUnit.Position, radius, filter)
 }
 
 func IsPriorityMonster(m data.Monster) bool {
-	priorityMonsters := []npc.ID{
-		npc.FallenShaman,
-		npc.CarverShaman,
-		npc.DevilkinShaman,
-		npc.DarkShaman,
-		npc.WarpedShaman,
-		npc.MummyGenerator,
-		npc.BaalSubjectMummy,
-		npc.FetishShaman,
-		// Souls are dangerous and should be prioritized
-		npc.BlackSoul,
-		npc.BlackSoul2,
-		npc.BurningSoul,
-		npc.BurningSoul2,
-	}
-
-	for _, priorityMonster := range priorityMonsters {
-		if m.Name == priorityMonster {
-			return true
-		}
-	}
-	return false
+	return priorityMonstersMap[m.Name]
 }
 
 func SortEnemiesByPriority(enemies *[]data.Monster) {
 	ctx := context.Get()
-	sort.Slice(*enemies, func(i, j int) bool {
-		monsterI := (*enemies)[i]
-		monsterJ := (*enemies)[j]
+	
+	// Pre-calculate priority and distance for all enemies to avoid redundant calculations
+	type enemyData struct {
+		monster   data.Monster
+		isPriority bool
+		distance   int
+	}
+	
+	enemyDataList := make([]enemyData, len(*enemies))
+	for i := range *enemies {
+		enemyDataList[i] = enemyData{
+			monster:    (*enemies)[i],
+			isPriority: priorityMonstersMap[(*enemies)[i].Name],
+			distance:   ctx.PathFinder.DistanceFromMe((*enemies)[i].Position),
+		}
+	}
+	
+	sort.Slice(enemyDataList, func(i, j int) bool {
+		ei := enemyDataList[i]
+		ej := enemyDataList[j]
 
-		isPriorityI := IsPriorityMonster(monsterI)
-		isPriorityJ := IsPriorityMonster(monsterJ)
-
-		distanceI := ctx.PathFinder.DistanceFromMe(monsterI.Position)
-		distanceJ := ctx.PathFinder.DistanceFromMe(monsterJ.Position)
-
-		if distanceI > 2 && distanceJ > 2 {
-			if isPriorityI && !isPriorityJ {
+		if ei.distance > 2 && ej.distance > 2 {
+			if ei.isPriority && !ej.isPriority {
 				return true
-			} else if !isPriorityI && isPriorityJ {
+			} else if !ei.isPriority && ej.isPriority {
 				return false
 			}
 		}
 
-		return distanceI < distanceJ
+		return ei.distance < ej.distance
 	})
+	
+	// Update original slice with sorted order
+	for i := range enemyDataList {
+		(*enemies)[i] = enemyDataList[i].monster
+	}
 }
 
 // FindSoulsInRange finds all souls within the specified radius from the player
@@ -80,22 +108,19 @@ func FindSoulsInRange(radius int) []data.Monster {
 func findSoulsInRange(radius int) []data.Monster {
 	ctx := context.Get()
 	playerPos := ctx.Data.PlayerUnit.Position
-	soulNPCs := []npc.ID{
-		npc.BlackSoul,
-		npc.BlackSoul2,
-		npc.BurningSoul,
-		npc.BurningSoul2,
-	}
 
-	var souls []data.Monster
+	souls := make([]data.Monster, 0, 10) // Pre-allocate with estimated capacity
 	for _, m := range ctx.Data.Monsters.Enemies() {
-		for _, soulNPC := range soulNPCs {
-			if m.Name == soulNPC && m.Stats[stat.Life] > 0 {
-				distance := pather.DistanceFromPoint(playerPos, m.Position)
-				if distance <= radius {
-					souls = append(souls, m)
-					break
-				}
+		// Check if alive first (cheaper check)
+		if m.Stats[stat.Life] <= 0 {
+			continue
+		}
+		
+		// Use map lookup O(1) instead of loop
+		if soulNPCsMap[m.Name] {
+			distance := pather.DistanceFromPoint(playerPos, m.Position)
+			if distance <= radius {
+				souls = append(souls, m)
 			}
 		}
 	}
@@ -113,31 +138,14 @@ func checkForSoulsInRange(radius int) bool {
 // Dolls: UndeadStygianDoll, UndeadStygianDoll2, UndeadSoulKiller, UndeadSoulKiller2
 // Souls: BlackSoul, BlackSoul2, BurningSoul, BurningSoul2
 func MonsterFilterExcludingDollsAndSouls() data.MonsterFilter {
-	dangerousNPCs := []npc.ID{
-		npc.UndeadStygianDoll,
-		npc.UndeadStygianDoll2,
-		npc.UndeadSoulKiller,
-		npc.UndeadSoulKiller2,
-		npc.BlackSoul,
-		npc.BlackSoul2,
-		npc.BurningSoul,
-		npc.BurningSoul2,
-	}
-
 	return func(monsters data.Monsters) []data.Monster {
-		var filteredMonsters []data.Monster
 		baseFilter := data.MonsterAnyFilter()
+		enemies := monsters.Enemies(baseFilter)
+		filteredMonsters := make([]data.Monster, 0, len(enemies))
 
-		for _, m := range monsters.Enemies(baseFilter) {
-			isDangerous := false
-			for _, dangerousNPC := range dangerousNPCs {
-				if m.Name == dangerousNPC {
-					isDangerous = true
-					break
-				}
-			}
-
-			if !isDangerous {
+		for _, m := range enemies {
+			// Use map lookup O(1) instead of loop
+			if !dangerousNPCsMap[m.Name] {
 				filteredMonsters = append(filteredMonsters, m)
 			}
 		}
@@ -150,12 +158,8 @@ func ClearAreaAroundPosition(pos data.Position, radius int, filters ...data.Mons
 	ctx := context.Get()
 	ctx.SetLastAction("ClearAreaAroundPosition")
 
-	// Check if PickupOnKill is enabled - if so, use the pickup-between-kills approach
-	if ctx.CharacterCfg.Character.PickupOnKill {
-		return clearAreaWithPickupOnKill(pos, radius, filters...)
-	}
-
 	// Standard behavior: disable item pickup during the clear sequence
+	// The high-priority bot loop will handle item pickup automatically
 	ctx.DisableItemPickup()
 	defer ctx.EnableItemPickup()
 
@@ -164,72 +168,50 @@ func ClearAreaAroundPosition(pos data.Position, radius int, filters ...data.Mons
 	}, nil)
 }
 
-// clearAreaWithPickupOnKill clears the area while picking up items after each kill
-func clearAreaWithPickupOnKill(pos data.Position, radius int, filters ...data.MonsterFilter) error {
-	ctx := context.Get()
-
-	for {
-		ctx.PauseIfNotPriority()
-		ctx.RefreshGameData()
-
-		// Check for enemies in range
-		targetID, found := selectNextEnemy(ctx, pos, radius, filters...)
-		if !found {
-			// No more enemies, do a final pickup sweep and exit
-			return nil
-		}
-
-		// Track if the monster was killed (we'll check after the attack sequence)
-		monsterBefore, monsterFound := ctx.Data.Monsters.FindByID(targetID)
-		if !monsterFound {
-			continue
-		}
-
-		// Disable item pickup during combat
-		ctx.DisableItemPickup()
-
-		// Kill just this one monster using a single-target selector
-		_ = ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
-			// Check if original target is still alive
-			monster, stillExists := d.Monsters.FindByID(targetID)
-			if !stillExists || monster.Stats[stat.Life] <= 0 {
-				return data.UnitID(0), false // Monster dead, exit sequence
-			}
-			return targetID, true
-		}, nil)
-
-		// Re-enable item pickup
-		ctx.EnableItemPickup()
-
-		// Check if monster was killed (no longer exists or has 0 HP)
-		ctx.RefreshGameData()
-		monsterAfter, stillExists := ctx.Data.Monsters.FindByID(targetID)
-		monsterKilled := !stillExists || monsterAfter.Stats[stat.Life] <= 0
-
-		// If monster was killed, do a quick pickup of nearby items
-		if monsterKilled {
-			pickupPos := monsterBefore.Position
-			err := ItemPickup(pickupOnKillRadius)
-			if err != nil {
-				ctx.Logger.Debug("PickupOnKill: Failed to pickup items after kill",
-					slog.String("error", err.Error()),
-					slog.Int("x", pickupPos.X),
-					slog.Int("y", pickupPos.Y))
-			}
-		}
-	}
-}
-
 // selectNextEnemy finds the next valid enemy to target
 func selectNextEnemy(ctx *context.Status, pos data.Position, radius int, filters ...data.MonsterFilter) (data.UnitID, bool) {
 	enemies := ctx.Data.Monsters.Enemies(filters...)
-	SortEnemiesByPriority(&enemies)
-
+	
+	// Filter by radius BEFORE sorting to avoid sorting unnecessary enemies
+	type candidateEnemy struct {
+		monster   data.Monster
+		distance  int
+		isPriority bool
+	}
+	
+	candidates := make([]candidateEnemy, 0, len(enemies))
 	for _, m := range enemies {
 		distanceToTarget := pather.DistanceFromPoint(pos, m.Position)
 		if distanceToTarget > radius {
 			continue
 		}
+		
+		candidates = append(candidates, candidateEnemy{
+			monster:    m,
+			distance:    distanceToTarget,
+			isPriority: priorityMonstersMap[m.Name],
+		})
+	}
+	
+	// Sort only the candidates (much smaller set)
+	sort.Slice(candidates, func(i, j int) bool {
+		ci := candidates[i]
+		cj := candidates[j]
+		
+		if ci.distance > 2 && cj.distance > 2 {
+			if ci.isPriority && !cj.isPriority {
+				return true
+			} else if !ci.isPriority && cj.isPriority {
+				return false
+			}
+		}
+		
+		return ci.distance < cj.distance
+	})
+
+	// Early exit when finding first valid enemy
+	for _, candidate := range candidates {
+		m := candidate.monster
 
 		// Special case: Vizier can spawn on weird/off-grid tiles in Chaos Sanctuary.
 		isVizier := m.Type == data.MonsterTypeSuperUnique && m.Name == npc.StormCaster
@@ -275,8 +257,16 @@ func clearThroughPathInternal(pos data.Position, radius int, filter data.Monster
 	ctx := context.Get()
 
 	lastMovement := false
+	maxDepth := 10 // Prevent infinite recursion
+	depth := 0
+	
 	for {
 		ctx.PauseIfNotPriority()
+		
+		depth++
+		if depth > maxDepth {
+			return fmt.Errorf("clearThroughPathInternal: max depth reached, possible infinite recursion")
+		}
 
 		ClearAreaAroundPosition(ctx.Data.PlayerUnit.Position, radius, filter)
 
@@ -328,5 +318,8 @@ func clearThroughPathInternal(pos data.Position, radius int, filter data.Monster
 			}
 			return err
 		}
+		
+		// Reset depth counter after successful movement (complete cycle: clear + move)
+		depth = 0
 	}
 }

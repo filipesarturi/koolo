@@ -188,8 +188,6 @@ func clearRoomCowsOptimized(room data.Room, filter data.MonsterFilter, moveClear
 			slog.Any("error", err))
 	}
 
-	pickupOnKill := ctx.CharacterCfg.Character.PickupOnKill
-
 	// Main clearing loop with aggressive timeouts
 	for {
 		state.iterationStartTime = time.Now()
@@ -245,8 +243,9 @@ func clearRoomCowsOptimized(room data.Room, filter data.MonsterFilter, moveClear
 		}
 
 		// Attack target with timeout
+		// The high-priority bot loop will handle item pickup automatically
 		actionDeadline := time.Now().Add(maxActionTime)
-		killed := attackTargetOptimized(ctx, target, state, pickupOnKill, actionDeadline)
+		killed := attackTargetOptimized(ctx, target, state, actionDeadline)
 		
 		if killed {
 			state.lastKillTime = time.Now()
@@ -572,7 +571,7 @@ func findBestTargetOptimized(ctx *context.Status, monsters []data.Monster, state
 }
 
 // attackTargetOptimized attacks target with timeout protection
-func attackTargetOptimized(ctx *context.Status, target data.Monster, state *optimizedRoomState, pickupOnKill bool, deadline time.Time) bool {
+func attackTargetOptimized(ctx *context.Status, target data.Monster, state *optimizedRoomState, deadline time.Time) bool {
 	// Check if deadline already passed
 	if time.Now().After(deadline) {
 		return false
@@ -612,9 +611,7 @@ func attackTargetOptimized(ctx *context.Status, target data.Monster, state *opti
 
 	if !stillExists || m.Stats[stat.Life] <= 0 {
 		// Monster killed
-		if pickupOnKill {
-			_ = ItemPickup(pickupOnKillRadius)
-		}
+		// The high-priority bot loop will handle item pickup automatically
 		return true
 	}
 
