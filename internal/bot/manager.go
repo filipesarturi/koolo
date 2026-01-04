@@ -272,6 +272,7 @@ func (mng *SupervisorManager) buildSupervisor(supervisorName string, logger *slo
 
 	bm := health.NewBeltManager(ctx.Data, hidM, logger, supervisorName)
 	hm := health.NewHealthManager(bm, ctx.Data)
+	dm := health.NewDefenseManager(bm, ctx.Data, pf, logger)
 
 	ctx.CharacterCfg = cfg
 	ctx.EventListener = mng.eventListener
@@ -285,6 +286,7 @@ func (mng *SupervisorManager) buildSupervisor(supervisorName string, logger *slo
 	pf.SetPacketSender(ctx.PacketSender)
 	ctx.BeltManager = bm
 	ctx.HealthManager = hm
+	ctx.DefenseManager = dm
 	char, err := character.BuildCharacter(ctx.Context)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating character: %w", err)

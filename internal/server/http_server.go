@@ -1453,6 +1453,47 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		}
 	}
 
+	// Defense
+	if sections.Health {
+		cfg.Defense.Enabled = values.Has("defenseEnabled")
+		if v := values.Get("defenseStationaryThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 1 && val <= 60 {
+				cfg.Defense.StationaryThresholdSeconds = val
+			} else if cfg.Defense.StationaryThresholdSeconds == 0 {
+				cfg.Defense.StationaryThresholdSeconds = 2 // default
+			}
+		} else if cfg.Defense.StationaryThresholdSeconds == 0 {
+			cfg.Defense.StationaryThresholdSeconds = 2 // default
+		}
+		if v := values.Get("defenseDamageThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 1 && val <= 60 {
+				cfg.Defense.DamageThresholdSeconds = val
+			} else if cfg.Defense.DamageThresholdSeconds == 0 {
+				cfg.Defense.DamageThresholdSeconds = 2 // default
+			}
+		} else if cfg.Defense.DamageThresholdSeconds == 0 {
+			cfg.Defense.DamageThresholdSeconds = 2 // default
+		}
+		if v := values.Get("defenseIneffectiveAttackThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 1 && val <= 60 {
+				cfg.Defense.IneffectiveAttackThresholdSeconds = val
+			} else if cfg.Defense.IneffectiveAttackThresholdSeconds == 0 {
+				cfg.Defense.IneffectiveAttackThresholdSeconds = 3 // default
+			}
+		} else if cfg.Defense.IneffectiveAttackThresholdSeconds == 0 {
+			cfg.Defense.IneffectiveAttackThresholdSeconds = 3 // default
+		}
+		if v := values.Get("defenseLowHPThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 0 && val <= 99 {
+				cfg.Defense.LowHPThreshold = val
+			} else if cfg.Defense.LowHPThreshold == 0 {
+				cfg.Defense.LowHPThreshold = 50 // default
+			}
+		} else if cfg.Defense.LowHPThreshold == 0 {
+			cfg.Defense.LowHPThreshold = 50 // default
+		}
+	}
+
 	// General (Character & Game)
 	if sections.General {
 		cfg.Character.StashToShared = values.Has("characterStashToShared")
@@ -2040,6 +2081,45 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Health.ManaPotionAt, _ = strconv.Atoi(r.Form.Get("manaPotionAt"))
 		cfg.Health.RejuvPotionAtLife, _ = strconv.Atoi(r.Form.Get("rejuvPotionAtLife"))
 		cfg.Health.RejuvPotionAtMana, _ = strconv.Atoi(r.Form.Get("rejuvPotionAtMana"))
+
+		// Defense settings
+		cfg.Defense.Enabled = r.Form.Has("defenseEnabled")
+		if v := r.Form.Get("defenseStationaryThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 1 && val <= 60 {
+				cfg.Defense.StationaryThresholdSeconds = val
+			} else if cfg.Defense.StationaryThresholdSeconds == 0 {
+				cfg.Defense.StationaryThresholdSeconds = 2
+			}
+		} else if cfg.Defense.StationaryThresholdSeconds == 0 {
+			cfg.Defense.StationaryThresholdSeconds = 2
+		}
+		if v := r.Form.Get("defenseDamageThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 1 && val <= 60 {
+				cfg.Defense.DamageThresholdSeconds = val
+			} else if cfg.Defense.DamageThresholdSeconds == 0 {
+				cfg.Defense.DamageThresholdSeconds = 2
+			}
+		} else if cfg.Defense.DamageThresholdSeconds == 0 {
+			cfg.Defense.DamageThresholdSeconds = 2
+		}
+		if v := r.Form.Get("defenseIneffectiveAttackThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 1 && val <= 60 {
+				cfg.Defense.IneffectiveAttackThresholdSeconds = val
+			} else if cfg.Defense.IneffectiveAttackThresholdSeconds == 0 {
+				cfg.Defense.IneffectiveAttackThresholdSeconds = 3
+			}
+		} else if cfg.Defense.IneffectiveAttackThresholdSeconds == 0 {
+			cfg.Defense.IneffectiveAttackThresholdSeconds = 3
+		}
+		if v := r.Form.Get("defenseLowHPThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 0 && val <= 99 {
+				cfg.Defense.LowHPThreshold = val
+			} else if cfg.Defense.LowHPThreshold == 0 {
+				cfg.Defense.LowHPThreshold = 50
+			}
+		} else if cfg.Defense.LowHPThreshold == 0 {
+			cfg.Defense.LowHPThreshold = 50
+		}
 		cfg.Health.ChickenAt, _ = strconv.Atoi(r.Form.Get("chickenAt"))
 		cfg.Character.UseMerc = r.Form.Has("useMerc")
 		cfg.Health.MercHealingPotionAt, _ = strconv.Atoi(r.Form.Get("mercHealingPotionAt"))

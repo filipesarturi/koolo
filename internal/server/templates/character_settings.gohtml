@@ -895,6 +895,30 @@
                            value="{{ .Config.Health.TownChickenAt }}"/>
                 </label>
             </fieldset>
+            <h3 style="margin:0">Defense settings</h3>
+            <br>
+            <fieldset class="grid">
+                <label>
+                    <input type="checkbox" name="defenseEnabled" {{ if .Config.Defense.Enabled }}checked{{ end }}/>
+                    Enable Defense System
+                </label>
+                <label>
+                    Stationary Threshold (seconds)
+                    <input type="number" name="defenseStationaryThreshold" min="1" max="60" placeholder="2" value="{{ if .Config.Defense.StationaryThresholdSeconds }}{{ .Config.Defense.StationaryThresholdSeconds }}{{ else }}2{{ end }}"/>
+                </label>
+                <label>
+                    Damage Threshold (seconds)
+                    <input type="number" name="defenseDamageThreshold" min="1" max="60" placeholder="2" value="{{ if .Config.Defense.DamageThresholdSeconds }}{{ .Config.Defense.DamageThresholdSeconds }}{{ else }}2{{ end }}"/>
+                </label>
+                <label>
+                    Ineffective Attack Threshold (seconds)
+                    <input type="number" name="defenseIneffectiveAttackThreshold" min="1" max="60" placeholder="3" value="{{ if .Config.Defense.IneffectiveAttackThresholdSeconds }}{{ .Config.Defense.IneffectiveAttackThresholdSeconds }}{{ else }}3{{ end }}"/>
+                </label>
+                <label>
+                    Low HP Threshold (%)
+                    <input type="number" name="defenseLowHPThreshold" min="0" max="99" placeholder="50" value="{{ if .Config.Defense.LowHPThreshold }}{{ .Config.Defense.LowHPThreshold }}{{ else }}50{{ end }}"/>
+                </label>
+            </fieldset>
             <h4>Belt Layout</h4><br>
             <fieldset class="grid">
                 {{ range $index, $potionType := .Config.Inventory.BeltColumns }}

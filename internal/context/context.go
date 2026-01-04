@@ -53,6 +53,7 @@ type Context struct {
 	PathFinder            *pather.PathFinder
 	BeltManager           *health.BeltManager
 	HealthManager         *health.Manager
+	DefenseManager        *health.DefenseManager
 	Char                  Character
 	LastBuffAt            time.Time
 	ContextDebug          map[Priority]*Debug

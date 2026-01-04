@@ -165,6 +165,13 @@ type CharacterCfg struct {
 		TownChickenAt       int `yaml:"townChickenAt"`
 		MercChickenAt       int `yaml:"mercChickenAt"`
 	} `yaml:"health"`
+	Defense struct {
+		Enabled                        bool `yaml:"enabled"`
+		StationaryThresholdSeconds     int  `yaml:"stationaryThresholdSeconds"`
+		DamageThresholdSeconds         int  `yaml:"damageThresholdSeconds"`
+		IneffectiveAttackThresholdSeconds int `yaml:"ineffectiveAttackThresholdSeconds"`
+		LowHPThreshold                 int  `yaml:"lowHPThreshold"`
+	} `yaml:"defense"`
 	Inventory struct {
 		InventoryLock      [][]int     `yaml:"inventoryLock"`
 		BeltColumns        BeltColumns `yaml:"beltColumns"`

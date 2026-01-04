@@ -293,6 +293,13 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				}
 				action.BuffIfRequired()
 
+				// Defense check
+				if b.ctx.DefenseManager != nil {
+					if err := b.ctx.DefenseManager.CheckDefense(); err != nil {
+						b.ctx.Logger.Warn("Defense manager error", "error", err)
+					}
+				}
+
 				lvl, _ := b.ctx.Data.PlayerUnit.FindStat(stat.Level, 0)
 
 				MaxLevel := b.ctx.CharacterCfg.Game.StopLevelingAt
