@@ -24,8 +24,8 @@ var (
 	weaponSwapFailures   = make(map[string]int) // per-character failure count
 	lastSwapFailureTime  = make(map[string]time.Time)
 	weaponSwapFailuresMu sync.Mutex
-	maxSwapFailures      = 3                // max failures before cooldown
-	swapFailureCooldown  = 60 * time.Second // cooldown after max failures
+	maxSwapFailures      = 3                     // max failures before cooldown
+	swapFailureCooldown  = 60 * time.Second      // cooldown after max failures
 	memoryBuffApplied    = make(map[string]bool) // track if Memory buff was applied in first run
 	memoryBuffAppliedMu  sync.Mutex
 )
@@ -129,6 +129,12 @@ func BuffIfRequired() {
 		// Check if Memory buff is enabled in config
 		useMemoryBuff := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff
 		if useMemoryBuff {
+			// Check if there's a corpse to recover first - priority over buffing
+			if ctx.Data.Corpse.Found {
+				ctx.Logger.Debug("Corpse found, skipping Memory buff - will be applied after corpse recovery")
+				return
+			}
+
 			// Check if Memory buff was already applied
 			memoryBuffAppliedMu.Lock()
 			alreadyApplied := memoryBuffApplied[ctx.Name]
@@ -296,14 +302,14 @@ func Buff() {
 		kb    data.KeyBinding
 	}
 	postBuffs := make([]buffEntry, 0)
-	
+
 	armorSkillAdded := false
 	armorSkills := []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor}
-	
+
 	for _, buff := range ctx.Char.BuffSkills() {
 		// Check if this is an armor skill
 		isArmorSkill := buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor
-		
+
 		// Skip Energy Shield if it's already active (was applied with Memory and still active)
 		if buff == skill.EnergyShield {
 			if ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
@@ -311,11 +317,11 @@ func Buff() {
 				continue
 			}
 		}
-		
+
 		// Check if skill exists on character (has level > 0) with current weapon
 		skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
 		hasSkill := skillExists && skillData.Level > 0
-		
+
 		kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff)
 		if !found || !hasSkill {
 			// If it's an armor skill and not available, try fallback
@@ -329,7 +335,7 @@ func Buff() {
 					// Check if fallback skill exists on character with current weapon
 					armorSkillData, armorSkillExists := ctx.Data.PlayerUnit.Skills[armorSkill]
 					armorHasSkill := armorSkillExists && armorSkillData.Level > 0
-					
+
 					if armorKb, armorFound := ctx.Data.KeyBindings.KeyBindingForSkill(armorSkill); armorFound && armorHasSkill {
 						ctx.Logger.Info("Armor skill not available, using fallback",
 							slog.String("preferred", buff.Desc().Name),
@@ -385,7 +391,7 @@ func Buff() {
 		ctx.Logger.Debug("Post CTA Buffing...", slog.Int("buffCount", len(postBuffs)))
 		buffTimeout := time.Now().Add(20 * time.Second)
 		const maxRetries = 3
-		
+
 		armorSkills := []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor}
 		armorApplied := false
 
@@ -409,7 +415,7 @@ func Buff() {
 
 			// Check if this is an armor skill
 			isArmorSkill := entry.skill == skill.FrozenArmor || entry.skill == skill.ShiverArmor || entry.skill == skill.ChillingArmor
-			
+
 			// Skip armor skill if any armor buff is already active (was applied with Memory on first run)
 			if isArmorSkill {
 				if ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) ||
@@ -450,30 +456,30 @@ func Buff() {
 					slog.String("skill", skillName),
 					slog.Int("skillID", int(entry.skill)))
 			}
-			
+
 			// If armor skill failed and we haven't applied armor yet, try fallback
 			if isArmorSkill && !buffSuccess && !armorApplied {
 				ctx.Logger.Info("Armor skill failed, trying fallback",
 					slog.String("failed", skillName))
-				
+
 				// Try first available armor skill as fallback
 				fallbackFound := false
 				// Refresh game data before trying fallback to ensure we have current weapon/skills state
 				ctx.RefreshGameData()
-				
+
 				for _, armorSkill := range armorSkills {
 					if armorSkill == entry.skill {
 						continue // Skip the one that failed
 					}
-					
+
 					// Check if fallback skill exists on character (refresh ensures current weapon state)
 					armorSkillData, armorSkillExists := ctx.Data.PlayerUnit.Skills[armorSkill]
 					armorHasSkill := armorSkillExists && armorSkillData.Level > 0
-					
+
 					if !armorHasSkill {
 						continue // Skip if skill not learned
 					}
-					
+
 					if armorKb, armorFound := ctx.Data.KeyBindings.KeyBindingForSkill(armorSkill); armorFound {
 						armorName := armorSkill.Desc().Name
 						if armorName == "" {
@@ -481,7 +487,7 @@ func Buff() {
 						}
 						ctx.Logger.Info("Trying armor skill fallback",
 							slog.String("fallback", armorName))
-						
+
 						if expectedState, canVerify := skillToState[armorSkill]; canVerify {
 							if castBuffWithVerify(ctx, armorKb, armorSkill, expectedState, maxRetries) {
 								armorApplied = true
@@ -804,7 +810,7 @@ func buffWithMemory() error {
 	// Step 3: Save the currently equipped weapon(s) in slot 1 before replacing with Memory
 	originalLeftArm := GetEquippedItem(ctx.Data.Inventory, item.LocLeftArm)
 	originalRightArm := GetEquippedItem(ctx.Data.Inventory, item.LocRightArm)
-	
+
 	ctx.Logger.Debug("Saving original weapon from slot 1",
 		slog.String("leftArm", originalLeftArm.IdentifiedName),
 		slog.String("rightArm", originalRightArm.IdentifiedName))
@@ -934,7 +940,7 @@ func buffWithMemory() error {
 
 	// Apply armor skill (preferred or first available)
 	armorSkills := []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor}
-	
+
 	// If preferred skill is set, try it first
 	if preferredArmorSkill != 0 {
 		// Check if preferred skill has keybinding available
@@ -988,7 +994,7 @@ func buffWithMemory() error {
 
 	// Step 8: Open stash again to restore original weapon
 	utils.PingSleep(utils.Medium, 300)
-	
+
 	// Verify Memory is still equipped before proceeding
 	ctx.RefreshGameData()
 	memoryStillEquipped := false
@@ -1011,19 +1017,19 @@ func buffWithMemory() error {
 				break
 			}
 		}
-			if foundInInv {
-				ctx.Logger.Info("Found Memory in inventory, will put it back in stash")
-				if err := OpenStash(); err == nil {
-					SwitchStashTab(memoryTab)
-					utils.PingSleep(utils.Medium, 300)
-					ctx.RefreshGameData()
-					recoveryScreenPos := ui.GetScreenCoordsForItem(memoryInInventory)
-					ctx.HID.MovePointer(recoveryScreenPos.X, recoveryScreenPos.Y)
-					utils.PingSleep(utils.Medium, 200)
-					ctx.HID.ClickWithModifier(game.LeftButton, recoveryScreenPos.X, recoveryScreenPos.Y, game.CtrlKey)
-					utils.PingSleep(utils.Medium, 800)
-				}
+		if foundInInv {
+			ctx.Logger.Info("Found Memory in inventory, will put it back in stash")
+			if err := OpenStash(); err == nil {
+				SwitchStashTab(memoryTab)
+				utils.PingSleep(utils.Medium, 300)
+				ctx.RefreshGameData()
+				recoveryScreenPos := ui.GetScreenCoordsForItem(memoryInInventory)
+				ctx.HID.MovePointer(recoveryScreenPos.X, recoveryScreenPos.Y)
+				utils.PingSleep(utils.Medium, 200)
+				ctx.HID.ClickWithModifier(game.LeftButton, recoveryScreenPos.X, recoveryScreenPos.Y, game.CtrlKey)
+				utils.PingSleep(utils.Medium, 800)
 			}
+		}
 		step.CloseAllMenus()
 		return fmt.Errorf("memory staff was lost during buff sequence")
 	}
@@ -1043,18 +1049,18 @@ func buffWithMemory() error {
 	// SHIFT + Click on the original weapon in stash will automatically replace Memory
 	if originalLeftArm.UnitID != 0 {
 		ctx.Logger.Info("Restoring original weapon to slot 1", slog.String("weapon", originalLeftArm.IdentifiedName))
-		
+
 		// Find the original weapon in stash
 		var originalWeapon data.Item
 		foundOriginal := false
 		var originalWeaponTab int
-		
+
 		// Search all stash tabs for the original weapon
 		for tab := 1; tab <= 4; tab++ {
 			SwitchStashTab(tab)
 			utils.PingSleep(utils.Medium, 300)
 			ctx.RefreshGameData()
-			
+
 			stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
 			for _, stashItem := range stashItems {
 				// Check if item is on the current tab
@@ -1065,7 +1071,7 @@ func buffWithMemory() error {
 				if itemTab != tab {
 					continue
 				}
-				
+
 				if stashItem.UnitID == originalLeftArm.UnitID {
 					originalWeapon = stashItem
 					foundOriginal = true
@@ -1083,7 +1089,7 @@ func buffWithMemory() error {
 			SwitchStashTab(originalWeaponTab)
 			utils.PingSleep(utils.Medium, 300)
 			ctx.RefreshGameData()
-			
+
 			// Find the weapon again after tab switch
 			stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
 			for _, stashItem := range stashItems {
@@ -1092,7 +1098,7 @@ func buffWithMemory() error {
 					break
 				}
 			}
-			
+
 			// Equip original weapon using SHIFT + Click (this will automatically replace Memory)
 			ctx.Logger.Info("Equipping original weapon with SHIFT + Click (will replace Memory)")
 			screenPos = ui.GetScreenCoordsForItem(originalWeapon)
@@ -1100,12 +1106,12 @@ func buffWithMemory() error {
 			utils.PingSleep(utils.Medium, 200)
 			ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
 			utils.PingSleep(utils.Medium, 800)
-			
+
 			// Verify Memory is back in stash and original weapon is equipped
 			ctx.RefreshGameData()
 			memoryInStash := false
 			originalEquipped := false
-			
+
 			stashItems = ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
 			for _, itm := range stashItems {
 				if itm.IsRuneword && itm.RunewordName == item.RunewordMemory {
@@ -1113,21 +1119,21 @@ func buffWithMemory() error {
 					break
 				}
 			}
-			
+
 			for _, eqItem := range ctx.Data.Inventory.ByLocation(item.LocationEquipped) {
 				if eqItem.UnitID == originalLeftArm.UnitID {
 					originalEquipped = true
 					break
 				}
 			}
-			
+
 			if memoryInStash && originalEquipped {
 				ctx.Logger.Info("Original weapon restored and Memory returned to stash")
 			} else {
 				ctx.Logger.Warn("Verification failed, attempting recovery",
 					slog.Bool("memoryInStash", memoryInStash),
 					slog.Bool("originalEquipped", originalEquipped))
-				
+
 				// Recovery: if Memory is still equipped, try to find CTA in stash
 				ctx.RefreshGameData()
 				memoryStillEquippedCheck := false
@@ -1161,12 +1167,12 @@ func buffWithMemory() error {
 	// If there was a right arm item (shield), restore it too
 	if originalRightArm.UnitID != 0 && originalRightArm.UnitID != originalLeftArm.UnitID {
 		ctx.Logger.Info("Restoring original right arm item", slog.String("item", originalRightArm.IdentifiedName))
-		
+
 		// Find the original right arm item in inventory or stash
 		var originalRightItem data.Item
 		foundRight := false
 		var rightItemTab int
-		
+
 		// First check inventory
 		for _, invItem := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
 			if invItem.UnitID == originalRightArm.UnitID {
@@ -1175,14 +1181,14 @@ func buffWithMemory() error {
 				break
 			}
 		}
-		
+
 		// If not in inventory, check stash
 		if !foundRight {
 			for tab := 1; tab <= 4; tab++ {
 				SwitchStashTab(tab)
 				utils.PingSleep(utils.Medium, 300)
 				ctx.RefreshGameData()
-				
+
 				stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
 				for _, stashItem := range stashItems {
 					itemTab := 1
@@ -1192,7 +1198,7 @@ func buffWithMemory() error {
 					if itemTab != tab {
 						continue
 					}
-					
+
 					if stashItem.UnitID == originalRightArm.UnitID {
 						originalRightItem = stashItem
 						foundRight = true
@@ -1204,12 +1210,12 @@ func buffWithMemory() error {
 					break
 				}
 			}
-			
+
 			if foundRight {
 				SwitchStashTab(rightItemTab)
 				utils.PingSleep(utils.Medium, 300)
 				ctx.RefreshGameData()
-				
+
 				stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
 				for _, stashItem := range stashItems {
 					if stashItem.UnitID == originalRightArm.UnitID {
@@ -1219,7 +1225,7 @@ func buffWithMemory() error {
 				}
 			}
 		}
-		
+
 		if foundRight {
 			screenPos = ui.GetScreenCoordsForItem(originalRightItem)
 			ctx.HID.MovePointer(screenPos.X, screenPos.Y)
@@ -1256,7 +1262,7 @@ func buffWithMemory() error {
 			ctx.HID.ClickWithModifier(game.LeftButton, slotCoords.X, slotCoords.Y, game.CtrlKey)
 			utils.PingSleep(utils.Medium, 1000)
 			ctx.RefreshGameData()
-			
+
 			// Check again
 			memoryStillEquippedFinal = false
 			for _, eqItem := range ctx.Data.Inventory.ByLocation(item.LocationEquipped) {
@@ -1266,7 +1272,7 @@ func buffWithMemory() error {
 				}
 			}
 		}
-		
+
 		if memoryStillEquippedFinal {
 			step.CloseAllMenus()
 			return fmt.Errorf("CRITICAL: failed to restore Memory to stash - Memory still equipped")
