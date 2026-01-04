@@ -291,6 +291,14 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 						}
 					}
 				}
+
+				// Check for stuck item pickup flag and reset if necessary (20 second timeout)
+				if b.ctx.CurrentGame.IsPickingItems {
+					if b.ctx.ResetStuckItemPickup(20 * time.Second) {
+						b.ctx.Logger.Warn("Recovered from stuck item pickup - flag was reset after timeout")
+					}
+				}
+
 				action.BuffIfRequired()
 
 				// Defense check

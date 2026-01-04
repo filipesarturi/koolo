@@ -88,6 +88,7 @@ type CurrentGameHelper struct {
 	}
 	PickupItems                bool
 	IsPickingItems             bool
+	IsPickingItemsSetAt        time.Time // Tracks when IsPickingItems was set to true
 	FailedToCreateGameAttempts int
 	FailedMenuAttempts         int
 	// When this is set, the supervisor will stop and the manager will start a new supervisor for the specified character.
@@ -126,7 +127,7 @@ func NewContext(name string) *Status {
 		SkillPointIndex:  0,
 		ForceAttack:      false,
 		ManualModeActive: false, // Explicitly initialize to false
-		refreshInterval:  25 * time.Millisecond,
+		refreshInterval:  0 * time.Millisecond,
 	}
 	ctx.Drop = drop.NewManager(name, ctx.Logger)
 	ctx.AttachRoutine(PriorityNormal)
@@ -249,6 +250,11 @@ func (ctx *Context) EnableItemPickup() {
 func (ctx *Context) SetPickingItems(value bool) {
 	ctx.CurrentGame.mutex.Lock()
 	ctx.CurrentGame.IsPickingItems = value
+	if value {
+		ctx.CurrentGame.IsPickingItemsSetAt = time.Now()
+	} else {
+		ctx.CurrentGame.IsPickingItemsSetAt = time.Time{} // Reset timestamp when flag is cleared
+	}
 	ctx.CurrentGame.mutex.Unlock()
 }
 
@@ -315,4 +321,35 @@ func (ctx *Context) Cleanup() {
 	// Reset counters on cleanup for a new session
 	ctx.CurrentGame.FailedToCreateGameAttempts = 0
 	ctx.CurrentGame.FailedMenuAttempts = 0 // Also reset this on cleanup
+}
+
+// ResetStuckItemPickup checks if IsPickingItems has been stuck for more than the timeout duration
+// and resets it if necessary. Returns true if the flag was reset, false otherwise.
+func (ctx *Context) ResetStuckItemPickup(timeout time.Duration) bool {
+	ctx.CurrentGame.mutex.Lock()
+	defer ctx.CurrentGame.mutex.Unlock()
+
+	if !ctx.CurrentGame.IsPickingItems {
+		return false // Flag is not set, nothing to reset
+	}
+
+	if ctx.CurrentGame.IsPickingItemsSetAt.IsZero() {
+		// Timestamp not set, assume it's stuck and reset
+		ctx.Logger.Warn("IsPickingItems flag is set but timestamp is zero, resetting flag")
+		ctx.CurrentGame.IsPickingItems = false
+		ctx.CurrentGame.IsPickingItemsSetAt = time.Time{}
+		return true
+	}
+
+	if time.Since(ctx.CurrentGame.IsPickingItemsSetAt) > timeout {
+		ctx.Logger.Warn("IsPickingItems flag has been stuck for too long, resetting to recover",
+			"duration", time.Since(ctx.CurrentGame.IsPickingItemsSetAt),
+			"timeout", timeout,
+		)
+		ctx.CurrentGame.IsPickingItems = false
+		ctx.CurrentGame.IsPickingItemsSetAt = time.Time{}
+		return true
+	}
+
+	return false
 }

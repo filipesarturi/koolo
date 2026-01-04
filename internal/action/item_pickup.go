@@ -268,6 +268,13 @@ outer:
 				if debugPickit {
 					ctx.Logger.Debug("TPs available, returning to town to sell junk and stash items.")
 				}
+				// Check timeout before blocking operation
+				if time.Since(globalStartTime) > globalPickupTimeout {
+					ctx.Logger.Warn("ItemPickup global timeout reached before town routine, aborting pickup cycle",
+						"elapsed", time.Since(globalStartTime),
+					)
+					return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+				}
 				if err := InRunReturnTownRoutine(); err != nil {
 					ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", err)
 				}
@@ -316,6 +323,15 @@ outer:
 		const highPriorityCheckInterval = 500 * time.Millisecond // Check for high priority items every 500ms
 
 		for totalAttemptCounter < totalMaxAttemptsForItem {
+			// Check global timeout at the start of each attempt
+			if time.Since(globalStartTime) > globalPickupTimeout {
+				ctx.Logger.Warn("ItemPickup global timeout reached during pickup attempts, aborting pickup cycle",
+					"elapsed", time.Since(globalStartTime),
+					"attempt", totalAttemptCounter,
+				)
+				return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+			}
+
 			totalAttemptCounter++
 			if debugPickit {
 				ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Starting attempt %d (total: %d)", attempt, totalAttemptCounter))
@@ -348,14 +364,21 @@ outer:
 				if needsTown {
 					townCleanupByUnitID[itemToPickup.UnitID]++
 					if townCleanupByUnitID[itemToPickup.UnitID] <= 1 {
-						ctx.Logger.Debug("Item doesn't fit in inventory right now; returning to town to stash/sell and retry.",
-							slog.String("itemName", string(itemToPickup.Desc().Name)),
-							slog.Int("unitID", int(itemToPickup.UnitID)),
+					ctx.Logger.Debug("Item doesn't fit in inventory right now; returning to town to stash/sell and retry.",
+						slog.String("itemName", string(itemToPickup.Desc().Name)),
+						slog.Int("unitID", int(itemToPickup.UnitID)),
+					)
+					// Check timeout before blocking operation
+					if time.Since(globalStartTime) > globalPickupTimeout {
+						ctx.Logger.Warn("ItemPickup global timeout reached before town routine, aborting pickup cycle",
+							"elapsed", time.Since(globalStartTime),
 						)
-						if err := InRunReturnTownRoutine(); err != nil {
-							ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", err)
-						}
-						continue outer
+						return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+					}
+					if err := InRunReturnTownRoutine(); err != nil {
+						ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", err)
+					}
+					continue outer
 					}
 					// Already tried town once and it still doesn't fit: blacklist this ground instance to stop thrashing.
 					lastError = fmt.Errorf("item does not fit in inventory even after town cleanup")
@@ -477,6 +500,13 @@ outer:
 							slog.String("itemName", string(itemToPickup.Desc().Name)),
 							slog.Int("unitID", int(itemToPickup.UnitID)),
 						)
+						// Check timeout before blocking operation
+						if time.Since(globalStartTime) > globalPickupTimeout {
+							ctx.Logger.Warn("ItemPickup global timeout reached before town routine, aborting pickup cycle",
+								"elapsed", time.Since(globalStartTime),
+							)
+							return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+						}
 						if errTown := InRunReturnTownRoutine(); errTown != nil {
 							ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", errTown)
 						}
@@ -531,6 +561,13 @@ outer:
 				if needsTown {
 					townCleanupByUnitID[itemToPickup.UnitID]++
 					if townCleanupByUnitID[itemToPickup.UnitID] <= 1 {
+						// Check timeout before blocking operation
+						if time.Since(globalStartTime) > globalPickupTimeout {
+							ctx.Logger.Warn("ItemPickup global timeout reached before town routine, aborting pickup cycle",
+								"elapsed", time.Since(globalStartTime),
+							)
+							return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+						}
 						if err := InRunReturnTownRoutine(); err != nil {
 							ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", err)
 						}
