@@ -69,6 +69,9 @@ type Context struct {
 	LastPortalTick        time.Time     // NEW FIELD: Tracks last portal creation for spam prevention
 	IsBossEquipmentActive bool          // flag for barb leveling
 	Drop                  *drop.Manager // Drop: Per-supervisor Drop manager
+	lastRefreshTime       time.Time
+	refreshMutex          sync.RWMutex
+	refreshInterval       time.Duration
 }
 
 type Debug struct {
@@ -123,6 +126,7 @@ func NewContext(name string) *Status {
 		SkillPointIndex:  0,
 		ForceAttack:      false,
 		ManualModeActive: false, // Explicitly initialize to false
+		refreshInterval:  25 * time.Millisecond,
 	}
 	ctx.Drop = drop.NewManager(name, ctx.Logger)
 	ctx.AttachRoutine(PriorityNormal)
@@ -172,13 +176,46 @@ func getGoroutineID() uint64 {
 }
 
 func (ctx *Context) RefreshGameData() {
+	ctx.refreshMutex.RLock()
+	now := time.Now()
+	// Early return if cache is still valid
+	if !ctx.lastRefreshTime.IsZero() && now.Sub(ctx.lastRefreshTime) < ctx.refreshInterval {
+		ctx.refreshMutex.RUnlock()
+		return
+	}
+	ctx.refreshMutex.RUnlock()
+
+	// Upgrade to write lock for actual refresh
+	ctx.refreshMutex.Lock()
+	defer ctx.refreshMutex.Unlock()
+
+	// Double-check pattern: another goroutine might have refreshed while we waited
+	if !ctx.lastRefreshTime.IsZero() && time.Since(ctx.lastRefreshTime) < ctx.refreshInterval {
+		return
+	}
+
 	*ctx.Data = ctx.GameReader.GetData()
 	if ctx.IsLevelingCharacter == nil {
 		_, isLevelingCharacter := ctx.Char.(LevelingCharacter)
 		ctx.IsLevelingCharacter = &isLevelingCharacter
 	}
 	ctx.Data.IsLevelingCharacter = *ctx.IsLevelingCharacter
+	ctx.lastRefreshTime = time.Now()
+}
 
+// RefreshGameDataForce forces a refresh of game data, ignoring the cache TTL.
+// Use this when you need guaranteed fresh data, such as after critical actions.
+func (ctx *Context) RefreshGameDataForce() {
+	ctx.refreshMutex.Lock()
+	defer ctx.refreshMutex.Unlock()
+
+	*ctx.Data = ctx.GameReader.GetData()
+	if ctx.IsLevelingCharacter == nil {
+		_, isLevelingCharacter := ctx.Char.(LevelingCharacter)
+		ctx.IsLevelingCharacter = &isLevelingCharacter
+	}
+	ctx.Data.IsLevelingCharacter = *ctx.IsLevelingCharacter
+	ctx.lastRefreshTime = time.Now()
 }
 
 func (ctx *Context) RefreshInventory() {
