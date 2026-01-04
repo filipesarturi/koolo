@@ -23,6 +23,7 @@ var (
 	statesMutex           sync.RWMutex
 	monsterStates         = make(map[data.UnitID]*attackState)
 	ErrMonsterUnreachable = errors.New("monster appears to be unreachable or unkillable")
+	ErrMonsterDead        = errors.New("monster is dead")
 )
 
 // Contains all configuration for an attack sequence
@@ -135,10 +136,15 @@ func SecondaryAttack(skill skill.ID, target data.UnitID, numOfAttacks int, opts 
 
 // Helper function to validate if a monster should be targetable
 func isValidEnemy(monster data.Monster, ctx *context.Status) bool {
+	// Skip dead monsters early (most common case)
+	if monster.Stats[stat.Life] <= 0 {
+		return false
+	}
+
 	// Special case: Always allow Vizier seal boss even if off grid
 	isVizier := monster.Type == data.MonsterTypeSuperUnique && monster.Name == npc.StormCaster
 	if isVizier {
-		return monster.Stats[stat.Life] > 0
+		return true
 	}
 
 	// Skip monsters in invalid positions
@@ -146,12 +152,34 @@ func isValidEnemy(monster data.Monster, ctx *context.Status) bool {
 		return false
 	}
 
-	// Skip dead monsters
-	if monster.Stats[stat.Life] <= 0 {
-		return false
+	return true
+}
+
+// refreshAndValidateMonster refreshes game data and validates if the monster is still alive and valid.
+// Returns the updated monster, whether it was found, and an error if the monster is dead.
+// This function helps avoid duplicate code and ensures consistent validation.
+func refreshAndValidateMonster(ctx *context.Status, monsterID data.UnitID) (data.Monster, bool, error) {
+	ctx.RefreshGameData()
+	monster, found := ctx.Data.Monsters.FindByID(monsterID)
+	if !found {
+		return data.Monster{}, false, nil
 	}
 
-	return true
+	// Early return if monster is dead
+	if monster.Stats[stat.Life] <= 0 {
+		// Clean up state efficiently
+		statesMutex.Lock()
+		delete(monsterStates, monsterID)
+		statesMutex.Unlock()
+		return data.Monster{}, false, ErrMonsterDead
+	}
+
+	// Validate enemy using existing helper
+	if !isValidEnemy(monster, ctx) {
+		return data.Monster{}, false, nil
+	}
+
+	return monster, true, nil
 }
 
 // Cleanup function to ensure proper state on exit
@@ -166,6 +194,8 @@ func attack(settings attackSettings) error {
 
 	numOfAttacksRemaining := settings.numOfAttacks
 	lastRunAt := time.Time{}
+	lastRefreshTime := time.Now()
+	const refreshInterval = 500 * time.Millisecond // Refresh game data periodically, not every iteration
 
 	for {
 		ctx.PauseIfNotPriority()
@@ -174,9 +204,24 @@ func attack(settings attackSettings) error {
 			return nil
 		}
 
+		// Refresh game data periodically to catch monster death
+		if time.Since(lastRefreshTime) > refreshInterval {
+			ctx.RefreshGameData()
+			lastRefreshTime = time.Now()
+		}
+
 		monster, found := ctx.Data.Monsters.FindByID(settings.target)
+		// Early return if monster not found or dead
 		if !found || !isValidEnemy(monster, ctx) {
 			return nil // Target is not valid, we don't have anything to attack
+		}
+
+		// Early return if monster is dead before movement calculations
+		if monster.Stats[stat.Life] <= 0 {
+			statesMutex.Lock()
+			delete(monsterStates, settings.target)
+			statesMutex.Unlock()
+			return nil
 		}
 
 		distance := ctx.PathFinder.DistanceFromMe(monster.Position)
@@ -198,6 +243,9 @@ func attack(settings attackSettings) error {
 				delete(monsterStates, settings.target) // Clean up state for this monster
 				statesMutex.Unlock()
 				return nil // Return nil, allowing the higher-level action to find a new monster or finish.
+			}
+			if errors.Is(err, ErrMonsterDead) {
+				return nil // Monster died, allow higher-level action to find new target
 			}
 			return err // Propagate other errors from ensureEnemyIsInRange
 		}
@@ -244,6 +292,9 @@ func burstAttack(settings attackSettings) error {
 	}
 
 	startedAt := time.Now()
+	lastRefreshTime := time.Now()
+	const refreshInterval = 500 * time.Millisecond // Refresh game data periodically, not every iteration
+
 	for {
 		ctx.PauseIfNotPriority()
 
@@ -251,17 +302,34 @@ func burstAttack(settings attackSettings) error {
 			return nil // Timeout reached, finish attack sequence
 		}
 
+		// Refresh game data periodically to catch monster deaths
+		if time.Since(lastRefreshTime) > refreshInterval {
+			ctx.RefreshGameData()
+			lastRefreshTime = time.Now()
+		}
+
+		// Optimized loop: check life before calculating distance (early continue)
 		target := data.Monster{}
-		for _, m := range ctx.Data.Monsters.Enemies() { // Changed 'monster' to 'm' to avoid shadowing
+		for _, m := range ctx.Data.Monsters.Enemies() {
+			// Check validity before distance calculation
+			if !isValidEnemy(m, ctx) {
+				continue
+			}
+
 			distance := ctx.PathFinder.DistanceFromMe(m.Position)
-			if isValidEnemy(m, ctx) && distance <= settings.maxDistance {
+			if distance <= settings.maxDistance {
 				target = m
-				break
+				break // Found valid target, stop iterating
 			}
 		}
 
 		if target.UnitID == 0 {
 			return nil // We have no valid targets in range, finish attack sequence
+		}
+
+		// Verify target is still alive after selection (race condition protection)
+		if target.Stats[stat.Life] <= 0 {
+			continue // Target died, find new one immediately
 		}
 
 		// Check if we need to reposition if we aren't doing any damage
@@ -275,12 +343,15 @@ func burstAttack(settings attackSettings) error {
 			// ensureEnemyIsInRange will handle reposition attempts and return nil if it skips
 			err = ensureEnemyIsInRange(target, state, settings.maxDistance, settings.minDistance, needsRepositioning)
 			if err != nil {
-				if errors.Is(err, ErrMonsterUnreachable) { // HANDLE NEW ERROR
+				if errors.Is(err, ErrMonsterUnreachable) {
 					ctx.Logger.Info(fmt.Sprintf("Giving up on monster [%d] (Area: %s) due to unreachability/unkillability during burst.", target.Name, ctx.Data.PlayerUnit.Area.Area().Name))
 					statesMutex.Lock()
 					delete(monsterStates, target.UnitID) // Clean up state for this monster
 					statesMutex.Unlock()
-					return nil // Exit burst attack, caller will find next target.
+					continue // Continue loop to find next target instead of returning
+				}
+				if errors.Is(err, ErrMonsterDead) {
+					continue // Monster died, find new target immediately
 				}
 				return err // Propagate general errors from ensureEnemyIsInRange
 			}
@@ -391,6 +462,14 @@ func performMouseAttack(ctx *context.Status, settings attackSettings, x, y int) 
 func ensureEnemyIsInRange(monster data.Monster, state *attackState, maxDistance, minDistance int, needsRepositioning bool) error {
 	ctx := context.Get()
 	ctx.SetLastStep("ensureEnemyIsInRange")
+
+	// Early return if monster is dead - avoid unnecessary path calculations
+	if monster.Stats[stat.Life] <= 0 {
+		statesMutex.Lock()
+		delete(monsterStates, monster.UnitID)
+		statesMutex.Unlock()
+		return ErrMonsterDead
+	}
 
 	currentPos := ctx.Data.PlayerUnit.Position
 	distanceToMonster := ctx.PathFinder.DistanceFromMe(monster.Position)
