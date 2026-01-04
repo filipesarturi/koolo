@@ -1,0 +1,124 @@
+# Regras de Uso de Packets
+
+## Regra Fundamental
+
+**SEMPRE verificar se a funcionalidade de packet está habilitada na configuração antes de usar qualquer método de packet.**
+
+Packets são uma funcionalidade opcional e potencialmente arriscada que pode ser desabilitada pelo usuário na UI. O código deve sempre respeitar essa preferência.
+
+## Configurações Disponíveis
+
+Todas as configurações de packet estão em `ctx.CharacterCfg.PacketCasting`:
+
+- `UseForItemPickup` - Pickup de itens via packet
+- `UseForTpInteraction` - Interação com Town Portal via packet
+- `UseForEntranceInteraction` - Interação com entradas (portais, escadas) via packet
+- `UseForTeleport` - Movimento via teleport usando packets
+- `UseForEntitySkills` - Ataques e skills direcionados a entidades via packet
+- `UseForSkillSelection` - Seleção de skills via packet
+
+## Padrão Obrigatório de Verificação
+
+### ✅ Padrão Correto
+
+Sempre verificar a configuração específica antes de chamar funções de packet:
+
+```go
+// Check if packet casting is enabled for item pickup
+if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
+    ctx.Logger.Debug("Attempting item pickup via packet method")
+    return PickupItemPacket(it, itemPickupAttempt)
+}
+
+// Use mouse-based pickup (original implementation)
+return PickupItemMouse(it, itemPickupAttempt)
+```
+
+### ✅ Verificação com Fallback
+
+Quando usar packets, sempre ter fallback para método mouse/HID:
+
+```go
+// Check if we should use entity-targeted packet casting
+if ctx.CharacterCfg.PacketCasting.UseForEntitySkills && ctx.PacketSender != nil && targetID != 0 {
+    // ... código de packet ...
+    if err := ctx.PacketSender.SendPacket(castPacket.GetPayload()); err != nil {
+        ctx.Logger.Warn("Failed to cast entity skill via packet, falling back to mouse", "error", err)
+        performMouseAttack(ctx, settings, x, y)
+    }
+    return
+}
+
+// Regular mouse-based attack (fallback)
+performMouseAttack(ctx, settings, x, y)
+```
+
+### ❌ Padrão Incorreto
+
+**NUNCA** usar packets sem verificar a configuração:
+
+```go
+// ERRADO - Não verifica se está habilitado
+err := ctx.PacketSender.PickUpItem(item)
+```
+
+```go
+// ERRADO - Não tem fallback
+if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
+    return PickupItemPacket(it, itemPickupAttempt)
+}
+// Se não estiver habilitado, não faz nada - ERRADO!
+```
+
+## Verificações Adicionais
+
+Além da verificação de configuração, sempre verificar:
+
+1. **PacketSender não é nil**: `ctx.PacketSender != nil`
+2. **Dados válidos**: Verificar se os dados necessários estão disponíveis (ex: `targetID != 0`)
+3. **Tratamento de erros**: Sempre tratar erros e fazer fallback para método alternativo
+
+## Exemplos de Uso Correto
+
+### Item Pickup
+```go
+// internal/action/step/pickup_item.go:54-56
+if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
+    ctx.Logger.Debug("Attempting item pickup via packet method")
+    return PickupItemPacket(it, itemPickupAttempt)
+}
+return PickupItemMouse(it, itemPickupAttempt)
+```
+
+### Entity Skills
+```go
+// internal/action/step/attack.go:400
+if ctx.CharacterCasting.PacketCasting.UseForEntitySkills && ctx.PacketSender != nil && targetID != 0 {
+    // ... código de packet com fallback ...
+}
+```
+
+### Skill Selection
+```go
+// internal/action/step/skill_selection.go:21
+if ctx.CharacterCfg.PacketCasting.UseForSkillSelection && ctx.PacketSender != nil {
+    // ... código de packet ...
+}
+```
+
+## Configurações Específicas por Classe
+
+Algumas configurações de packet são específicas por classe e estão em `ctx.CharacterCfg.Character.*`:
+
+- `BlizzardSorceress.UseBlizzardPackets`
+- `SorceressLeveling.UseBlizzardPackets`
+- `*Leveling.UsePacketLearning` (várias classes)
+
+Essas também devem ser verificadas antes do uso.
+
+## Notas Importantes
+
+- Packets são mais rápidos mas potencialmente mais detectáveis
+- Mouse/HID é mais seguro e menos detectável
+- O padrão padrão (default) é sempre usar mouse/HID
+- Packets devem ser tratados como otimização opcional, nunca como requisito

@@ -1,0 +1,254 @@
+# Regras de Performance e Código Moderno
+
+## Princípio Fundamental
+
+**Sempre procurar usar código moderno, performático e otimizado.**
+
+O projeto deve seguir as melhores práticas do Go e priorizar performance quando possível.
+
+## Go Idioms e Padrões Modernos
+
+### Error Handling
+
+✅ **Sempre usar error wrapping com `%w`**:
+
+```go
+if err != nil {
+    return fmt.Errorf("failed to send packet: %w", err)
+}
+```
+
+❌ **Evitar**:
+
+```go
+if err != nil {
+    return fmt.Errorf("failed to send packet: %s", err.Error())
+}
+```
+
+### Interfaces
+
+✅ **Usar interfaces para desacoplamento**:
+
+```go
+type ProcessSender interface {
+    SendPacket([]byte) error
+}
+```
+
+### Context Usage
+
+✅ **Usar context quando apropriado para cancelamento e timeouts**:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+```
+
+## Otimizações de Performance
+
+### Slices e Maps
+
+✅ **Pré-alocar capacidade quando o tamanho é conhecido**:
+
+```go
+// Se sabemos que teremos ~10 itens
+items := make([]Item, 0, 10)
+```
+
+✅ **Reutilizar slices quando possível**:
+
+```go
+// Em loops, reutilizar slice ao invés de criar novo
+buffer := buffer[:0] // Reset length, keep capacity
+```
+
+❌ **Evitar alocações desnecessárias**:
+
+```go
+// Evitar criar novos slices em loops quando não necessário
+for i := 0; i < 1000; i++ {
+    items := []Item{} // Aloca novo slice a cada iteração
+}
+```
+
+### Strings
+
+✅ **Usar `strings.Builder` para concatenação múltipla**:
+
+```go
+var builder strings.Builder
+builder.WriteString("prefix")
+builder.WriteString(suffix)
+result := builder.String()
+```
+
+❌ **Evitar concatenação com `+` em loops**:
+
+```go
+// Ineficiente em loops
+var result string
+for _, s := range strings {
+    result += s // Cria nova string a cada iteração
+}
+```
+
+### Memory Management
+
+✅ **Evitar alocações em hot paths**:
+
+```go
+// Reutilizar buffers quando possível
+var buffer [1024]byte
+// ... usar buffer ...
+```
+
+✅ **Usar sync.Pool para objetos frequentemente alocados**:
+
+```go
+var bufferPool = sync.Pool{
+    New: func() interface{} {
+        return make([]byte, 0, 1024)
+    },
+}
+```
+
+## Concorrência
+
+### Goroutines
+
+✅ **Sempre usar goroutines com cuidado e controle**:
+
+```go
+go func() {
+    defer wg.Done()
+    // ... trabalho ...
+}(wg)
+```
+
+✅ **Usar context para cancelamento de goroutines**:
+
+```go
+go func(ctx context.Context) {
+    select {
+    case <-ctx.Done():
+        return
+    case result := <-workChan:
+        // processar
+    }
+}(ctx)
+```
+
+### Race Conditions
+
+✅ **Sempre proteger dados compartilhados**:
+
+```go
+var mu sync.Mutex
+mu.Lock()
+defer mu.Lock()
+// ... acesso a dados compartilhados ...
+```
+
+✅ **Usar sync.RWMutex quando apropriado**:
+
+```go
+var rwmu sync.RWMutex
+rwmu.RLock() // Para leitura
+defer rwmu.RUnlock()
+```
+
+❌ **NUNCA acessar dados compartilhados sem sincronização**:
+
+```go
+// ERRADO - Race condition
+sharedCounter++
+```
+
+## Performance em Loops
+
+### Early Returns
+
+✅ **Usar early returns para evitar processamento desnecessário**:
+
+```go
+for _, item := range items {
+    if !item.IsValid() {
+        continue // Early continue
+    }
+    // processar apenas itens válidos
+}
+```
+
+### Range vs Index
+
+✅ **Usar range quando não precisa do índice**:
+
+```go
+for _, item := range items {
+    process(item)
+}
+```
+
+✅ **Usar índice quando precisa modificar**:
+
+```go
+for i := range items {
+    items[i].Process()
+}
+```
+
+## Logging e Debugging
+
+✅ **Usar structured logging (slog)**:
+
+```go
+ctx.Logger.Debug("Processing item",
+    slog.String("item", item.Name),
+    slog.Int("quantity", item.Quantity),
+)
+```
+
+❌ **Evitar string formatting desnecessário**:
+
+```go
+// Evitar se não for loggar
+ctx.Logger.Debug(fmt.Sprintf("Processing %s", item.Name))
+```
+
+## Timeouts e Delays
+
+✅ **Sempre usar timeouts em operações que podem bloquear**:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+```
+
+✅ **Usar delays apropriados (não muito curtos, não muito longos)**:
+
+```go
+// Usar delays baseados em ping quando disponível
+utils.PingSleep(utils.Light, 150)
+```
+
+## Refatoração para Performance
+
+✅ **Identificar e otimizar hot paths**:
+
+- Profiling antes de otimizar
+- Focar em loops e funções chamadas frequentemente
+- Medir impacto das otimizações
+
+✅ **Balancear legibilidade e performance**:
+
+- Não sacrificar legibilidade por micro-otimizações
+- Documentar otimizações complexas
+- Preferir código claro e performático
+
+## Ferramentas de Análise
+
+- Use `go test -bench` para benchmarks
+- Use `go tool pprof` para profiling
+- Use `go vet` e `staticcheck` para análise estática
+- Use race detector: `go test -race`
