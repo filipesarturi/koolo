@@ -2,10 +2,8 @@ package step
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
-	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
@@ -13,31 +11,14 @@ import (
 func PickupItemPacket(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
 
-	// Wait for the character to finish casting or moving before proceeding.
-	waitingStartTime := time.Now()
-	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || ctx.Data.PlayerUnit.Mode == mode.Running || ctx.Data.PlayerUnit.Mode == mode.Walking || ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
-		if time.Since(waitingStartTime) > 2*time.Second {
-			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting, proceeding anyway.")
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-		ctx.RefreshGameData()
+	// Wait for the character to finish casting or moving before proceeding
+	if err := waitForCharacterReady(waitForCharacterTimeout); err != nil {
+		return err
 	}
 
-	// Check for monsters first
-	if hasHostileMonstersNearby(it.Position) {
-		return ErrMonsterAroundItem
-	}
-
-	// Validate line of sight
-	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
-		return ErrNoLOSToItem
-	}
-
-	// Check distance
-	distance := ctx.PathFinder.DistanceFromMe(it.Position)
-	if distance >= 7 {
-		return fmt.Errorf("%w (%d): %s", ErrItemTooFar, distance, it.Desc().Name)
+	// Validate preconditions (monsters, LOS, distance)
+	if err := validatePickupPreconditions(it, 7, true); err != nil {
+		return err
 	}
 
 	ctx.Logger.Debug(fmt.Sprintf("Picking up (packet): %s [%s]", it.Desc().Name, it.Quality.ToString()))

@@ -118,6 +118,12 @@ func castBuff(ctx *context.Status, kb data.KeyBinding) {
 func BuffIfRequired() {
 	ctx := context.Get()
 
+	// Don't buff if we're currently picking items to avoid interference
+	if ctx.CurrentGame.IsPickingItems {
+		ctx.Logger.Debug("Skipping buff check - item pickup in progress")
+		return
+	}
+
 	// If in town, try to use Memory staff for buffs (only on first run)
 	if ctx.Data.PlayerUnit.Area.IsTown() {
 		// Check if Memory buff is enabled in config
@@ -234,6 +240,12 @@ func BuffIfRequired() {
 func Buff() {
 	ctx := context.Get()
 	ctx.SetLastAction("Buff")
+
+	// Don't buff if we're currently picking items to avoid interference
+	if ctx.CurrentGame.IsPickingItems {
+		ctx.Logger.Debug("Skipping buff - item pickup in progress")
+		return
+	}
 
 	// Allow buffing in town if Memory is disabled (Memory handles buffing in town when enabled)
 	allowTownBuffing := ctx.CharacterCfg != nil && !ctx.CharacterCfg.Character.UseMemoryBuff
@@ -581,6 +593,12 @@ func IsRebuffRequired() bool {
 func buffCTA(shouldSwapBack bool) bool {
 	ctx := context.Get()
 	ctx.SetLastAction("buffCTA")
+
+	// Don't buff if we're currently picking items to avoid interference
+	if ctx.CurrentGame.IsPickingItems {
+		ctx.Logger.Debug("Skipping CTA buff - item pickup in progress")
+		return false
+	}
 
 	if !ctaFound(*ctx.Data) {
 		return true // No CTA, nothing to do

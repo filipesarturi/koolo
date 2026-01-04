@@ -40,6 +40,54 @@ var (
 	ErrCastingMoving     = errors.New("char casting or moving")
 )
 
+const (
+	waitForCharacterTimeout = 2 * time.Second
+	characterCheckInterval = 25 * time.Millisecond
+)
+
+// waitForCharacterReady waits for the character to finish casting or moving
+func waitForCharacterReady(timeout time.Duration) error {
+	ctx := context.Get()
+	waitingStartTime := time.Now()
+	
+	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || 
+		ctx.Data.PlayerUnit.Mode == mode.Running || 
+		ctx.Data.PlayerUnit.Mode == mode.Walking || 
+		ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
+		if time.Since(waitingStartTime) > timeout {
+			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting, proceeding anyway")
+			break
+		}
+		time.Sleep(characterCheckInterval)
+		ctx.RefreshGameData()
+	}
+	return nil
+}
+
+// validatePickupPreconditions validates common preconditions for item pickup
+// Returns an error if any precondition fails
+func validatePickupPreconditions(it data.Item, maxDistance int, checkMonsters bool) error {
+	ctx := context.Get()
+	
+	// Check for monsters if requested
+	if checkMonsters && hasHostileMonstersNearby(it.Position) {
+		return ErrMonsterAroundItem
+	}
+	
+	// Validate line of sight
+	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
+		return ErrNoLOSToItem
+	}
+	
+	// Check distance
+	distance := ctx.PathFinder.DistanceFromMe(it.Position)
+	if distance >= maxDistance {
+		return fmt.Errorf("%w (%d): %s", ErrItemTooFar, distance, it.Desc().Name)
+	}
+	
+	return nil
+}
+
 func PickupItem(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
 	ctx.SetLastStep("PickupItem")
@@ -98,22 +146,16 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	startTime := time.Now()
 
 	// Wait for the character to finish casting or moving
-	waitingStartTime := time.Now()
-	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || ctx.Data.PlayerUnit.Mode == mode.Running || ctx.Data.PlayerUnit.Mode == mode.Walking || ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
-		if time.Since(waitingStartTime) > 2*time.Second {
-			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting")
-			break
-		}
-		if time.Since(startTime) > telekinesisTimeout {
-			return fmt.Errorf("telekinesis pickup timeout after %v", telekinesisTimeout)
-		}
-		time.Sleep(25 * time.Millisecond)
-		ctx.RefreshGameData()
+	if err := waitForCharacterReady(waitForCharacterTimeout); err != nil {
+		return err
+	}
+	if time.Since(startTime) > telekinesisTimeout {
+		return fmt.Errorf("telekinesis pickup timeout after %v", telekinesisTimeout)
 	}
 
 	// Check distance - Telekinesis has limited range
-	distance := ctx.PathFinder.DistanceFromMe(it.Position)
 	telekinesisPickupMaxRange := getTelekinesisPickupMaxRange()
+	distance := ctx.PathFinder.DistanceFromMe(it.Position)
 	if distance > telekinesisPickupMaxRange {
 		ctx.Logger.Debug("Item too far for Telekinesis pickup, falling back to normal pickup",
 			"item", it.Desc().Name,
@@ -125,7 +167,7 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		return PickupItemMouse(it, itemPickupAttempt)
 	}
 
-	// Validate line of sight
+	// Validate line of sight (distance already checked above)
 	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
 		return ErrNoLOSToItem
 	}
@@ -204,19 +246,12 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	const mousePickupTimeout = 15 * time.Second // Maximum time for this function
 	funcStartTime := time.Now()
 
-	// Wait for the character to finish casting or moving before proceeding.
-	// We'll use a local timeout to prevent an indefinite wait.
-	waitingStartTime := time.Now()
-	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || ctx.Data.PlayerUnit.Mode == mode.Running || ctx.Data.PlayerUnit.Mode == mode.Walking || ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
-		if time.Since(waitingStartTime) > 2*time.Second {
-			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting, proceeding anyway.")
-			break
-		}
-		if time.Since(funcStartTime) > mousePickupTimeout {
-			return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
-		}
-		time.Sleep(25 * time.Millisecond)
-		ctx.RefreshGameData()
+	// Wait for the character to finish casting or moving before proceeding
+	if err := waitForCharacterReady(waitForCharacterTimeout); err != nil {
+		return err
+	}
+	if time.Since(funcStartTime) > mousePickupTimeout {
+		return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
 	}
 
 	// Calculate base screen position for item
@@ -237,20 +272,9 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	}
 	baseScreenX, baseScreenY := ctx.PathFinder.GameCoordsToScreenCords(baseX, baseY)
 
-	// Check for monsters first
-	if hasHostileMonstersNearby(it.Position) {
-		return ErrMonsterAroundItem
-	}
-
-	// Validate line of sight
-	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
-		return ErrNoLOSToItem
-	}
-
-	// Check distance
-	distance := ctx.PathFinder.DistanceFromMe(it.Position)
-	if distance >= 7 {
-		return fmt.Errorf("%w (%d): %s", ErrItemTooFar, distance, it.Desc().Name)
+	// Validate preconditions (monsters, LOS, distance)
+	if err := validatePickupPreconditions(it, 7, true); err != nil {
+		return err
 	}
 
 	ctx.Logger.Debug(fmt.Sprintf("Picking up: %s [%s]", it.Desc().Name, it.Quality.ToString()))
