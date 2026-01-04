@@ -1,7 +1,6 @@
 ---
 name: Packet Usage Rules
 description: Regras para uso seguro de packets, sempre verificando configurações antes de usar
-alwaysApply: false
 ---
 
 # Regras de Uso de Packets
@@ -87,6 +86,7 @@ Além da verificação de configuração, sempre verificar:
 ## Exemplos de Uso Correto
 
 ### Item Pickup
+
 ```go
 // internal/action/step/pickup_item.go:54-56
 if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
@@ -97,6 +97,7 @@ return PickupItemMouse(it, itemPickupAttempt)
 ```
 
 ### Entity Skills
+
 ```go
 // internal/action/step/attack.go:400
 if ctx.CharacterCasting.PacketCasting.UseForEntitySkills && ctx.PacketSender != nil && targetID != 0 {
@@ -105,6 +106,7 @@ if ctx.CharacterCasting.PacketCasting.UseForEntitySkills && ctx.PacketSender != 
 ```
 
 ### Skill Selection
+
 ```go
 // internal/action/step/skill_selection.go:21
 if ctx.CharacterCfg.PacketCasting.UseForSkillSelection && ctx.PacketSender != nil {

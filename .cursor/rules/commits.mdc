@@ -1,7 +1,6 @@
 ---
 name: Commit Rules
 description: Regras para formatação e estilo de mensagens de commit
-alwaysApply: false
 ---
 
 # Regras de Commits
