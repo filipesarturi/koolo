@@ -1,0 +1,72 @@
+# Regras de Commits
+
+## Idioma das Mensagens de Commit
+
+**Todas as mensagens de commit devem ser escritas em inglês.**
+
+### Formato Padrão
+
+Siga o formato convencional de commits:
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+### Tipos de Commit
+
+- `feat`: Nova funcionalidade
+- `fix`: Correção de bug
+- `docs`: Documentação
+- `style`: Formatação, ponto e vírgula faltando, etc (não afeta código)
+- `refactor`: Refatoração de código
+- `perf`: Melhoria de performance
+- `test`: Adicionar ou corrigir testes
+- `chore`: Tarefas de manutenção, atualização de dependências, etc
+
+### Exemplos
+
+✅ **Correto**:
+
+```
+feat(packet): add packet casting support for item pickup
+
+Implement packet-based item pickup as an alternative to mouse-based pickup.
+This improves performance when packet casting is enabled in configuration.
+```
+
+```
+fix(health): resolve belt refill logic issue
+
+The belt refill was not working correctly when inventory was full.
+Added proper validation before attempting to refill.
+```
+
+```
+refactor(action): extract common item pickup validation
+
+Extract duplicate validation logic into reusable helper function
+to follow DRY principles.
+```
+
+❌ **Incorreto** (em português):
+
+```
+feat(packet): adiciona suporte de packet casting para pickup de itens
+```
+
+```
+fix(health): corrige problema na lógica de recarga do cinto
+```
+
+### Regras Adicionais
+
+- Use o modo imperativo ("add" não "adds" ou "added")
+- Primeira linha deve ter no máximo 50 caracteres
+- Deixe linha em branco entre o subject e o body
+- Cada linha do body deve ter no máximo 72 caracteres
+- Use o body para explicar o "o quê" e "por quê", não o "como"
+- Referencie issues/PRs no footer quando aplicável: `Closes #123`
