@@ -118,18 +118,25 @@ func BuyConsumables(forceRefill bool) {
 	}
 
 	if ShouldBuyIDs() || forceRefill {
-		if _, found := ctx.Data.Inventory.Find(item.TomeOfIdentify, item.LocationInventory); !found && ctx.Data.PlayerUnit.TotalPlayerGold() > 360 {
-			ctx.Logger.Info("ID Tome not found, buying one...")
-			if itm, itmFound := ctx.Data.Inventory.Find(item.TomeOfIdentify, item.LocationVendor); itmFound {
-				BuyItem(itm, 1)
+		_, isLevelingChar := ctx.Char.(context.LevelingCharacter)
+		// Respect end-game setting: completely disable ID tome purchasing
+		if ctx.CharacterCfg.Game.DisableIdentifyTome && !isLevelingChar {
+			// Do not buy Tome of Identify nor ID scrolls at all
+			ctx.Logger.Debug("DisableIdentifyTome enabled – skipping ID tome/scroll purchases.")
+		} else {
+			if _, found := ctx.Data.Inventory.Find(item.TomeOfIdentify, item.LocationInventory); !found && ctx.Data.PlayerUnit.TotalPlayerGold() > 360 {
+				ctx.Logger.Info("ID Tome not found, buying one...")
+				if itm, itmFound := ctx.Data.Inventory.Find(item.TomeOfIdentify, item.LocationVendor); itmFound {
+					BuyItem(itm, 1)
+				}
 			}
-		}
-		ctx.Logger.Debug("Filling IDs Tome...")
-		if itm, found := ctx.Data.Inventory.Find(item.ScrollOfIdentify, item.LocationVendor); found {
-			if ctx.Data.PlayerUnit.TotalPlayerGold() > 16000 {
-				buyFullStack(itm, -1) // -1 for irrelevant currentKeysInInventory
-			} else {
-				BuyItem(itm, 1)
+			ctx.Logger.Debug("Filling IDs Tome...")
+			if itm, found := ctx.Data.Inventory.Find(item.ScrollOfIdentify, item.LocationVendor); found {
+				if ctx.Data.PlayerUnit.TotalPlayerGold() > 16000 {
+					buyFullStack(itm, -1) // -1 for irrelevant currentKeysInInventory
+				} else {
+					BuyItem(itm, 1)
+				}
 			}
 		}
 	}
