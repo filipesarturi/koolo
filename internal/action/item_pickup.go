@@ -53,7 +53,7 @@ func isHighPriorityItem(itm data.Item) bool {
 // - shouldBreak: whether to break out of the retry loop
 func handlePickupError(err error, itemToPickup data.Item, attempt int, itemTooFarRetryCount *int, consecutiveMoveErrors *int, maxItemTooFarAttempts int) (success bool, shouldRetry bool, shouldBreak bool) {
 	ctx := context.Get()
-	
+
 	// Movement-state handling
 	if errors.Is(err, step.ErrCastingMoving) {
 		*consecutiveMoveErrors++
@@ -149,20 +149,20 @@ func itemNeedsInventorySpace(i data.Item) bool {
 // This consolidates inventory checking logic to avoid redundant RefreshInventory calls
 func checkInventoryFit(item data.Item, refreshInventory bool) (fits bool, needsTown bool) {
 	ctx := context.Get()
-	
+
 	if !itemNeedsInventorySpace(item) {
 		return true, false
 	}
-	
+
 	if refreshInventory {
 		ctx.RefreshInventory()
 	}
-	
+
 	fits = itemFitsInventory(item)
 	if !fits && HasTPsAvailable() {
 		needsTown = true
 	}
-	
+
 	return fits, needsTown
 }
 
@@ -193,7 +193,7 @@ func ItemPickup(maxDistance int) error {
 	const maxItemTooFarAttempts = 5                             // Additional retries specifically for "item too far"
 	const totalMaxAttempts = maxRetries + maxItemTooFarAttempts // Combined total attempts
 	const debugPickit = false
-	const globalPickupTimeout = 60 * time.Second                // Global timeout to prevent infinite loops
+	const globalPickupTimeout = 60 * time.Second // Global timeout to prevent infinite loops
 
 	// If we're already picking items, skip it
 	if ctx.CurrentGame.IsPickingItems {
@@ -213,7 +213,7 @@ func ItemPickup(maxDistance int) error {
 	// to avoid infinite town-loops when an item will never fit due to charm layout, etc.
 	townCleanupByUnitID := map[data.UnitID]int{}
 	consecutiveNoFitTownTrips := 0
-	
+
 	// Track items currently being processed to avoid multiple simultaneous pickup attempts
 	itemsInProcess := map[data.UnitID]bool{}
 
@@ -286,7 +286,7 @@ outer:
 		}
 
 		consecutiveNoFitTownTrips = 0
-		
+
 		// Mark item as being processed
 		itemsInProcess[itemToPickup.UnitID] = true
 
@@ -302,7 +302,7 @@ outer:
 
 		// Check if this is a high priority item
 		isHighPriority := isHighPriorityItem(itemToPickup)
-		
+
 		// Adjust retry limits for high priority items (fewer retries to be faster)
 		maxRetriesForItem := maxRetries
 		maxItemTooFarAttemptsForItem := maxItemTooFarAttempts
@@ -364,21 +364,21 @@ outer:
 				if needsTown {
 					townCleanupByUnitID[itemToPickup.UnitID]++
 					if townCleanupByUnitID[itemToPickup.UnitID] <= 1 {
-					ctx.Logger.Debug("Item doesn't fit in inventory right now; returning to town to stash/sell and retry.",
-						slog.String("itemName", string(itemToPickup.Desc().Name)),
-						slog.Int("unitID", int(itemToPickup.UnitID)),
-					)
-					// Check timeout before blocking operation
-					if time.Since(globalStartTime) > globalPickupTimeout {
-						ctx.Logger.Warn("ItemPickup global timeout reached before town routine, aborting pickup cycle",
-							"elapsed", time.Since(globalStartTime),
+						ctx.Logger.Debug("Item doesn't fit in inventory right now; returning to town to stash/sell and retry.",
+							slog.String("itemName", string(itemToPickup.Desc().Name)),
+							slog.Int("unitID", int(itemToPickup.UnitID)),
 						)
-						return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
-					}
-					if err := InRunReturnTownRoutine(); err != nil {
-						ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", err)
-					}
-					continue outer
+						// Check timeout before blocking operation
+						if time.Since(globalStartTime) > globalPickupTimeout {
+							ctx.Logger.Warn("ItemPickup global timeout reached before town routine, aborting pickup cycle",
+								"elapsed", time.Since(globalStartTime),
+							)
+							return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
+						}
+						if err := InRunReturnTownRoutine(); err != nil {
+							ctx.Logger.Warn("Failed returning to town from ItemPickup", "error", err)
+						}
+						continue outer
 					}
 					// Already tried town once and it still doesn't fit: blacklist this ground instance to stop thrashing.
 					lastError = fmt.Errorf("item does not fit in inventory even after town cleanup")
@@ -550,7 +550,7 @@ outer:
 			// Item was picked up, continue to next item
 			continue
 		}
-		
+
 		// Clean up tracking for failed pickup
 		delete(itemsInProcess, itemToPickup.UnitID)
 
@@ -620,7 +620,7 @@ func GetItemsToPickup(maxDistance int) []data.Item {
 	missingRejuvenationPotions := ctx.BeltManager.GetMissingCount(data.RejuvenationPotion) + ctx.Data.MissingPotionCountInInventory(data.RejuvenationPotion)
 
 	_, isLevelingChar := ctx.Char.(context.LevelingCharacter)
-	
+
 	// Cache for distance calculations to avoid recalculating
 	type itemWithDistance struct {
 		item     data.Item
@@ -656,7 +656,7 @@ func GetItemsToPickup(maxDistance int) []data.Item {
 
 		// Calculate distance once and cache it
 		itemDistance := ctx.PathFinder.DistanceFromMe(itm.Position)
-		
+
 		// Skip items that are outside pickup radius, this is useful when clearing big areas to prevent
 		// character going back to pickup potions all the time after using them
 		if maxDistance > 0 && itemDistance > maxDistance && itm.IsPotion() {
@@ -683,7 +683,7 @@ func GetItemsToPickup(maxDistance int) []data.Item {
 		} else if shouldBePickedUp(itm) {
 			shouldPickup = true
 		}
-		
+
 		if shouldPickup {
 			// Skip if already picked up
 			if _, alreadyPicked := ctx.CurrentGame.PickedUpItems[int(itm.UnitID)]; alreadyPicked {
@@ -693,7 +693,7 @@ func GetItemsToPickup(maxDistance int) []data.Item {
 			if IsBlacklisted(itm) {
 				continue
 			}
-			
+
 			// Cache priority calculation
 			priority := getItemPickupPriority(itm)
 			itemsWithDistances = append(itemsWithDistances, itemWithDistance{
