@@ -1,3 +1,9 @@
+---
+name: Code Quality Rules
+description: Regras para evitar duplicação de código e promover reutilização de funcionalidades existentes
+alwaysApply: false
+---
+
 # Regras de Qualidade de Código
 
 ## Princípio Fundamental

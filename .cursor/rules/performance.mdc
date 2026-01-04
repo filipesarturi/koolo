@@ -1,3 +1,9 @@
+---
+name: Performance Rules
+description: Regras para código moderno, performático e otimizado seguindo melhores práticas do Go
+alwaysApply: false
+---
+
 # Regras de Performance e Código Moderno
 
 ## Princípio Fundamental

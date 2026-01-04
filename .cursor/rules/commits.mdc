@@ -1,3 +1,9 @@
+---
+name: Commit Rules
+description: Regras para formatação e estilo de mensagens de commit
+alwaysApply: false
+---
+
 # Regras de Commits
 
 ## Idioma das Mensagens de Commit

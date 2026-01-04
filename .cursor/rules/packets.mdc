@@ -1,3 +1,9 @@
+---
+name: Packet Usage Rules
+description: Regras para uso seguro de packets, sempre verificando configurações antes de usar
+alwaysApply: false
+---
+
 # Regras de Uso de Packets
 
 ## Regra Fundamental
