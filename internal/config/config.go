@@ -484,6 +484,7 @@ type CharacterCfg struct {
 		NoMpPotions     bool `yaml:"noMpPotions"`
 		MercDied        bool `yaml:"mercDied"`
 		EquipmentBroken bool `yaml:"equipmentBroken"`
+		InventoryFull   bool `yaml:"inventoryFull"`
 	} `yaml:"backtotown"`
 	Shopping ShoppingConfig `yaml:"shopping"`
 	Vendor   struct {

@@ -1593,6 +1593,7 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			cfg.BackToTown.NoMpPotions = values.Has("noMpPotions")
 			cfg.BackToTown.MercDied = values.Has("mercDied")
 			cfg.BackToTown.EquipmentBroken = values.Has("equipmentBroken")
+			cfg.BackToTown.InventoryFull = values.Has("inventoryFull")
 
 			// Companion
 			cfg.Companion.Enabled = values.Has("companionEnabled")
@@ -2655,6 +2656,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.BackToTown.NoMpPotions = r.Form.Has("noMpPotions")
 		cfg.BackToTown.MercDied = r.Form.Has("mercDied")
 		cfg.BackToTown.EquipmentBroken = r.Form.Has("equipmentBroken")
+		cfg.BackToTown.InventoryFull = r.Form.Has("inventoryFull")
 
 		// Muling
 		cfg.Muling.Enabled = r.FormValue("mulingEnabled") == "on"

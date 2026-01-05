@@ -390,7 +390,8 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 								b.ctx.CharacterCfg.BackToTown.MercDied &&
 									b.ctx.Data.MercHPPercent() <= 0 &&
 									b.ctx.CharacterCfg.Character.UseMerc &&
-									b.ctx.Data.PlayerUnit.TotalPlayerGold() > 100000) &&
+									b.ctx.Data.PlayerUnit.TotalPlayerGold() > 100000 ||
+								b.ctx.CharacterCfg.BackToTown.InventoryFull && action.IsInventoryFull()) &&
 								!b.ctx.Data.PlayerUnit.Area.IsTown() &&
 								b.ctx.Data.PlayerUnit.Area != area.UberTristram {
 
@@ -406,6 +407,8 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 									reason = "Mercenary is dead"
 								} else if townChicken {
 									reason = "Town chicken"
+								} else if b.ctx.CharacterCfg.BackToTown.InventoryFull && action.IsInventoryFull() {
+									reason = "Inventory full"
 								}
 
 								b.ctx.Logger.Info("Going back to town", "reason", reason)

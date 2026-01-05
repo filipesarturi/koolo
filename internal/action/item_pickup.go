@@ -199,6 +199,40 @@ func HasTPsAvailable() bool {
 	return found && qty.Value > 0
 }
 
+// IsInventoryFull checks if the inventory is 100% full (no free space available).
+// It considers both occupied slots (by items) and locked slots (from InventoryLock).
+func IsInventoryFull() bool {
+	ctx := context.Get()
+	ctx.RefreshInventory()
+
+	invMatrix := ctx.Data.Inventory.Matrix()
+	lockConfig := ctx.CharacterCfg.Inventory.InventoryLock
+
+	// Check if there's any free space in the inventory
+	// A slot is free if it's not occupied in the matrix AND not locked in the config
+	for y := 0; y < len(invMatrix); y++ {
+		for x := 0; x < len(invMatrix[0]); x++ {
+			// Check if slot is occupied by an item
+			if invMatrix[y][x] {
+				continue
+			}
+
+			// Check if slot is locked (0 = locked, 1 = unlocked)
+			if y < len(lockConfig) && x < len(lockConfig[0]) {
+				if lockConfig[y][x] == 0 {
+					continue // Slot is locked, not available
+				}
+			}
+
+			// Found at least one free slot
+			return false
+		}
+	}
+
+	// No free slots found
+	return true
+}
+
 func ItemPickup(maxDistance int) error {
 	ctx := context.Get()
 	ctx.SetLastAction("ItemPickup")
