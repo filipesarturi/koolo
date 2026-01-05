@@ -29,6 +29,7 @@ var (
 	memoryBuffApplied    = make(map[string]bool) // track if Memory buff was applied in first run
 	memoryBuffInProgress = make(map[string]bool) // track if Memory buff is currently being applied
 	memoryBuffAppliedMu  sync.Mutex
+	memoryBuffsBySkill    = make(map[string]map[skill.ID]bool) // track which specific skills were applied via Memory per character
 )
 
 // ResetMemoryBuffFlag resets the Memory buff flag for a character when starting a new game
@@ -37,6 +38,22 @@ func ResetMemoryBuffFlag(characterName string) {
 	defer memoryBuffAppliedMu.Unlock()
 	delete(memoryBuffApplied, characterName)
 	delete(memoryBuffInProgress, characterName)
+	delete(memoryBuffsBySkill, characterName)
+}
+
+// GetMemoryBuffs returns a map of skills that were applied via Memory staff for a character
+func GetMemoryBuffs(characterName string) map[skill.ID]bool {
+	memoryBuffAppliedMu.Lock()
+	defer memoryBuffAppliedMu.Unlock()
+	if skills, found := memoryBuffsBySkill[characterName]; found {
+		// Return a copy to prevent external modifications
+		result := make(map[skill.ID]bool)
+		for k, v := range skills {
+			result[k] = v
+		}
+		return result
+	}
+	return make(map[skill.ID]bool)
 }
 
 // skillToState maps buff skills to their corresponding player states for verification
@@ -190,6 +207,7 @@ func BuffIfRequired() {
 					memoryBuffAppliedMu.Unlock()
 				} else {
 					// Mark Memory buff as applied and clear in progress flag
+					// Note: Individual skills are tracked inside buffWithMemory()
 					memoryBuffAppliedMu.Lock()
 					memoryBuffApplied[ctx.Name] = true
 					memoryBuffInProgress[ctx.Name] = false
@@ -609,11 +627,13 @@ func IsRebuffRequired() bool {
 			if buff == skill.HolyShield && !ctx.Data.PlayerUnit.States.HasState(state.Holyshield) {
 				return true
 			}
-			if buff == skill.FrozenArmor &&
-				(!ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
+			// Check for any armor skill (FrozenArmor, ShiverArmor, or ChillingArmor)
+			if buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor {
+				if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
 					!ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
-					!ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor)) {
-				return true
+					!ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+					return true
+				}
 			}
 			if buff == skill.EnergyShield && !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
 				return true
@@ -931,6 +951,7 @@ func buffWithMemory() error {
 	buffSkills := ctx.Char.BuffSkills()
 	energyShieldApplied := false
 	armorApplied := false
+	var appliedArmorSkill skill.ID // Track which armor skill was actually applied
 
 	// Determine preferred armor skill from config
 	var preferredArmorSkill skill.ID
@@ -984,10 +1005,12 @@ func buffWithMemory() error {
 			if expectedState, canVerify := skillToState[preferredArmorSkill]; canVerify {
 				if castBuffWithVerify(ctx, kb, preferredArmorSkill, expectedState, 3) {
 					armorApplied = true
+					appliedArmorSkill = preferredArmorSkill
 				}
 			} else {
 				castBuff(ctx, kb)
 				armorApplied = true
+				appliedArmorSkill = preferredArmorSkill
 			}
 		} else {
 			ctx.Logger.Debug("Preferred armor skill not available, will try first available", slog.String("skill", preferredArmorSkill.Desc().Name))
@@ -1012,11 +1035,13 @@ func buffWithMemory() error {
 			if expectedState, canVerify := skillToState[armorSkill]; canVerify {
 				if castBuffWithVerify(ctx, kb, armorSkill, expectedState, 3) {
 					armorApplied = true
+					appliedArmorSkill = armorSkill
 					break
 				}
 			} else {
 				castBuff(ctx, kb)
 				armorApplied = true
+				appliedArmorSkill = armorSkill
 				break
 			}
 		}
@@ -1025,6 +1050,19 @@ func buffWithMemory() error {
 	ctx.Logger.Info("Buffs applied",
 		slog.Bool("energyShield", energyShieldApplied),
 		slog.Bool("armor", armorApplied))
+
+	// Track which skills were applied via Memory
+	memoryBuffAppliedMu.Lock()
+	if memoryBuffsBySkill[ctx.Name] == nil {
+		memoryBuffsBySkill[ctx.Name] = make(map[skill.ID]bool)
+	}
+	if energyShieldApplied {
+		memoryBuffsBySkill[ctx.Name][skill.EnergyShield] = true
+	}
+	if armorApplied && appliedArmorSkill != 0 {
+		memoryBuffsBySkill[ctx.Name][appliedArmorSkill] = true
+	}
+	memoryBuffAppliedMu.Unlock()
 
 	// Step 8: Open stash again to restore original weapon
 	utils.PingSleep(utils.Medium, 300)
@@ -1332,6 +1370,7 @@ func buffWithMemoryAlreadyEquipped() error {
 	buffSkills := ctx.Char.BuffSkills()
 	energyShieldApplied := false
 	armorApplied := false
+	var appliedArmorSkill skill.ID // Track which armor skill was actually applied
 
 	// Determine preferred armor skill from config
 	var preferredArmorSkill skill.ID
@@ -1377,10 +1416,12 @@ func buffWithMemoryAlreadyEquipped() error {
 			if expectedState, canVerify := skillToState[preferredArmorSkill]; canVerify {
 				if castBuffWithVerify(ctx, kb, preferredArmorSkill, expectedState, 3) {
 					armorApplied = true
+					appliedArmorSkill = preferredArmorSkill
 				}
 			} else {
 				castBuff(ctx, kb)
 				armorApplied = true
+				appliedArmorSkill = preferredArmorSkill
 			}
 		}
 	}
@@ -1395,11 +1436,13 @@ func buffWithMemoryAlreadyEquipped() error {
 				if expectedState, canVerify := skillToState[armorSkill]; canVerify {
 					if castBuffWithVerify(ctx, kb, armorSkill, expectedState, 3) {
 						armorApplied = true
+						appliedArmorSkill = armorSkill
 						break
 					}
 				} else {
 					castBuff(ctx, kb)
 					armorApplied = true
+					appliedArmorSkill = armorSkill
 					break
 				}
 			}
@@ -1409,6 +1452,19 @@ func buffWithMemoryAlreadyEquipped() error {
 	ctx.Logger.Info("Buffs applied",
 		slog.Bool("energyShield", energyShieldApplied),
 		slog.Bool("armor", armorApplied))
+
+	// Track which skills were applied via Memory
+	memoryBuffAppliedMu.Lock()
+	if memoryBuffsBySkill[ctx.Name] == nil {
+		memoryBuffsBySkill[ctx.Name] = make(map[skill.ID]bool)
+	}
+	if energyShieldApplied {
+		memoryBuffsBySkill[ctx.Name][skill.EnergyShield] = true
+	}
+	if armorApplied && appliedArmorSkill != 0 {
+		memoryBuffsBySkill[ctx.Name][appliedArmorSkill] = true
+	}
+	memoryBuffAppliedMu.Unlock()
 
 	// Now restore weapon - try CTA first since we don't know the original
 	return restoreWeaponFromCTA()

@@ -945,13 +945,18 @@ function updateCharacterOverview(card, ui, status) {
   // Update active buffs with levels
   if (buffsListEl && buffsLineEl) {
     const activeBuffs = ui.ActiveBuffs || {};
+    const memoryBuffs = ui.MemoryBuffs || {};
     const buffEntries = Object.entries(activeBuffs);
     if (buffEntries.length > 0) {
       // Sort by name for consistent display
       buffEntries.sort((a, b) => a[0].localeCompare(b[0]));
-      // Format as "Buff Name (lvl X), ..." - only show level if > 0
+      // Format as "Buff Name (lvl X) [Memory], ..." - only show level if > 0, add [Memory] if applied via Memory
       const buffText = buffEntries.map(([name, level]) => {
-        return level > 0 ? `${name} (lvl ${level})` : name;
+        let buffStr = level > 0 ? `${name} (lvl ${level})` : name;
+        if (memoryBuffs[name]) {
+          buffStr += " [Memory]";
+        }
+        return buffStr;
       }).join(", ");
       buffsListEl.textContent = buffText;
       buffsLineEl.style.display = "block";

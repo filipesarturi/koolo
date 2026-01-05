@@ -35,6 +35,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/data/state"
+	"github.com/hectorgimenez/koolo/internal/action"
 	"github.com/hectorgimenez/koolo/internal/bot"
 	"github.com/hectorgimenez/koolo/internal/config"
 	ctx "github.com/hectorgimenez/koolo/internal/context"
@@ -592,8 +593,11 @@ func (s *HttpServer) getStatusData() IndexData {
 			// Calculate area level based on area ID and difficulty
 			areaLevel := calculateAreaLevel(data.PlayerUnit.Area, data.CharacterCfg.Game.Difficulty)
 
-			// Collect active buffs with levels
-			activeBuffs := getActiveBuffs(data.PlayerUnit.States, &data.PlayerUnit)
+			// Get memory buffs for this character
+			memoryBuffs := action.GetMemoryBuffs(supervisorName)
+
+			// Collect active buffs with levels and memory buffs info
+			activeBuffs, memoryBuffsMap := getActiveBuffs(data.PlayerUnit.States, &data.PlayerUnit, memoryBuffs)
 
 			stats.UI = bot.CharacterOverview{
 				Class:           data.CharacterCfg.Character.Class,
@@ -620,6 +624,7 @@ func (s *HttpServer) getStatusData() IndexData {
 				PoisonResist:    pr,
 				GameName:        data.Game.LastGameName,
 				ActiveBuffs:     activeBuffs,
+				MemoryBuffs:     memoryBuffsMap,
 				FPS:             data.Game.FPS,
 			}
 		}
@@ -3356,9 +3361,10 @@ func calculateAreaLevel(areaID area.ID, diff difficulty.Difficulty) int {
 	}
 }
 
-// getActiveBuffs returns a map of active buff names to their skill levels
-func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *data.PlayerUnit) map[string]int {
+// getActiveBuffs returns a map of active buff names to their skill levels and a map indicating which buffs were applied via Memory
+func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *data.PlayerUnit, memoryBuffs map[skill.ID]bool) (map[string]int, map[string]bool) {
 	buffs := make(map[string]int)
+	memoryBuffsMap := make(map[string]bool)
 	
 	// Reverse map from skillToState in buff.go - maps state to skill ID
 	// Only include buffs that have a corresponding skill ID
@@ -3431,21 +3437,30 @@ func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *
 	for st, name := range stateToName {
 		if states.HasState(st) {
 			skillLevel := 0
+			var skillID skill.ID
+			hasSkillID := false
 			
 			// Try to get skill level if there's a corresponding skill ID
 			// Use the actual skill level from the game data (base level)
 			// Note: This is the base level, not including +skills bonuses
 			// The game client calculates total level including bonuses, but we only have access to base level here
-			if skillID, hasSkill := stateToSkill[st]; hasSkill {
-				if skillData, skillExists := playerUnit.Skills[skillID]; skillExists {
+			if sid, hasSkill := stateToSkill[st]; hasSkill {
+				skillID = sid
+				hasSkillID = true
+				if skillData, skillExists := playerUnit.Skills[sid]; skillExists {
 					skillLevel = int(skillData.Level)
 				}
 			}
 			
 			// Only show level if we have a skill ID mapping and the skill exists
 			buffs[name] = skillLevel
+			
+			// Check if this buff was applied via Memory
+			if hasSkillID && memoryBuffs != nil && memoryBuffs[skillID] {
+				memoryBuffsMap[name] = true
+			}
 		}
 	}
 	
-	return buffs
+	return buffs, memoryBuffsMap
 }

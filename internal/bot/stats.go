@@ -148,9 +148,10 @@ type CharacterOverview struct {
 	LightningResist int
 	PoisonResist    int
 	Gold            int
-	GameName        string // Current game name
+	GameName        string         // Current game name
 	ActiveBuffs     map[string]int // Map of active buff names to their levels
-	FPS             int    // Game FPS (from GameData.Game.FPS)
+	MemoryBuffs     map[string]bool // Map of buff names that were applied via Memory staff (key = buff name, value = true if via Memory)
+	FPS             int            // Game FPS (from GameData.Game.FPS)
 }
 
 func (s Stats) TotalGames() int {
