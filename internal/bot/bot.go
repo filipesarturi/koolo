@@ -268,15 +268,18 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 							action.ItemPickup(30)
 							b.ctx.DisableItemPickup()
 						} else {
-							// Enemies nearby - check if items are high priority (runes, uniques, sets)
+							// Enemies nearby - check if items are high priority (runes, uniques, sets, charms)
 							items := action.GetItemsToPickup(30)
 							hasHighPriorityItems := false
 							for _, itm := range items {
-								// High priority: runes, uniques, sets
+								// High priority: runes, uniques, sets, charms
+								charmName := string(itm.Name)
 								if itm.Desc().Type == item.TypeRune ||
 									itm.Quality == item.QualityUnique ||
 									itm.Quality == item.QualitySet ||
-									itm.IsRuneword {
+									itm.IsRuneword ||
+									charmName == "GrandCharm" || charmName == "grandcharm" ||
+									charmName == "SmallCharm" || charmName == "smallcharm" {
 									hasHighPriorityItems = true
 									break
 								}

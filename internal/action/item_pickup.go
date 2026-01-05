@@ -41,10 +41,18 @@ var midRunes = map[item.Name]bool{
 	"GulRune": true,
 }
 
-// isHighPriorityItem checks if an item is high priority (high runes, mid runes, uniques, sets)
+// isHighPriorityItem checks if an item is high priority (high runes, mid runes, uniques, sets, charms)
 func isHighPriorityItem(itm data.Item) bool {
-	return highRunes[itm.Name] || midRunes[itm.Name] ||
-		itm.Quality == item.QualityUnique || itm.Quality == item.QualitySet
+	// Check for high/mid runes, uniques, sets
+	if highRunes[itm.Name] || midRunes[itm.Name] ||
+		itm.Quality == item.QualityUnique || itm.Quality == item.QualitySet {
+		return true
+	}
+
+	// Check for charms (GrandCharm and SmallCharm) - check both case variations
+	charmName := string(itm.Name)
+	return charmName == "GrandCharm" || charmName == "grandcharm" ||
+		charmName == "SmallCharm" || charmName == "smallcharm"
 }
 
 // handlePickupError handles pickup errors and returns:
@@ -192,8 +200,8 @@ func ItemPickup(maxDistance int) error {
 	const maxRetries = 5                                        // Base retries for various issues
 	const maxItemTooFarAttempts = 5                             // Additional retries specifically for "item too far"
 	const totalMaxAttempts = maxRetries + maxItemTooFarAttempts // Combined total attempts
-	const debugPickit = false
-	const globalPickupTimeout = 60 * time.Second // Global timeout to prevent infinite loops
+	const debugPickit = true                                    // Enable debug logs for pickup system
+	const globalPickupTimeout = 60 * time.Second                // Global timeout to prevent infinite loops
 
 	// If we're already picking items, skip it
 	if ctx.CurrentGame.IsPickingItems {
@@ -255,7 +263,10 @@ outer:
 
 		if itemToPickup.UnitID == 0 {
 			if debugPickit {
-				ctx.Logger.Debug("No fitting items found for pickup after filtering.")
+				ctx.Logger.Debug("No fitting items found for pickup after filtering",
+					slog.Int("itemsAvailable", len(itemsToPickup)),
+					slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+				)
 			}
 			if HasTPsAvailable() {
 				consecutiveNoFitTownTrips++
@@ -290,18 +301,21 @@ outer:
 		// Mark item as being processed
 		itemsInProcess[itemToPickup.UnitID] = true
 
-		if debugPickit {
-			ctx.Logger.Info(fmt.Sprintf(
-				"Attempting to pickup item: %s [%d] at X:%d Y:%d",
-				itemToPickup.Name,
-				itemToPickup.Quality,
-				itemToPickup.Position.X,
-				itemToPickup.Position.Y,
-			))
-		}
-
 		// Check if this is a high priority item
 		isHighPriority := isHighPriorityItem(itemToPickup)
+
+		if debugPickit {
+			distance := ctx.PathFinder.DistanceFromMe(itemToPickup.Position)
+			ctx.Logger.Info("Attempting to pickup item",
+				slog.String("itemName", string(itemToPickup.Name)),
+				slog.String("itemQuality", itemToPickup.Quality.ToString()),
+				slog.Int("itemX", itemToPickup.Position.X),
+				slog.Int("itemY", itemToPickup.Position.Y),
+				slog.Int("distance", distance),
+				slog.Bool("isHighPriority", isHighPriority),
+				slog.Int("unitID", int(itemToPickup.UnitID)),
+			)
+		}
 
 		// Adjust retry limits for high priority items (fewer retries to be faster)
 		maxRetriesForItem := maxRetries
@@ -334,7 +348,14 @@ outer:
 
 			totalAttemptCounter++
 			if debugPickit {
-				ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Starting attempt %d (total: %d)", attempt, totalAttemptCounter))
+				ctx.Logger.Debug("Item Pickup: Starting attempt",
+					slog.Int("attempt", attempt),
+					slog.Int("totalAttempts", totalAttemptCounter),
+					slog.Int("maxAttempts", totalMaxAttemptsForItem),
+					slog.String("itemName", string(itemToPickup.Name)),
+					slog.Int("unitID", int(itemToPickup.UnitID)),
+					slog.Duration("elapsed", time.Since(globalStartTime)),
+				)
 			}
 
 			// For high priority items, check if a higher priority item appeared
@@ -394,12 +415,19 @@ outer:
 			// Only clear if monsters are detected or on retry attempts
 			if !isHighPriority || attempt > 1 {
 				if debugPickit {
-					ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Clearing area around item. Attempt %d", attempt))
+					ctx.Logger.Debug("Item Pickup: Clearing area around item",
+						slog.Int("attempt", attempt),
+						slog.String("itemName", string(itemToPickup.Name)),
+					)
 				}
+				clearStartTime := time.Now()
 				ClearAreaAroundPlayer(4, data.MonsterAnyFilter())
 				ClearAreaAroundPosition(itemToPickup.Position, 4, data.MonsterAnyFilter())
 				if debugPickit {
-					ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Area cleared in %v. Attempt %d", time.Since(pickupStartTime), attempt))
+					ctx.Logger.Debug("Item Pickup: Area cleared",
+						slog.Int("attempt", attempt),
+						slog.Duration("clearDuration", time.Since(clearStartTime)),
+					)
 				}
 			}
 
@@ -411,7 +439,12 @@ outer:
 			// If Telekinesis is available and we're in range, skip movement
 			if canUseTK && distance <= telekinesisItemPickupRange && attempt == 1 {
 				if debugPickit {
-					ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Using Telekinesis from current position (distance: %d). Attempt %d", distance, attempt))
+					ctx.Logger.Debug("Item Pickup: Using Telekinesis from current position",
+						slog.Int("distance", distance),
+						slog.Int("telekinesisRange", telekinesisItemPickupRange),
+						slog.Int("attempt", attempt),
+						slog.String("itemName", string(itemToPickup.Name)),
+					)
 				}
 				// Skip movement, go directly to pickup
 			} else {
@@ -453,15 +486,35 @@ outer:
 						distanceToFinish = telekinesisItemPickupRange - 2
 					}
 					if debugPickit {
-						ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Moving to coordinates X:%d Y:%d (distance: %d, distToFinish: %d). Attempt %d", pickupPosition.X, pickupPosition.Y, distance, distanceToFinish, attempt))
+						ctx.Logger.Debug("Item Pickup: Moving to item",
+							slog.Int("pickupX", pickupPosition.X),
+							slog.Int("pickupY", pickupPosition.Y),
+							slog.Int("itemX", itemToPickup.Position.X),
+							slog.Int("itemY", itemToPickup.Position.Y),
+							slog.Int("distance", distance),
+							slog.Int("distanceToFinish", distanceToFinish),
+							slog.Int("attempt", attempt),
+							slog.String("itemName", string(itemToPickup.Name)),
+						)
 					}
 					// For high priority items, ignore items during movement to be faster
+					moveStartTime := time.Now()
 					if err := MoveToCoords(pickupPosition, step.WithDistanceToFinish(distanceToFinish), step.WithIgnoreItems()); err != nil {
 						lastError = err
+						if debugPickit {
+							ctx.Logger.Debug("Item Pickup: Move failed",
+								slog.String("error", err.Error()),
+								slog.Int("attempt", attempt),
+							)
+						}
 						continue
 					}
 					if debugPickit {
-						ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Move completed in %v. Attempt %d", time.Since(pickupStartTime), attempt))
+						ctx.Logger.Debug("Item Pickup: Move completed",
+							slog.Int("attempt", attempt),
+							slog.Duration("moveDuration", time.Since(moveStartTime)),
+							slog.Duration("totalElapsed", time.Since(pickupStartTime)),
+						)
 					}
 				}
 			}
@@ -469,7 +522,12 @@ outer:
 			// Try to pick up the item
 			pickupActionStartTime := time.Now()
 			if debugPickit {
-				ctx.Logger.Debug(fmt.Sprintf("Item Pickup: Initiating PickupItem action. Attempt %d", attempt))
+				ctx.Logger.Debug("Item Pickup: Initiating PickupItem action",
+					slog.Int("attempt", attempt),
+					slog.String("itemName", string(itemToPickup.Name)),
+					slog.Int("unitID", int(itemToPickup.UnitID)),
+					slog.Int("distance", ctx.PathFinder.DistanceFromMe(itemToPickup.Position)),
+				)
 			}
 
 			err := step.PickupItem(itemToPickup, attempt)
@@ -479,14 +537,27 @@ outer:
 				// Item successfully picked up, remove from tracking
 				delete(itemsInProcess, itemToPickup.UnitID)
 				if debugPickit {
-					ctx.Logger.Info(fmt.Sprintf("Successfully picked up item: %s [%d] in %v. Total attempts: %d", itemToPickup.Name, itemToPickup.Quality, time.Since(pickupActionStartTime), totalAttemptCounter))
+					ctx.Logger.Info("Successfully picked up item",
+						slog.String("itemName", string(itemToPickup.Name)),
+						slog.String("itemQuality", itemToPickup.Quality.ToString()),
+						slog.Int("unitID", int(itemToPickup.UnitID)),
+						slog.Duration("pickupDuration", time.Since(pickupActionStartTime)),
+						slog.Duration("totalDuration", time.Since(globalStartTime)),
+						slog.Int("totalAttempts", totalAttemptCounter),
+					)
 				}
 				break
 			}
 
 			lastError = err
 			if debugPickit {
-				ctx.Logger.Warn(fmt.Sprintf("Item Pickup: Pickup attempt %d failed: %v", attempt, err), slog.String("itemName", string(itemToPickup.Name)))
+				ctx.Logger.Warn("Item Pickup: Pickup attempt failed",
+					slog.Int("attempt", attempt),
+					slog.String("itemName", string(itemToPickup.Name)),
+					slog.Int("unitID", int(itemToPickup.UnitID)),
+					slog.String("error", err.Error()),
+					slog.Duration("attemptDuration", time.Since(pickupActionStartTime)),
+				)
 			}
 
 			// If the pickup failed and the item doesn't fit *right now*, don't blacklist it.
@@ -527,7 +598,13 @@ outer:
 				lastError = nil
 				delete(itemsInProcess, itemToPickup.UnitID)
 				if debugPickit {
-					ctx.Logger.Info(fmt.Sprintf("Successfully picked up item after error correction: %s [%d] in %v. Total attempts: %d", itemToPickup.Name, itemToPickup.Quality, time.Since(pickupActionStartTime), totalAttemptCounter))
+					ctx.Logger.Info("Successfully picked up item after error correction",
+						slog.String("itemName", string(itemToPickup.Name)),
+						slog.String("itemQuality", itemToPickup.Quality.ToString()),
+						slog.Int("unitID", int(itemToPickup.UnitID)),
+						slog.Duration("pickupDuration", time.Since(pickupActionStartTime)),
+						slog.Int("totalAttempts", totalAttemptCounter),
+					)
 				}
 				break
 			}
@@ -736,6 +813,13 @@ func getItemPickupPriority(itm data.Item) int {
 
 	// Priority 3: Unique and Set items
 	if itm.Quality == item.QualityUnique || itm.Quality == item.QualitySet {
+		return 3
+	}
+
+	// Priority 3: Charms (GrandCharm and SmallCharm) - high priority for potential good mods
+	charmName := string(itm.Name)
+	if charmName == "GrandCharm" || charmName == "grandcharm" ||
+		charmName == "SmallCharm" || charmName == "smallcharm" {
 		return 3
 	}
 
