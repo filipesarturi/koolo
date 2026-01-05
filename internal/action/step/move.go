@@ -308,7 +308,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		if ctx.Data.CanTeleport() {
 			castDuration := ctx.Data.PlayerCastDuration()
 			timeSinceLastRun := time.Since(lastRun)
-			
+
 			// Only sleep if we're within cast duration AND lastRun was actually set
 			// If lastRun is zero (first iteration) or player is stuck, don't wait
 			if !lastRun.IsZero() && timeSinceLastRun < castDuration {
