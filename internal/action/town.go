@@ -39,6 +39,10 @@ func StashFull() bool {
 func PreRun(firstRun bool) error {
 	ctx := context.Get()
 
+	// Switch to legacy mode if configured (must be done before Memory buff)
+	SwitchToLegacyMode()
+	ctx.RefreshGameData()
+
 	// Muling logic for the main farmer character
 	if ctx.CharacterCfg.Muling.Enabled && ctx.CharacterCfg.Muling.ReturnTo == "" {
 		isStashFull := StashFull()
