@@ -45,18 +45,73 @@ func IdentifyAll(skipIdentify bool) error {
 	}
 
 	if shouldUseCain {
-		ctx.Logger.Debug("Identifying all item with Cain...")
-		// Close any open menus first
-		step.CloseAllMenus()
-		utils.PingSleep(utils.Medium, 500) // Medium operation: Close menus before Cain
+		ctx.Logger.Debug("Identifying all items with Cain...")
 
-		err := CainIdentify()
-		// if identifying with cain fails then we should continue to identify using tome
-		if err == nil {
-			return nil // Successfully identified with Cain, no need for tome
+		const maxRetries = 3
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			// Recalculate items that need identification (in case some were already identified)
+			items = itemsToIdentify()
+			if len(items) == 0 {
+				ctx.Logger.Debug("No items remaining to identify")
+				return nil
+			}
+
+			// Store items to identify for verification
+			itemsToVerify := make([]data.Item, len(items))
+			copy(itemsToVerify, items)
+
+			// Close any open menus first
+			step.CloseAllMenus()
+			utils.PingSleep(utils.Medium, 500) // Medium operation: Close menus before Cain
+
+			err := CainIdentify()
+			if err != nil {
+				ctx.Logger.Debug("Cain identification attempt failed", "attempt", attempt, "maxRetries", maxRetries, "err", err)
+				if attempt < maxRetries {
+					utils.PingSleep(utils.Medium, 500) // Wait before retry
+					continue
+				}
+				ctx.Logger.Warn("Cain identification failed after all retries, protecting unidentified items from being discarded")
+				return nil // Protect unidentified items by returning early
+			}
+
+			// Verify that items were actually identified
+			ctx.RefreshGameData()
+			allIdentified := true
+			remainingUnidentified := 0
+			for _, itemToVerify := range itemsToVerify {
+				// Find the item in current inventory by UnitID
+				found := false
+				for _, currentItem := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+					if currentItem.UnitID == itemToVerify.UnitID {
+						found = true
+						if !currentItem.Identified {
+							allIdentified = false
+							remainingUnidentified++
+						}
+						break
+					}
+				}
+				if !found {
+					// Item might have been moved to stash or dropped, consider it handled
+					continue
+				}
+			}
+
+			if allIdentified {
+				ctx.Logger.Debug("All items successfully identified with Cain")
+				return nil
+			}
+
+			ctx.Logger.Debug("Items not fully identified after Cain attempt", "attempt", attempt, "maxRetries", maxRetries, "remainingUnidentified", remainingUnidentified)
+			if attempt < maxRetries {
+				utils.PingSleep(utils.Medium, 500) // Wait before retry
+				continue
+			}
+
+			ctx.Logger.Warn("Cain identification did not fully identify items after all retries, protecting unidentified items from being discarded", "remainingUnidentified", remainingUnidentified)
+			return nil // Protect unidentified items by returning early
 		}
-		ctx.Logger.Debug("Identifying with Cain failed, continuing with identifying with tome", "err", err)
-		// Execution will continue here to the tome identification section
 	}
 
 	// --- Tome Identification Starts Here ---
@@ -122,10 +177,25 @@ func CainIdentify() error {
 	ctx.HID.KeySequence(win.VK_HOME, win.VK_DOWN, win.VK_RETURN)
 	utils.PingSleep(utils.Medium, 800) // Medium operation: Wait for key sequence to register
 
+	// Wait for menu to close and identification to process
+	menuCloseWait := time.Now().Add(2 * time.Second)
+	for time.Now().Before(menuCloseWait) {
+		ctx.PauseIfNotPriority()
+		ctx.RefreshGameData()
+		if !ctx.Data.OpenMenus.NPCInteract {
+			break
+		}
+		utils.PingSleep(utils.Light, 100) // Light operation: Polling for menu state
+	}
+
 	// Close menu if still open
 	if ctx.Data.OpenMenus.NPCInteract {
 		step.CloseAllMenus()
+		utils.PingSleep(utils.Medium, 300) // Wait for menu to close
 	}
+
+	// Final refresh to ensure we have the latest item states
+	ctx.RefreshGameData()
 
 	return nil
 }

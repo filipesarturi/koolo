@@ -664,6 +664,12 @@ func ItemsToBeSold(lockConfig ...[][]int) (items []data.Item) {
 	}
 
 	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		// Protect unidentified items from being sold/discarded
+		// They cannot be properly evaluated by NIP rules until identified
+		if !itm.Identified {
+			continue
+		}
+
 		// Check if the item is in a locked slot, and if so, skip it.
 		if len(currentLockConfig) > itm.Position.Y && len(currentLockConfig[itm.Position.Y]) > itm.Position.X {
 			if currentLockConfig[itm.Position.Y][itm.Position.X] == 0 {
