@@ -98,6 +98,8 @@ type CurrentGameHelper struct {
 	CurrentMuleIndex  int
 	ShouldCheckStash  bool
 	StashFull         bool
+	IsStuck           bool          // Flag to track if bot is stuck
+	StuckSince        time.Time     // Time when stuck was first detected
 	mutex             sync.Mutex
 }
 
@@ -149,6 +151,8 @@ func NewGameHelper() *CurrentGameHelper {
 		PickedUpItems:              make(map[int]int),
 		BlacklistedItems:           []data.Item{},
 		FailedToCreateGameAttempts: 0,
+		IsStuck:                    false,
+		StuckSince:                 time.Time{},
 	}
 }
 
