@@ -72,6 +72,7 @@ type Context struct {
 	lastRefreshTime       time.Time
 	refreshMutex          sync.RWMutex
 	refreshInterval       time.Duration
+	checkItemsAfterDeath  func() // Callback para verificar itens após morte de monstro
 }
 
 type Debug struct {
@@ -260,6 +261,22 @@ func (ctx *Context) SetPickingItems(value bool) {
 		ctx.CurrentGame.IsPickingItemsSetAt = time.Time{} // Reset timestamp when flag is cleared
 	}
 	ctx.CurrentGame.mutex.Unlock()
+}
+
+// SetCheckItemsAfterDeathCallback sets a callback function to check items after monster death
+// This allows step package to trigger item checks without importing action package
+func (ctx *Context) SetCheckItemsAfterDeathCallback(fn func()) {
+	ctx.checkItemsAfterDeath = fn
+}
+
+// CheckItemsAfterDeath calls the registered callback to check items after monster death
+// Returns true if callback was called, false if no callback is registered
+func (ctx *Context) CheckItemsAfterDeath() bool {
+	if ctx.checkItemsAfterDeath != nil {
+		ctx.checkItemsAfterDeath()
+		return true
+	}
+	return false
 }
 
 func (s *Status) PauseIfNotPriority() {

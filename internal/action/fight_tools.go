@@ -8,9 +8,15 @@ import (
 
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/pather"
+	"github.com/hectorgimenez/koolo/internal/utils"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+)
+
+var (
+	lastItemCheckAfterDeath time.Time
+	itemCheckCooldown       = 500 * time.Millisecond // Throttle para evitar verificações muito frequentes
 )
 
 func GetDistanceFromClosestEnemy(pos data.Position, monsters data.Monsters) float64 {
@@ -118,6 +124,8 @@ func ShouldSwitchTarget(targetID data.UnitID, targetMonster data.Monster, lastLi
 	if targetMonster.Stats[stat.Life] <= 0 {
 		ctx.Logger.Debug("Target monster is dead, switching targets", "targetID", targetID)
 		delete(lastLineOfSight, targetID)
+		// Verificar itens após morte individual (com throttle)
+		CheckItemsAfterMonsterDeath()
 		return true
 	}
 
@@ -142,6 +150,15 @@ func ShouldSwitchTarget(targetID data.UnitID, targetMonster data.Monster, lastLi
 		// Clear the entire map since combat is ending
 		for k := range lastLineOfSight {
 			delete(lastLineOfSight, k)
+		}
+		// Check for items after combat ends (genérico para qualquer monstro)
+		// Give a small delay for items to drop to the ground
+		utils.Sleep(300)
+		ctx.RefreshGameData()
+		// Verifica todos os itens sem limite de raio após o combate terminar
+		if HasItemsToPickup(-1) {
+			ctx.Logger.Debug("Items detected after combat, attempting pickup...")
+			ItemPickup(-1)
 		}
 		return true
 	}
@@ -446,4 +463,28 @@ func FindSafePosition(targetMonster data.Monster, dangerDistance int, safeDistan
 	}
 
 	return data.Position{}, false
+}
+
+// CheckItemsAfterMonsterDeath verifica itens após a morte de um monstro
+// Usa throttle para evitar overhead durante combates intensos
+// Verifica todos os itens (alta e baixa prioridade) sem limite de raio
+func CheckItemsAfterMonsterDeath() {
+	// Throttle: só verifica se passou o cooldown desde a última verificação
+	if time.Since(lastItemCheckAfterDeath) < itemCheckCooldown {
+		return
+	}
+
+	lastItemCheckAfterDeath = time.Now()
+
+	// Delay para itens aparecerem no chão
+	utils.Sleep(200)
+
+	ctx := context.Get()
+	ctx.RefreshGameData()
+
+	// Verifica todos os itens sem limite de raio
+	if HasItemsToPickup(-1) {
+		ctx.Logger.Debug("Items detected after monster death, attempting pickup...")
+		ItemPickup(-1)
+	}
 }

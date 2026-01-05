@@ -176,6 +176,8 @@ func refreshAndValidateMonster(ctx *context.Status, monsterID data.UnitID) (data
 		statesMutex.Lock()
 		delete(monsterStates, monsterID)
 		statesMutex.Unlock()
+		// Verificar itens após morte (via context callback para evitar dependência circular)
+		ctx.CheckItemsAfterDeath()
 		return data.Monster{}, false, ErrMonsterDead
 	}
 
@@ -242,6 +244,8 @@ func attack(settings attackSettings) error {
 			statesMutex.Lock()
 			delete(monsterStates, settings.target)
 			statesMutex.Unlock()
+			// Verificar itens após morte (via context callback para evitar dependência circular)
+			ctx.CheckItemsAfterDeath()
 			return nil
 		}
 
@@ -455,6 +459,8 @@ func burstAttack(settings attackSettings) error {
 		// Verify target is still alive after selection (race condition protection)
 		if target.Stats[stat.Life] <= 0 {
 			ctx.Logger.Debug("Burst attack: target died, finding new target")
+			// Verificar itens após morte (via context callback)
+			ctx.CheckItemsAfterDeath()
 			continue // Target died, find new one immediately
 		}
 
@@ -665,6 +671,8 @@ func ensureEnemyIsInRange(monster data.Monster, state *attackState, maxDistance,
 		statesMutex.Lock()
 		delete(monsterStates, monster.UnitID)
 		statesMutex.Unlock()
+		// Verificar itens após morte (via context callback)
+		ctx.CheckItemsAfterDeath()
 		return ErrMonsterDead
 	}
 

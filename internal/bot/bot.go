@@ -75,6 +75,9 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 	b.ctx.SwitchPriority(botCtx.PriorityNormal) // Restore priority to normal, in case it was stopped in previous game
 	b.ctx.CurrentGame = botCtx.NewGameHelper()  // Reset current game helper structure
 
+	// Register callback for item check after monster death (allows step package to trigger without circular dependency)
+	b.ctx.SetCheckItemsAfterDeathCallback(action.CheckItemsAfterMonsterDeath)
+
 	// Reset Memory buff flag for new game
 	action.ResetMemoryBuffFlag(b.ctx.Name)
 	// Drop: Initialize Drop manager and start watch context
