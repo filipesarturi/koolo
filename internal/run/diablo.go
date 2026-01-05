@@ -162,8 +162,8 @@ func (d *Diablo) Run(parameters *RunParameters) error {
 			// Clear everything around the seal
 			action.ClearAreaAroundPlayer(10, d.ctx.Data.MonsterFilterAnyReachable())
 
-			//Buff refresh before Infector
-			if object.DiabloSeal1 == sealID || isLevelingChar {
+			//Buff refresh for leveling characters
+			if isLevelingChar {
 				action.Buff()
 			}
 
