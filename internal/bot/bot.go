@@ -74,6 +74,9 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 	gameStartedAt := time.Now()
 	b.ctx.SwitchPriority(botCtx.PriorityNormal) // Restore priority to normal, in case it was stopped in previous game
 	b.ctx.CurrentGame = botCtx.NewGameHelper()  // Reset current game helper structure
+
+	// Reset Memory buff flag for new game
+	action.ResetMemoryBuffFlag(b.ctx.Name)
 	// Drop: Initialize Drop manager and start watch context
 	if b.ctx.Drop == nil {
 		b.ctx.Drop = drop.NewManager(b.ctx.Name, b.ctx.Logger)
@@ -249,7 +252,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				if !b.ctx.Data.PlayerUnit.Area.IsTown() {
 					// Check if there are items to pickup
 					hasItems := action.HasItemsToPickup(30)
-					
+
 					if b.ctx.CurrentGame.PickupItems {
 						// If PickupItems is enabled, always try pickup (maintains backward compatibility)
 						action.ItemPickup(30)
@@ -259,7 +262,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 						// This allows picking up drops from other players while avoiding
 						// unnecessary interruptions during intense combat
 						hasEnemiesNearby, _ := action.IsAnyEnemyAroundPlayer(10)
-						
+
 						// Only enable pickup if there are no nearby enemies or if items are high priority
 						// (runes, uniques, sets) that should be picked up even during combat
 						if !hasEnemiesNearby {
@@ -284,7 +287,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 									break
 								}
 							}
-							
+
 							// Pick up high priority items even during combat
 							if hasHighPriorityItems {
 								b.ctx.EnableItemPickup()

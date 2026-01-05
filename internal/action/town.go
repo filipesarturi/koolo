@@ -94,10 +94,19 @@ func PreRun(firstRun bool) error {
 	_, isLevelingChar := ctx.Char.(context.LevelingCharacter)
 
 	// Apply Memory buff on first run after recovering corpse (if enabled and in town)
-	if firstRun && ctx.Data.PlayerUnit.Area.IsTown() {
-		if ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff {
-			ctx.Logger.Debug("First run: applying Memory buff after initial PreRun routines")
-			BuffIfRequired()
+	if firstRun {
+		ctx.Logger.Debug("PreRun: firstRun check",
+			"inTown", ctx.Data.PlayerUnit.Area.IsTown(),
+			"useMemoryBuff", ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff)
+		if ctx.Data.PlayerUnit.Area.IsTown() {
+			if ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff {
+				ctx.Logger.Info("First run: applying Memory buff after initial PreRun routines")
+				BuffIfRequired()
+			} else {
+				ctx.Logger.Debug("Memory buff skipped",
+					"configNil", ctx.CharacterCfg == nil,
+					"useMemoryBuff", ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff)
+			}
 		}
 	}
 

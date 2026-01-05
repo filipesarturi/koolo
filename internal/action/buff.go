@@ -27,8 +27,17 @@ var (
 	maxSwapFailures      = 3                     // max failures before cooldown
 	swapFailureCooldown  = 60 * time.Second      // cooldown after max failures
 	memoryBuffApplied    = make(map[string]bool) // track if Memory buff was applied in first run
+	memoryBuffInProgress = make(map[string]bool) // track if Memory buff is currently being applied
 	memoryBuffAppliedMu  sync.Mutex
 )
+
+// ResetMemoryBuffFlag resets the Memory buff flag for a character when starting a new game
+func ResetMemoryBuffFlag(characterName string) {
+	memoryBuffAppliedMu.Lock()
+	defer memoryBuffAppliedMu.Unlock()
+	delete(memoryBuffApplied, characterName)
+	delete(memoryBuffInProgress, characterName)
+}
 
 // skillToState maps buff skills to their corresponding player states for verification
 var skillToState = map[skill.ID]state.State{
@@ -135,42 +144,61 @@ func BuffIfRequired() {
 				return
 			}
 
-			// Check if Memory buff was already applied
+			// Check if Memory buff was already applied or is in progress
 			memoryBuffAppliedMu.Lock()
 			alreadyApplied := memoryBuffApplied[ctx.Name]
+			inProgress := memoryBuffInProgress[ctx.Name]
 			memoryBuffAppliedMu.Unlock()
 
+			// Skip if already applied or currently in progress
+			if alreadyApplied || inProgress {
+				if inProgress {
+					ctx.Logger.Debug("Memory buff already in progress, skipping")
+				} else if alreadyApplied {
+					ctx.Logger.Debug("Memory buff already applied, skipping")
+				}
+				return
+			}
+
 			// Only apply Memory buff on first run
-			if !alreadyApplied {
-				// Check if Energy Shield or Armor buffs are needed
-				needsMemoryBuffs := false
-				buffSkills := ctx.Char.BuffSkills()
-				for _, buffSkill := range buffSkills {
-					if buffSkill == skill.EnergyShield {
-						if !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
-							needsMemoryBuffs = true
-							break
-						}
-					}
-					if buffSkill == skill.FrozenArmor || buffSkill == skill.ShiverArmor || buffSkill == skill.ChillingArmor {
-						if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
-							!ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
-							!ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
-							needsMemoryBuffs = true
-							break
-						}
+			// Check if Energy Shield or Armor buffs are needed
+			needsMemoryBuffs := false
+			buffSkills := ctx.Char.BuffSkills()
+			for _, buffSkill := range buffSkills {
+				if buffSkill == skill.EnergyShield {
+					if !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+						needsMemoryBuffs = true
+						break
 					}
 				}
-
-				if needsMemoryBuffs {
-					if err := buffWithMemory(); err != nil {
-						ctx.Logger.Debug("Failed to use Memory staff for buffs", "error", err)
-					} else {
-						// Mark Memory buff as applied
-						memoryBuffAppliedMu.Lock()
-						memoryBuffApplied[ctx.Name] = true
-						memoryBuffAppliedMu.Unlock()
+				if buffSkill == skill.FrozenArmor || buffSkill == skill.ShiverArmor || buffSkill == skill.ChillingArmor {
+					if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
+						!ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
+						!ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+						needsMemoryBuffs = true
+						break
 					}
+				}
+			}
+
+			if needsMemoryBuffs {
+				// Mark as in progress before calling buffWithMemory to prevent concurrent calls
+				memoryBuffAppliedMu.Lock()
+				memoryBuffInProgress[ctx.Name] = true
+				memoryBuffAppliedMu.Unlock()
+
+				if err := buffWithMemory(); err != nil {
+					ctx.Logger.Debug("Failed to use Memory staff for buffs", "error", err)
+					// Reset in progress flag on failure so it can be retried
+					memoryBuffAppliedMu.Lock()
+					memoryBuffInProgress[ctx.Name] = false
+					memoryBuffAppliedMu.Unlock()
+				} else {
+					// Mark Memory buff as applied and clear in progress flag
+					memoryBuffAppliedMu.Lock()
+					memoryBuffApplied[ctx.Name] = true
+					memoryBuffInProgress[ctx.Name] = false
+					memoryBuffAppliedMu.Unlock()
 				}
 			}
 			return
@@ -202,7 +230,8 @@ func BuffIfRequired() {
 	}
 
 	// If monsters are nearby and feature is enabled, try to find and move to a safe position first
-	if closeMonsters > 0 && moveToSafePosition {
+	// Skip movement if bot is stuck to avoid infinite loops
+	if closeMonsters > 0 && moveToSafePosition && !ctx.CurrentGame.IsStuck {
 		ctx.Logger.Debug("Monsters nearby, searching for safe position to buff...")
 
 		safePos, found := FindSafePositionForBuff(safeDistanceForBuff, maxSearchDistance)
