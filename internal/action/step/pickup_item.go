@@ -43,17 +43,17 @@ var (
 
 const (
 	waitForCharacterTimeout = 2 * time.Second
-	characterCheckInterval = 25 * time.Millisecond
+	characterCheckInterval  = 25 * time.Millisecond
 )
 
 // waitForCharacterReady waits for the character to finish casting or moving
 func waitForCharacterReady(timeout time.Duration) error {
 	ctx := context.Get()
 	waitingStartTime := time.Now()
-	
-	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill || 
-		ctx.Data.PlayerUnit.Mode == mode.Running || 
-		ctx.Data.PlayerUnit.Mode == mode.Walking || 
+
+	for ctx.Data.PlayerUnit.Mode == mode.CastingSkill ||
+		ctx.Data.PlayerUnit.Mode == mode.Running ||
+		ctx.Data.PlayerUnit.Mode == mode.Walking ||
 		ctx.Data.PlayerUnit.Mode == mode.WalkingInTown {
 		if time.Since(waitingStartTime) > timeout {
 			ctx.Logger.Warn("Timeout waiting for character to stop moving or casting, proceeding anyway")
@@ -69,23 +69,23 @@ func waitForCharacterReady(timeout time.Duration) error {
 // Returns an error if any precondition fails
 func validatePickupPreconditions(it data.Item, maxDistance int, checkMonsters bool) error {
 	ctx := context.Get()
-	
+
 	// Check for monsters if requested
 	if checkMonsters && hasHostileMonstersNearby(it.Position) {
 		return ErrMonsterAroundItem
 	}
-	
+
 	// Validate line of sight
 	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
 		return ErrNoLOSToItem
 	}
-	
+
 	// Check distance
 	distance := ctx.PathFinder.DistanceFromMe(it.Position)
 	if distance >= maxDistance {
 		return fmt.Errorf("%w (%d): %s", ErrItemTooFar, distance, it.Desc().Name)
 	}
-	
+
 	return nil
 }
 

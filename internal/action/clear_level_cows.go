@@ -16,14 +16,14 @@ import (
 // Optimized constants for public games with high monster density
 const (
 	// Timeouts - more aggressive for public games
-	maxRoomTime              = 15 * time.Second
-	maxRoomTimeWithoutPath   = 5 * time.Second
-	maxActionTime            = 3 * time.Second
-	stuckDetectionTime       = 3 * time.Second
-	maxIterationTime         = 2 * time.Second
+	maxRoomTime            = 15 * time.Second
+	maxRoomTimeWithoutPath = 5 * time.Second
+	maxActionTime          = 3 * time.Second
+	stuckDetectionTime     = 3 * time.Second
+	maxIterationTime       = 2 * time.Second
 
 	// Circuit breaker thresholds
-	maxConsecutiveFailures    = 3
+	maxConsecutiveFailures   = 3
 	maxStagnantIterations    = 4
 	maxIterationsWithoutKill = 6
 
@@ -32,15 +32,15 @@ const (
 	monsterCacheTTL = 1 * time.Second
 
 	// Other player detection
-	otherPlayerCheckInterval      = 500 * time.Millisecond
-	monsterCountChangeThreshold   = 3
-	monsterCountChangeTimeWindow  = 500 * time.Millisecond
-	otherPlayerClearThreshold     = 0.33 // If <33% of initial monsters remain, others are clearing
+	otherPlayerCheckInterval     = 500 * time.Millisecond
+	monsterCountChangeThreshold  = 3
+	monsterCountChangeTimeWindow = 500 * time.Millisecond
+	otherPlayerClearThreshold    = 0.33 // If <33% of initial monsters remain, others are clearing
 
 	// Pickup and movement
-	pickupRadius     = 10
-	pickupEveryRooms = 4
-	moveClearRadius  = 20
+	pickupRadius       = 10
+	pickupEveryRooms   = 4
+	moveClearRadius    = 20
 	maxMonsterDistance = 30
 )
 
@@ -71,11 +71,11 @@ type optimizedRoomState struct {
 	lastProgressCheck    time.Time
 
 	// Monster tracking
-	lastMonsterCount       int
-	lastMonsterCountTime   time.Time
-	initialMonsterCount    int
-	monsterCountHistory    []monsterCountSnapshot
-	maxHistorySize         int
+	lastMonsterCount     int
+	lastMonsterCountTime time.Time
+	initialMonsterCount  int
+	monsterCountHistory  []monsterCountSnapshot
+	maxHistorySize       int
 
 	// Progress tracking
 	iterationsWithoutKill     int
@@ -246,7 +246,7 @@ func clearRoomCowsOptimized(room data.Room, filter data.MonsterFilter, moveClear
 		// The high-priority bot loop will handle item pickup automatically
 		actionDeadline := time.Now().Add(maxActionTime)
 		killed := attackTargetOptimized(ctx, target, state, actionDeadline)
-		
+
 		if killed {
 			state.lastKillTime = time.Now()
 			state.lastSuccessfulAction = time.Now()
@@ -299,13 +299,13 @@ func attemptMoveToRoomCenterOptimized(room data.Room, moveClearRadius int, filte
 	// Use a simple approach: call directly but limit the time spent
 	startMove := time.Now()
 	err := ClearThroughPathIgnoreMonsters(to, moveClearRadius, filter)
-	
+
 	// If it took too long or failed, mark as no path and continue
 	if err != nil || time.Since(startMove) > 5*time.Second {
 		state.noPathToCenter = true
 		return nil
 	}
-	
+
 	return err
 }
 
