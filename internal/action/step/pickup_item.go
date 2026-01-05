@@ -3,6 +3,7 @@ package step
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -92,19 +93,41 @@ func PickupItem(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
 	ctx.SetLastStep("PickupItem")
 
+	distance := ctx.PathFinder.DistanceFromMe(it.Position)
+	hasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position)
+
 	// Check if Telekinesis can be used for this item (potions and gold)
 	if canUseTelekinesisForItem(it) {
-		ctx.Logger.Debug("Attempting item pickup via Telekinesis", "item", it.Desc().Name)
+		ctx.Logger.Debug("Attempting item pickup via Telekinesis",
+			slog.String("itemName", string(it.Desc().Name)),
+			slog.String("itemQuality", it.Quality.ToString()),
+			slog.Int("unitID", int(it.UnitID)),
+			slog.Int("distance", distance),
+			slog.Bool("hasLoS", hasLoS),
+			slog.Int("attempt", itemPickupAttempt),
+		)
 		return PickupItemTelekinesis(it, itemPickupAttempt)
 	}
 
 	// Check if packet casting is enabled for item pickup
 	if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
-		ctx.Logger.Debug("Attempting item pickup via packet method")
+		ctx.Logger.Debug("Attempting item pickup via packet method",
+			slog.String("itemName", string(it.Desc().Name)),
+			slog.Int("unitID", int(it.UnitID)),
+			slog.Int("distance", distance),
+			slog.Int("attempt", itemPickupAttempt),
+		)
 		return PickupItemPacket(it, itemPickupAttempt)
 	}
 
 	// Use mouse-based pickup (original implementation)
+	ctx.Logger.Debug("Attempting item pickup via mouse method",
+		slog.String("itemName", string(it.Desc().Name)),
+		slog.Int("unitID", int(it.UnitID)),
+		slog.Int("distance", distance),
+		slog.Bool("hasLoS", hasLoS),
+		slog.Int("attempt", itemPickupAttempt),
+	)
 	return PickupItemMouse(it, itemPickupAttempt)
 }
 
@@ -158,8 +181,10 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	distance := ctx.PathFinder.DistanceFromMe(it.Position)
 	if distance > telekinesisPickupMaxRange {
 		ctx.Logger.Debug("Item too far for Telekinesis pickup, falling back to normal pickup",
-			"item", it.Desc().Name,
-			"distance", distance,
+			slog.String("itemName", string(it.Desc().Name)),
+			slog.Int("distance", distance),
+			slog.Int("telekinesisMaxRange", telekinesisPickupMaxRange),
+			slog.Int("unitID", int(it.UnitID)),
 		)
 		if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
 			return PickupItemPacket(it, itemPickupAttempt)
@@ -168,7 +193,13 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	}
 
 	// Validate line of sight (distance already checked above)
-	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position) {
+	hasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position)
+	if !hasLoS {
+		ctx.Logger.Debug("No line of sight to item for Telekinesis",
+			slog.String("itemName", string(it.Desc().Name)),
+			slog.Int("unitID", int(it.UnitID)),
+			slog.Int("distance", distance),
+		)
 		return ErrNoLOSToItem
 	}
 
@@ -200,17 +231,28 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		// Check if item still exists
 		_, exists := findItemOnGround(targetItem.UnitID)
 		if !exists {
-			ctx.Logger.Info(fmt.Sprintf("Picked up (Telekinesis): %s [%s]", targetItem.Desc().Name, targetItem.Quality.ToString()))
+			ctx.Logger.Info("Picked up item via Telekinesis",
+				slog.String("itemName", string(targetItem.Desc().Name)),
+				slog.String("itemQuality", targetItem.Quality.ToString()),
+				slog.Int("unitID", int(targetItem.UnitID)),
+				slog.Int("attempt", attempt+1),
+				slog.Duration("duration", time.Since(startTime)),
+			)
 			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
 			return nil
 		}
 
 		// Calculate screen position for the item
 		screenX, screenY := ctx.PathFinder.GameCoordsToScreenCords(targetItem.Position.X, targetItem.Position.Y)
+		currentDistance := ctx.PathFinder.DistanceFromMe(targetItem.Position)
 
 		ctx.Logger.Debug("Using Telekinesis to pick up item via HID",
-			"item", targetItem.Desc().Name,
-			"distance", ctx.PathFinder.DistanceFromMe(targetItem.Position),
+			slog.String("itemName", string(targetItem.Desc().Name)),
+			slog.Int("unitID", int(targetItem.UnitID)),
+			slog.Int("distance", currentDistance),
+			slog.Int("attempt", attempt+1),
+			slog.Int("screenX", screenX),
+			slog.Int("screenY", screenY),
 		)
 
 		// Move mouse to item and right-click (Telekinesis)
@@ -225,14 +267,24 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		ctx.RefreshGameData()
 		_, stillExists := findItemOnGround(targetItem.UnitID)
 		if !stillExists {
-			ctx.Logger.Info(fmt.Sprintf("Picked up (Telekinesis): %s [%s]", targetItem.Desc().Name, targetItem.Quality.ToString()))
+			ctx.Logger.Info("Picked up item via Telekinesis",
+				slog.String("itemName", string(targetItem.Desc().Name)),
+				slog.String("itemQuality", targetItem.Quality.ToString()),
+				slog.Int("unitID", int(targetItem.UnitID)),
+				slog.Int("attempt", attempt+1),
+				slog.Duration("duration", time.Since(startTime)),
+			)
 			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
 			return nil
 		}
 	}
 
 	// Telekinesis failed, fallback to normal pickup
-	ctx.Logger.Debug("Telekinesis pickup failed after max attempts, falling back to normal pickup")
+	ctx.Logger.Debug("Telekinesis pickup failed after max attempts, falling back to normal pickup",
+		slog.String("itemName", string(it.Desc().Name)),
+		slog.Int("unitID", int(it.UnitID)),
+		slog.Int("maxAttempts", telekinesisPickupMaxAttempts),
+	)
 	if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
 		return PickupItemPacket(it, itemPickupAttempt)
 	}
@@ -311,8 +363,14 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		// Check if item still exists
 		currentItem, exists := findItemOnGround(targetItem.UnitID)
 		if !exists {
-
-			ctx.Logger.Info(fmt.Sprintf("Picked up: %s [%s] | Item Pickup Attempt:%d | Spiral Attempt:%d", targetItem.Desc().Name, targetItem.Quality.ToString(), itemPickupAttempt, spiralAttempt))
+			ctx.Logger.Info("Picked up item via mouse",
+				slog.String("itemName", string(targetItem.Desc().Name)),
+				slog.String("itemQuality", targetItem.Quality.ToString()),
+				slog.Int("unitID", int(targetItem.UnitID)),
+				slog.Int("itemPickupAttempt", itemPickupAttempt),
+				slog.Int("spiralAttempt", spiralAttempt),
+				slog.Duration("duration", time.Since(startTime)),
+			)
 
 			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
 
@@ -323,6 +381,14 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		if spiralAttempt > maxInteractions ||
 			(!waitingForInteraction.IsZero() && time.Since(waitingForInteraction) > pickupTimeout) ||
 			time.Since(startTime) > pickupTimeout {
+			ctx.Logger.Debug("Mouse pickup timeout",
+				slog.String("itemName", string(it.Desc().Name)),
+				slog.Int("unitID", int(it.UnitID)),
+				slog.Int("spiralAttempt", spiralAttempt),
+				slog.Int("maxInteractions", maxInteractions),
+				slog.Duration("elapsed", time.Since(startTime)),
+				slog.Duration("waitingForInteraction", time.Since(waitingForInteraction)),
+			)
 			return fmt.Errorf("failed to pick up %s after %d attempts", it.Desc().Name, spiralAttempt)
 		}
 

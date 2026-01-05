@@ -3,6 +3,7 @@ package step
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -121,6 +122,26 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 	isDragondin := strings.EqualFold(ctx.CharacterCfg.Character.Class, "dragondin")
 	ctx.SetLastStep("MoveTo")
 
+	startPos := ctx.Data.PlayerUnit.Position
+	movementStartTime := time.Now()
+	canTeleport := ctx.Data.CanTeleport()
+	movementMethod := "walk"
+	if canTeleport {
+		movementMethod = "teleport"
+	}
+
+	ctx.Logger.Debug("Starting movement",
+		slog.Int("fromX", startPos.X),
+		slog.Int("fromY", startPos.Y),
+		slog.Int("toX", dest.X),
+		slog.Int("toY", dest.Y),
+		slog.String("movementMethod", movementMethod),
+		slog.Int("minDistanceToFinish", minDistanceToFinishMoving),
+		slog.Bool("ignoreMonsters", opts.ignoreMonsters),
+		slog.Bool("ignoreItems", opts.ignoreItems),
+		slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+	)
+
 	opts.ignoreShrines = !ctx.CharacterCfg.Game.InteractWithShrines
 	stepLastMonsterCheck := time.Time{}
 
@@ -161,6 +182,8 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 	}
 
 	startArea := ctx.Data.PlayerUnit.Area
+	lastLogTime := time.Time{}
+	const logThrottleInterval = 3 * time.Second
 
 	for {
 		ctx.PauseIfNotPriority()
@@ -176,6 +199,10 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		// If area changed during movement, the destination is no longer valid
 		// This happens during portal interactions - area transition means objective achieved
 		if ctx.Data.PlayerUnit.Area != startArea {
+			ctx.Logger.Debug("Area transition detected during movement",
+				slog.String("fromArea", startArea.Area().Name),
+				slog.String("toArea", ctx.Data.PlayerUnit.Area.Area().Name),
+			)
 			// Wait for collision data to be loaded for the new area before returning
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
@@ -183,12 +210,18 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 					ctx.Data.AreaData.Grid.CollisionGrid != nil &&
 					len(ctx.Data.AreaData.Grid.CollisionGrid) > 0 {
 					// Area transitioned and collision data loaded - movement objective achieved
+					ctx.Logger.Debug("Movement completed via area transition",
+						slog.Duration("duration", time.Since(movementStartTime)),
+					)
 					return nil
 				}
 				utils.Sleep(100)
 				ctx.RefreshGameData()
 			}
 			// If we timeout waiting for collision data, return error
+			ctx.Logger.Warn("Area transition detected but collision data failed to load",
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+			)
 			return fmt.Errorf("area transition detected but collision data failed to load for area %s", ctx.Data.PlayerUnit.Area.Area().Name)
 		}
 
@@ -199,10 +232,24 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		//We've reached the destination, stop movement
 		if currentDistanceToDest <= minDistanceToFinishMoving {
+			ctx.Logger.Debug("Movement completed - reached destination",
+				slog.Int("finalX", ctx.Data.PlayerUnit.Position.X),
+				slog.Int("finalY", ctx.Data.PlayerUnit.Position.Y),
+				slog.Int("destX", dest.X),
+				slog.Int("destY", dest.Y),
+				slog.Int("distance", currentDistanceToDest),
+				slog.Duration("duration", time.Since(movementStartTime)),
+			)
 			return nil
 		} else if blocked {
 			//Add tolerance to reach destination if blocked
 			if currentDistanceToDest <= minDistanceToFinishMoving*2 {
+				ctx.Logger.Debug("Movement completed - reached destination (blocked tolerance)",
+					slog.Int("finalX", ctx.Data.PlayerUnit.Position.X),
+					slog.Int("finalY", ctx.Data.PlayerUnit.Position.Y),
+					slog.Int("distance", currentDistanceToDest),
+					slog.Duration("duration", time.Since(movementStartTime)),
+				)
 				return nil
 			}
 		}
@@ -211,19 +258,32 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		if !ctx.Data.CanTeleport() {
 			if doorFound, doorObj := ctx.PathFinder.HasDoorBetween(ctx.Data.PlayerUnit.Position, currentDest); doorFound {
 				doorToOpen := *doorObj
+				ctx.Logger.Debug("Door detected on path, attempting to open",
+					slog.Int("doorID", int(doorToOpen.ID)),
+					slog.Int("doorX", doorToOpen.Position.X),
+					slog.Int("doorY", doorToOpen.Position.Y),
+				)
 				interactErr := error(nil)
 				//Retry a few times (maggot lair slime door fix)
-				for range 5 {
+				for attempt := 0; attempt < 5; attempt++ {
 					if interactErr = InteractObject(doorToOpen, func() bool {
 						door, found := ctx.Data.Objects.FindByID(doorToOpen.ID)
 						return found && !door.Selectable
 					}); interactErr == nil {
+						ctx.Logger.Debug("Door opened successfully",
+							slog.Int("doorID", int(doorToOpen.ID)),
+							slog.Int("attempts", attempt+1),
+						)
 						break
 					}
 					ctx.PathFinder.RandomMovement()
 					utils.Sleep(250)
 				}
 				if interactErr != nil {
+					ctx.Logger.Warn("Failed to open door after retries",
+						slog.Int("doorID", int(doorToOpen.ID)),
+						slog.String("error", interactErr.Error()),
+					)
 					return interactErr
 				}
 			}
@@ -232,7 +292,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		//Handle stationary distance (not sure what it refers to...)
 		if opts.stationaryMinDistance != nil && opts.stationaryMaxDistance != nil {
 			if currentDistanceToDest >= *opts.stationaryMinDistance && currentDistanceToDest <= *opts.stationaryMaxDistance {
-				ctx.Logger.Debug(fmt.Sprintf("MoveTo: Reached stationary distance %d-%d (current %d)", *opts.stationaryMinDistance, *opts.stationaryMaxDistance, currentDistanceToDest))
+				ctx.Logger.Debug("Movement completed - reached stationary distance",
+					slog.Int("minDistance", *opts.stationaryMinDistance),
+					slog.Int("maxDistance", *opts.stationaryMaxDistance),
+					slog.Int("currentDistance", currentDistanceToDest),
+					slog.Duration("duration", time.Since(movementStartTime)),
+				)
 				return nil
 			}
 		}
@@ -249,6 +314,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		if !opts.ignoreMonsters && !ctx.Data.AreaData.Area.IsTown() && (!ctx.Data.CanTeleport() || overrideClearPathDist) && clearPathDist > 0 && time.Since(stepLastMonsterCheck) > stepMonsterCheckInterval {
 			stepLastMonsterCheck = time.Now()
 			monsterFound := false
+			var blockingMonster data.Monster
 
 			for _, m := range ctx.Data.Monsters.Enemies(opts.monsterFilters...) {
 				if ctx.Char.ShouldIgnoreMonster(m) {
@@ -262,6 +328,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 						//Finally door check as it computes path
 						if hasDoorBetween, _ := ctx.PathFinder.HasDoorBetween(ctx.Data.PlayerUnit.Position, m.Position); !hasDoorBetween {
 							monsterFound = true
+							blockingMonster = m
 							break
 						}
 					}
@@ -269,6 +336,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			}
 
 			if monsterFound {
+				ctx.Logger.Debug("Monster detected in movement path, aborting",
+					slog.Int("monsterID", int(blockingMonster.UnitID)),
+					slog.String("monsterName", string(blockingMonster.Name)),
+					slog.Int("distance", ctx.PathFinder.DistanceFromMe(blockingMonster.Position)),
+					slog.Int("clearPathDist", clearPathDist),
+				)
 				return ErrMonstersInPath
 			}
 		}
@@ -276,13 +349,29 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		currentPosition := ctx.Data.PlayerUnit.Position
 		blocked = false
 		//Detect if player is doing round trips around a position for too long and return error if it's the case
-		if utils.CalculateDistance(currentPosition, roundTripReferencePosition) <= roundTripMaxRadius {
+		roundTripDistance := utils.CalculateDistance(currentPosition, roundTripReferencePosition)
+		if roundTripDistance <= float64(roundTripMaxRadius) {
 			timeInRoundtrip := time.Since(roundTripCheckStartTime)
 			if timeInRoundtrip > roundTripThreshold {
-				ctx.Logger.Warn("Player is doing round trips. Current area: [" + ctx.Data.PlayerUnit.Area.Area().Name + "]. Trying to path to Destination: [" + fmt.Sprintf("%d,%d", currentDest.X, currentDest.Y) + "]")
+				ctx.Logger.Warn("Player is doing round trips, aborting movement",
+					slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+					slog.Int("destX", currentDest.X),
+					slog.Int("destY", currentDest.Y),
+					slog.Duration("roundTripTime", timeInRoundtrip),
+					slog.Int("roundTripRadius", roundTripMaxRadius),
+					slog.Float64("currentDistance", roundTripDistance),
+				)
 				return ErrPlayerRoundTrip
 			} else if timeInRoundtrip > roundTripThreshold/2.0 {
 				blocked = true
+				if time.Since(lastLogTime) > logThrottleInterval {
+					ctx.Logger.Debug("Round trip detected (warning phase)",
+						slog.Duration("roundTripTime", timeInRoundtrip),
+						slog.Int("roundTripRadius", roundTripMaxRadius),
+						slog.Float64("currentDistance", roundTripDistance),
+					)
+					lastLogTime = time.Now()
+				}
 			}
 		} else {
 			//Player moved significantly, reset Round Trip detection
@@ -296,18 +385,46 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 				// Try escape before giving up
 				if escapeAttempts < maxEscapeAttempts {
 					escapeAttempts++
+					ctx.Logger.Debug("Player stuck, attempting escape",
+						slog.Int("escapeAttempt", escapeAttempts),
+						slog.Int("maxEscapeAttempts", maxEscapeAttempts),
+						slog.Duration("stuckTime", stuckTime),
+						slog.Int("posX", currentPosition.X),
+						slog.Int("posY", currentPosition.Y),
+					)
 					ctx.PathFinder.SmartEscapeMovement()
 					stuckCheckStartTime = time.Now()
 					continue
 				}
 				// If stuck for too long after multiple escape attempts, abort movement
+				ctx.Logger.Warn("Player stuck after escape attempts, aborting movement",
+					slog.Int("escapeAttempts", escapeAttempts),
+					slog.Duration("stuckTime", stuckTime),
+					slog.Int("posX", currentPosition.X),
+					slog.Int("posY", currentPosition.Y),
+					slog.Int("destX", currentDest.X),
+					slog.Int("destY", currentDest.Y),
+				)
 				return ErrPlayerStuck
 			} else if stuckTime > blockThreshold {
 				// Detect blocked after short threshold
 				blocked = true
+				if time.Since(lastLogTime) > logThrottleInterval {
+					ctx.Logger.Debug("Player blocked",
+						slog.Duration("blockedTime", stuckTime),
+						slog.Int("posX", currentPosition.X),
+						slog.Int("posY", currentPosition.Y),
+					)
+					lastLogTime = time.Now()
+				}
 			}
 		} else {
 			// Player moved, reset stuck detection timer and escape attempts
+			if escapeAttempts > 0 {
+				ctx.Logger.Debug("Player movement resumed, resetting stuck detection",
+					slog.Int("previousEscapeAttempts", escapeAttempts),
+				)
+			}
 			stuckCheckStartTime = time.Now()
 			escapeAttempts = 0
 		}
@@ -319,6 +436,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 					// Already destroyed, move on
 					continue
 				}
+				ctx.Logger.Debug("Destructible obstacle detected, attempting to destroy",
+					slog.Int("objectID", int(obj.ID)),
+					slog.String("objectName", string(obj.Name)),
+					slog.Int("objX", obj.Position.X),
+					slog.Int("objY", obj.Position.Y),
+				)
 				x, y := ui.GameCoordsToScreenCords(obj.Position.X, obj.Position.Y)
 				ctx.HID.Click(game.LeftButton, x, y)
 
@@ -327,6 +450,11 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			} else if door, found := ctx.PathFinder.GetClosestDoor(ctx.Data.PlayerUnit.Position); found {
 				// There's a door really close, try to open it
 				doorToOpen := *door
+				ctx.Logger.Debug("Door detected nearby, attempting to open",
+					slog.Int("doorID", int(doorToOpen.ID)),
+					slog.Int("doorX", doorToOpen.Position.X),
+					slog.Int("doorY", doorToOpen.Position.Y),
+				)
 				InteractObject(doorToOpen, func() bool {
 					door, found := ctx.Data.Objects.FindByID(door.ID)
 					return found && !door.Selectable
@@ -360,16 +488,44 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		}
 
 		//Compute path to reach destination
-		path, _, found := ctx.PathFinder.GetPath(currentDest)
+		path, pathDistance, found := ctx.PathFinder.GetPath(currentDest)
 		if !found {
 			//Couldn't find path, abort movement
-			ctx.Logger.Warn("path could not be calculated. Current area: [" + ctx.Data.PlayerUnit.Area.Area().Name + "]. Trying to path to Destination: [" + fmt.Sprintf("%d,%d", currentDest.X, currentDest.Y) + "]")
+			ctx.Logger.Warn("Path could not be calculated",
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+				slog.Int("fromX", ctx.Data.PlayerUnit.Position.X),
+				slog.Int("fromY", ctx.Data.PlayerUnit.Position.Y),
+				slog.Int("toX", currentDest.X),
+				slog.Int("toY", currentDest.Y),
+				slog.Int("distance", currentDistanceToDest),
+			)
 			return ErrNoPath
 		} else if len(path) == 0 {
 			//Path found but it's empty, consider movement done
 			//Not sure if it can happen
-			ctx.Logger.Warn("path found but it's empty: [" + ctx.Data.PlayerUnit.Area.Area().Name + "]. Trying to path to Destination: [" + fmt.Sprintf("%d,%d", currentDest.X, currentDest.Y) + "]")
+			ctx.Logger.Warn("Path found but it's empty",
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+				slog.Int("toX", currentDest.X),
+				slog.Int("toY", currentDest.Y),
+			)
 			return nil
+		}
+
+		// Throttled debug log with pathfinding info
+		if time.Since(lastLogTime) > logThrottleInterval {
+			ctx.Logger.Debug("Pathfinding update",
+				slog.Int("pathLength", len(path)),
+				slog.Int("pathDistance", pathDistance),
+				slog.Int("currentDistance", currentDistanceToDest),
+				slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
+				slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
+				slog.Int("destX", currentDest.X),
+				slog.Int("destY", currentDest.Y),
+				slog.String("movementMethod", movementMethod),
+				slog.Bool("blocked", blocked),
+				slog.Duration("elapsed", time.Since(movementStartTime)),
+			)
+			lastLogTime = time.Now()
 		}
 
 		//Update values

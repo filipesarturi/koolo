@@ -2,7 +2,7 @@ package step
 
 import (
 	"errors"
-	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -197,10 +197,18 @@ func attack(settings attackSettings) error {
 	lastRefreshTime := time.Now()
 	const refreshInterval = 500 * time.Millisecond // Refresh game data periodically, not every iteration
 
+	attackStartTime := time.Now()
+	lastLogTime := time.Time{}
+	const logThrottleInterval = 2 * time.Second // Throttle debug logs to avoid spam
+
 	for {
 		ctx.PauseIfNotPriority()
 
 		if numOfAttacksRemaining <= 0 {
+			ctx.Logger.Debug("Attack sequence completed",
+				slog.Int("attacksPerformed", settings.numOfAttacks),
+				slog.Duration("totalDuration", time.Since(attackStartTime)),
+			)
 			return nil
 		}
 
@@ -213,11 +221,19 @@ func attack(settings attackSettings) error {
 		monster, found := ctx.Data.Monsters.FindByID(settings.target)
 		// Early return if monster not found or dead
 		if !found || !isValidEnemy(monster, ctx) {
+			ctx.Logger.Debug("Target monster not found or invalid",
+				slog.Int("monsterID", int(settings.target)),
+				slog.Bool("found", found),
+			)
 			return nil // Target is not valid, we don't have anything to attack
 		}
 
 		// Early return if monster is dead before movement calculations
 		if monster.Stats[stat.Life] <= 0 {
+			ctx.Logger.Debug("Monster died during attack sequence",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.String("monsterName", string(monster.Name)),
+			)
 			statesMutex.Lock()
 			delete(monsterStates, settings.target)
 			statesMutex.Unlock()
@@ -225,7 +241,34 @@ func attack(settings attackSettings) error {
 		}
 
 		distance := ctx.PathFinder.DistanceFromMe(monster.Position)
+		hasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, monster.Position)
+		hpCurrent := monster.Stats[stat.Life]
+		hpMax := monster.Stats[stat.MaxLife]
+
+		// Throttled debug log with monster state
+		if time.Since(lastLogTime) > logThrottleInterval {
+			ctx.Logger.Debug("Attack state",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.String("monsterName", string(monster.Name)),
+				slog.Int("hpCurrent", hpCurrent),
+				slog.Int("hpMax", hpMax),
+				slog.Int("hpPercent", int(float64(hpCurrent)/float64(hpMax)*100)),
+				slog.Int("distance", distance),
+				slog.Bool("hasLoS", hasLoS),
+				slog.Int("minDistance", settings.minDistance),
+				slog.Int("maxDistance", settings.maxDistance),
+				slog.Bool("followEnemy", settings.followEnemy),
+				slog.Int("attacksRemaining", numOfAttacksRemaining),
+			)
+			lastLogTime = time.Now()
+		}
+
 		if !lastRunAt.IsZero() && !settings.followEnemy && distance > settings.maxDistance {
+			ctx.Logger.Debug("Enemy out of range, stopping attack",
+				slog.Int("distance", distance),
+				slog.Int("maxDistance", settings.maxDistance),
+				slog.Bool("followEnemy", settings.followEnemy),
+			)
 			return nil // Enemy is out of range and followEnemy is disabled, we cannot attack
 		}
 
@@ -234,17 +277,31 @@ func attack(settings attackSettings) error {
 		needsRepositioning := !state.failedAttemptStartTime.IsZero() &&
 			time.Since(state.failedAttemptStartTime) > 3*time.Second
 
+		if needsRepositioning {
+			ctx.Logger.Debug("Repositioning needed - no damage detected",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.Duration("noDamageTime", time.Since(state.failedAttemptStartTime)),
+				slog.Int("repositionAttempts", state.repositionAttempts),
+			)
+		}
+
 		// Be sure we stay in range of the enemy. ensureEnemyIsInRange will handle reposition attempts.
 		err := ensureEnemyIsInRange(monster, state, settings.maxDistance, settings.minDistance, needsRepositioning)
 		if err != nil {
 			if errors.Is(err, ErrMonsterUnreachable) {
-				ctx.Logger.Info(fmt.Sprintf("Giving up on monster [%d] (Area: %s) due to unreachability/unkillability.", monster.Name, ctx.Data.PlayerUnit.Area.Area().Name))
+				ctx.Logger.Info("Giving up on monster due to unreachability/unkillability",
+					slog.Int("monsterID", int(monster.UnitID)),
+					slog.String("monsterName", string(monster.Name)),
+					slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+					slog.Int("repositionAttempts", state.repositionAttempts),
+				)
 				statesMutex.Lock()
 				delete(monsterStates, settings.target) // Clean up state for this monster
 				statesMutex.Unlock()
 				return nil // Return nil, allowing the higher-level action to find a new monster or finish.
 			}
 			if errors.Is(err, ErrMonsterDead) {
+				ctx.Logger.Debug("Monster died during range check")
 				return nil // Monster died, allow higher-level action to find new target
 			}
 			return err // Propagate other errors from ensureEnemyIsInRange
@@ -252,13 +309,34 @@ func attack(settings attackSettings) error {
 
 		// Handle aura activation
 		if settings.aura != 0 && lastRunAt.IsZero() {
+			ctx.Logger.Debug("Activating aura for attack",
+				slog.Int("auraSkillID", int(settings.aura)),
+			)
 			ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.MustKBForSkill(settings.aura))
 		}
 
 		// Attack timing check
-		if time.Since(lastRunAt) <= ctx.Data.PlayerCastDuration()-attackCycleDuration {
+		castDuration := ctx.Data.PlayerCastDuration()
+		timeSinceLastAttack := time.Since(lastRunAt)
+		if !lastRunAt.IsZero() && timeSinceLastAttack <= castDuration-attackCycleDuration {
 			continue
 		}
+
+		attackMethod := "mouse"
+		if settings.skill == skill.Blizzard && ctx.CharacterCfg.Character.BlizzardSorceress.UseBlizzardPackets {
+			attackMethod = "packet_blizzard"
+		} else if ctx.CharacterCfg.PacketCasting.UseForEntitySkills && ctx.PacketSender != nil && settings.target != 0 {
+			attackMethod = "packet_entity"
+		}
+
+		ctx.Logger.Debug("Performing attack",
+			slog.Int("monsterID", int(monster.UnitID)),
+			slog.Int("skillID", int(settings.skill)),
+			slog.Bool("primaryAttack", settings.primaryAttack),
+			slog.String("attackMethod", attackMethod),
+			slog.Duration("castDuration", castDuration),
+			slog.Duration("timeSinceLastAttack", timeSinceLastAttack),
+		)
 
 		performAttack(ctx, settings, monster.UnitID, monster.Position.X, monster.Position.Y)
 
@@ -274,15 +352,30 @@ func burstAttack(settings attackSettings) error {
 
 	monster, found := ctx.Data.Monsters.FindByID(settings.target)
 	if !found || !isValidEnemy(monster, ctx) {
+		ctx.Logger.Debug("Burst attack: initial target not found or invalid",
+			slog.Int("monsterID", int(settings.target)),
+			slog.Bool("found", found),
+		)
 		return nil // Target is not valid, we don't have anything to attack
 	}
+
+	ctx.Logger.Debug("Starting burst attack",
+		slog.Int("skillID", int(settings.skill)),
+		slog.Int("initialMonsterID", int(monster.UnitID)),
+		slog.String("initialMonsterName", string(monster.Name)),
+		slog.Duration("timeout", settings.timeout),
+	)
 
 	// Initially we try to move to the enemy, later we will check for closer enemies to keep attacking
 	_, state := checkMonsterDamage(monster)                                                        // Get the state for the initial monster
 	err := ensureEnemyIsInRange(monster, state, settings.maxDistance, settings.minDistance, false) // No initial repositioning check for burst
 	if err != nil {
 		if errors.Is(err, ErrMonsterUnreachable) {
-			ctx.Logger.Info(fmt.Sprintf("Giving up on initial monster [%d] (Area: %s) due to unreachability/unkillability during burst.", monster.Name, ctx.Data.PlayerUnit.Area.Area().Name))
+			ctx.Logger.Info("Giving up on initial monster due to unreachability/unkillability during burst",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.String("monsterName", string(monster.Name)),
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+			)
 			statesMutex.Lock()
 			delete(monsterStates, monster.UnitID) // Clean up state for this monster
 			statesMutex.Unlock()
@@ -294,11 +387,19 @@ func burstAttack(settings attackSettings) error {
 	startedAt := time.Now()
 	lastRefreshTime := time.Now()
 	const refreshInterval = 500 * time.Millisecond // Refresh game data periodically, not every iteration
+	lastTargetSwitch := time.Time{}
+	targetSwitchCount := 0
+	lastLogTime := time.Time{}
+	const logThrottleInterval = 2 * time.Second
 
 	for {
 		ctx.PauseIfNotPriority()
 
 		if !startedAt.IsZero() && time.Since(startedAt) > settings.timeout {
+			ctx.Logger.Debug("Burst attack timeout reached",
+				slog.Duration("duration", time.Since(startedAt)),
+				slog.Int("targetSwitches", targetSwitchCount),
+			)
 			return nil // Timeout reached, finish attack sequence
 		}
 
@@ -310,7 +411,9 @@ func burstAttack(settings attackSettings) error {
 
 		// Optimized loop: check life before calculating distance (early continue)
 		target := data.Monster{}
+		enemiesChecked := 0
 		for _, m := range ctx.Data.Monsters.Enemies() {
+			enemiesChecked++
 			// Check validity before distance calculation
 			if !isValidEnemy(m, ctx) {
 				continue
@@ -324,33 +427,80 @@ func burstAttack(settings attackSettings) error {
 		}
 
 		if target.UnitID == 0 {
+			ctx.Logger.Debug("Burst attack: no valid targets in range",
+				slog.Int("enemiesChecked", enemiesChecked),
+				slog.Int("maxDistance", settings.maxDistance),
+			)
 			return nil // We have no valid targets in range, finish attack sequence
+		}
+
+		// Track target switches
+		if lastTargetSwitch.IsZero() || target.UnitID != settings.target {
+			if !lastTargetSwitch.IsZero() {
+				targetSwitchCount++
+				ctx.Logger.Debug("Burst attack: target switched",
+					slog.Int("newMonsterID", int(target.UnitID)),
+					slog.String("newMonsterName", string(target.Name)),
+					slog.Int("totalSwitches", targetSwitchCount),
+				)
+			}
+			lastTargetSwitch = time.Now()
 		}
 
 		// Verify target is still alive after selection (race condition protection)
 		if target.Stats[stat.Life] <= 0 {
+			ctx.Logger.Debug("Burst attack: target died, finding new target")
 			continue // Target died, find new one immediately
 		}
 
 		// Check if we need to reposition if we aren't doing any damage
-		_, state = checkMonsterDamage(target) // Get the state for the current target
+		didDamage, state := checkMonsterDamage(target) // Get the state for the current target
 
 		needsRepositioning := !state.failedAttemptStartTime.IsZero() &&
 			time.Since(state.failedAttemptStartTime) > 3*time.Second
 
+		distance := ctx.PathFinder.DistanceFromMe(target.Position)
+		hasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, target.Position)
+
+		// Throttled debug log
+		if time.Since(lastLogTime) > logThrottleInterval {
+			ctx.Logger.Debug("Burst attack state",
+				slog.Int("targetMonsterID", int(target.UnitID)),
+				slog.String("targetMonsterName", string(target.Name)),
+				slog.Int("hpCurrent", target.Stats[stat.Life]),
+				slog.Int("hpMax", target.Stats[stat.MaxLife]),
+				slog.Int("distance", distance),
+				slog.Bool("hasLoS", hasLoS),
+				slog.Bool("didDamage", didDamage),
+				slog.Bool("needsRepositioning", needsRepositioning),
+				slog.Duration("elapsed", time.Since(startedAt)),
+			)
+			lastLogTime = time.Now()
+		}
+
 		// If we don't have LoS we will need to interrupt and move :(
-		if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, target.Position) || needsRepositioning {
+		if !hasLoS || needsRepositioning {
+			if !hasLoS {
+				ctx.Logger.Debug("Burst attack: no line of sight, repositioning",
+					slog.Int("targetMonsterID", int(target.UnitID)),
+				)
+			}
 			// ensureEnemyIsInRange will handle reposition attempts and return nil if it skips
 			err = ensureEnemyIsInRange(target, state, settings.maxDistance, settings.minDistance, needsRepositioning)
 			if err != nil {
 				if errors.Is(err, ErrMonsterUnreachable) {
-					ctx.Logger.Info(fmt.Sprintf("Giving up on monster [%d] (Area: %s) due to unreachability/unkillability during burst.", target.Name, ctx.Data.PlayerUnit.Area.Area().Name))
+					ctx.Logger.Info("Giving up on monster due to unreachability/unkillability during burst",
+						slog.Int("monsterID", int(target.UnitID)),
+						slog.String("monsterName", string(target.Name)),
+						slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+					)
 					statesMutex.Lock()
 					delete(monsterStates, target.UnitID) // Clean up state for this monster
 					statesMutex.Unlock()
 					continue // Continue loop to find next target instead of returning
 				}
 				if errors.Is(err, ErrMonsterDead) {
+					ctx.Logger.Debug("Burst attack: target died during range check")
 					continue // Monster died, find new target immediately
 				}
 				return err // Propagate general errors from ensureEnemyIsInRange
@@ -364,7 +514,12 @@ func burstAttack(settings attackSettings) error {
 
 func performAttack(ctx *context.Status, settings attackSettings, targetID data.UnitID, x, y int) {
 	monsterPos := data.Position{X: x, Y: y}
-	if !ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, monsterPos) && !ctx.ForceAttack {
+	hasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, monsterPos)
+	if !hasLoS && !ctx.ForceAttack {
+		ctx.Logger.Debug("Skipping attack - no line of sight",
+			slog.Int("targetID", int(targetID)),
+			slog.Bool("forceAttack", ctx.ForceAttack),
+		)
 		return // Skip attack if no line of sight
 	}
 
@@ -383,15 +538,25 @@ func performAttack(ctx *context.Status, settings attackSettings, targetID data.U
 	if useBlizzardPacket {
 		// Ensure we have Blizzard selected on right-click
 		if ctx.Data.PlayerUnit.RightSkill != skill.Blizzard {
+			ctx.Logger.Debug("Selecting Blizzard skill for packet casting")
 			SelectRightSkill(skill.Blizzard)
 			time.Sleep(time.Millisecond * 10)
 		}
 
 		// Send packet to cast Blizzard at location
 		if err := ctx.PacketSender.CastSkillAtLocation(monsterPos); err != nil {
-			ctx.Logger.Warn("Failed to cast Blizzard via packet, falling back to mouse", "error", err)
+			ctx.Logger.Warn("Failed to cast Blizzard via packet, falling back to mouse",
+				slog.String("error", err.Error()),
+				slog.Int("targetX", x),
+				slog.Int("targetY", y),
+			)
 			// Fall back to regular mouse casting
 			performMouseAttack(ctx, settings, x, y)
+		} else {
+			ctx.Logger.Debug("Blizzard cast via packet",
+				slog.Int("targetX", x),
+				slog.Int("targetY", y),
+			)
 		}
 		return
 	}
@@ -401,29 +566,51 @@ func performAttack(ctx *context.Status, settings attackSettings, targetID data.U
 		// Ensure we have the skill selected
 		if settings.primaryAttack {
 			if settings.skill != 0 && ctx.Data.PlayerUnit.LeftSkill != settings.skill {
+				ctx.Logger.Debug("Selecting left skill for packet casting",
+					slog.Int("skillID", int(settings.skill)),
+				)
 				SelectLeftSkill(settings.skill)
 				time.Sleep(time.Millisecond * 10)
 			}
 			// Send left-click entity skill packet
 			castPacket := packet.NewCastSkillEntityLeft(targetID)
 			if err := ctx.PacketSender.SendPacket(castPacket.GetPayload()); err != nil {
-				ctx.Logger.Warn("Failed to cast entity skill via packet (left), falling back to mouse", "error", err)
+				ctx.Logger.Warn("Failed to cast entity skill via packet (left), falling back to mouse",
+					slog.String("error", err.Error()),
+					slog.Int("targetID", int(targetID)),
+					slog.Int("skillID", int(settings.skill)),
+				)
 				performMouseAttack(ctx, settings, x, y)
 			} else {
+				ctx.Logger.Debug("Entity skill cast via packet (left)",
+					slog.Int("targetID", int(targetID)),
+					slog.Int("skillID", int(settings.skill)),
+				)
 				// Respect cast duration to avoid spamming server
 				time.Sleep(ctx.Data.PlayerCastDuration())
 			}
 		} else {
 			if settings.skill != 0 && ctx.Data.PlayerUnit.RightSkill != settings.skill {
+				ctx.Logger.Debug("Selecting right skill for packet casting",
+					slog.Int("skillID", int(settings.skill)),
+				)
 				SelectRightSkill(settings.skill)
 				time.Sleep(time.Millisecond * 10)
 			}
 			// Send right-click entity skill packet
 			castPacket := packet.NewCastSkillEntityRight(targetID)
 			if err := ctx.PacketSender.SendPacket(castPacket.GetPayload()); err != nil {
-				ctx.Logger.Warn("Failed to cast entity skill via packet (right), falling back to mouse", "error", err)
+				ctx.Logger.Warn("Failed to cast entity skill via packet (right), falling back to mouse",
+					slog.String("error", err.Error()),
+					slog.Int("targetID", int(targetID)),
+					slog.Int("skillID", int(settings.skill)),
+				)
 				performMouseAttack(ctx, settings, x, y)
 			} else {
+				ctx.Logger.Debug("Entity skill cast via packet (right)",
+					slog.Int("targetID", int(targetID)),
+					slog.Int("skillID", int(settings.skill)),
+				)
 				// Respect cast duration to avoid spamming server
 				time.Sleep(ctx.Data.PlayerCastDuration())
 			}
@@ -432,6 +619,11 @@ func performAttack(ctx *context.Status, settings attackSettings, targetID data.U
 	}
 
 	// Regular mouse-based attack
+	ctx.Logger.Debug("Using mouse-based attack",
+		slog.Int("targetID", int(targetID)),
+		slog.Int("skillID", int(settings.skill)),
+		slog.Bool("primaryAttack", settings.primaryAttack),
+	)
 	performMouseAttack(ctx, settings, x, y)
 }
 
@@ -486,48 +678,95 @@ func ensureEnemyIsInRange(monster data.Monster, state *attackState, maxDistance,
 	if needsRepositioning {
 		// If we've already tried repositioning once for this "stuck" phase
 		if state.repositionAttempts >= 1 { // This is the problematic part. User wants to allow 1 attempt.
-			ctx.Logger.Info(fmt.Sprintf(
-				"Already attempted repositioning for monster [%d] in area [%s]. Skipping further attempts and considering monster unkillable.", // Updated log message
-				monster.Name, ctx.Data.PlayerUnit.Area.Area().Name,
-			))
+			ctx.Logger.Info("Already attempted repositioning, considering monster unkillable",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.String("monsterName", string(monster.Name)),
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+				slog.Int("repositionAttempts", state.repositionAttempts),
+			)
 			return ErrMonsterUnreachable // <-- CHANGE: Return specific error
 		}
 
 		// Check if enough time has passed since the last reposition attempt (cooldown)
-		if time.Since(state.lastRepositionTime) < repositionCooldown {
+		cooldownRemaining := repositionCooldown - time.Since(state.lastRepositionTime)
+		if cooldownRemaining > 0 {
+			ctx.Logger.Debug("Repositioning on cooldown",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.Duration("cooldownRemaining", cooldownRemaining),
+			)
 			return nil // Still on cooldown, do not reposition yet. Return nil to continue attacking.
 		}
 
-		ctx.Logger.Info(fmt.Sprintf(
-			"No damage taken by target monster [%d] in area [%s] for more than 3 seconds. Trying to re-position (attempt %d/1)",
-			monster.Name, ctx.Data.PlayerUnit.Area.Area().Name, state.repositionAttempts+1,
-		))
+		ctx.Logger.Info("No damage detected, attempting reposition",
+			slog.Int("monsterID", int(monster.UnitID)),
+			slog.String("monsterName", string(monster.Name)),
+			slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+			slog.Int("repositionAttempt", state.repositionAttempts+1),
+			slog.Duration("noDamageTime", time.Since(state.failedAttemptStartTime)),
+			slog.Int("playerX", currentPos.X),
+			slog.Int("playerY", currentPos.Y),
+			slog.Int("monsterX", monster.Position.X),
+			slog.Int("monsterY", monster.Position.Y),
+			slog.Int("distance", distanceToMonster),
+		)
 
 		dest := ctx.PathFinder.BeyondPosition(currentPos, monster.Position, 4)
 		err := MoveTo(dest, WithIgnoreMonsters())
 		state.repositionAttempts++ // Increment attempt count after trying to move
 		if err != nil {
-			ctx.Logger.Error(fmt.Sprintf("MoveTo failed during reposition attempt for monster [%d]: %v", monster.Name, err))
+			ctx.Logger.Error("MoveTo failed during reposition attempt",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.String("monsterName", string(monster.Name)),
+				slog.String("error", err.Error()),
+				slog.Int("destX", dest.X),
+				slog.Int("destY", dest.Y),
+			)
 			// Do NOT update lastRepositionTime here if MoveTo completely failed, so it can try again sooner if the path clears.
 			// However, since we're only allowing ONE attempt, the increment of repositionAttempts handles the "give up" logic.
 			return nil // Continue attacking, but the next loop iteration will hit repositionAttempts >= 1 and return ErrMonsterUnreachable
 		}
 		state.lastRepositionTime = time.Now() // Update the last reposition time only if MoveTo was initiated without error
-		return nil                            // Successfully initiated the move, continue attacking next loop iteration
+		ctx.Logger.Debug("Repositioning initiated",
+			slog.Int("monsterID", int(monster.UnitID)),
+			slog.Int("destX", dest.X),
+			slog.Int("destY", dest.Y),
+		)
+		return nil // Successfully initiated the move, continue attacking next loop iteration
 	}
 
 	// Any close-range combat (mosaic,barb...) should move directly to target
 	// This is general movement, not triggered by needsRepositioning (no damage), so don't touch repositionAttempts.
 	if maxDistance <= 3 {
+		ctx.Logger.Debug("Close-range combat: moving directly to target",
+			slog.Int("monsterID", int(monster.UnitID)),
+			slog.Int("maxDistance", maxDistance),
+			slog.Int("distance", distanceToMonster),
+		)
 		return MoveTo(monster.Position, WithIgnoreMonsters(), WithDistanceToFinish(max(2, maxDistance)))
 	}
 
 	// Get path to monster
-	path, _, found := ctx.PathFinder.GetPath(monster.Position)
+	path, pathDistance, found := ctx.PathFinder.GetPath(monster.Position)
 	// We cannot reach the enemy, let's skip the attack sequence by returning an error
 	if !found {
+		ctx.Logger.Debug("Path could not be calculated to reach monster",
+			slog.Int("monsterID", int(monster.UnitID)),
+			slog.Int("playerX", currentPos.X),
+			slog.Int("playerY", currentPos.Y),
+			slog.Int("monsterX", monster.Position.X),
+			slog.Int("monsterY", monster.Position.Y),
+			slog.Int("distance", distanceToMonster),
+		)
 		return errors.New("path could not be calculated to reach monster") // This is a fundamental pathing error, propagate it.
 	}
+
+	ctx.Logger.Debug("Path found to monster",
+		slog.Int("monsterID", int(monster.UnitID)),
+		slog.Int("pathLength", len(path)),
+		slog.Int("pathDistance", pathDistance),
+		slog.Int("distance", distanceToMonster),
+		slog.Bool("hasLoS", hasLoS),
+	)
 
 	// Look for suitable position along path
 	for _, pos := range path {
@@ -547,16 +786,30 @@ func ensureEnemyIsInRange(monster data.Monster, state *attackState, maxDistance,
 			dest = ctx.PathFinder.BeyondPosition(currentPos, dest, 9)
 		}
 
-		if ctx.PathFinder.LineOfSight(dest, monster.Position) && !ctx.ForceAttack {
+		destHasLoS := ctx.PathFinder.LineOfSight(dest, monster.Position)
+		if destHasLoS && !ctx.ForceAttack {
+			ctx.Logger.Debug("Moving to suitable attack position",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.Int("destX", dest.X),
+				slog.Int("destY", dest.Y),
+				slog.Int("monsterDistance", monsterDistance),
+				slog.Int("distanceToMove", distanceToMove),
+			)
 			// This is also general movement to get into attack range, not a "repositioning attempt" for being stuck.
 			return MoveTo(dest, WithIgnoreMonsters())
 		}
 	}
 
+	ctx.Logger.Debug("No suitable position found along path, continuing attack",
+		slog.Int("monsterID", int(monster.UnitID)),
+		slog.Int("distance", distanceToMonster),
+		slog.Bool("hasLoS", hasLoS),
+	)
 	return nil // No suitable position found along path, continue attacking
 }
 
 func checkMonsterDamage(monster data.Monster) (bool, *attackState) {
+	ctx := context.Get()
 	statesMutex.Lock()
 	defer statesMutex.Unlock()
 
@@ -569,10 +822,16 @@ func checkMonsterDamage(monster data.Monster) (bool, *attackState) {
 			repositionAttempts:  0, // Initialize counter to 0 for new states
 		}
 		monsterStates[monster.UnitID] = state
+		ctx.Logger.Debug("New attack state created for monster",
+			slog.Int("monsterID", int(monster.UnitID)),
+			slog.String("monsterName", string(monster.Name)),
+			slog.Int("initialHP", state.lastHealth),
+		)
 	}
 
 	didDamage := false
 	currentHealth := monster.Stats[stat.Life]
+	hpChange := state.lastHealth - currentHealth
 
 	// Only update health check if some time has passed
 	if time.Since(state.lastHealthCheckTime) > 100*time.Millisecond {
@@ -580,10 +839,20 @@ func checkMonsterDamage(monster data.Monster) (bool, *attackState) {
 			didDamage = true
 			state.failedAttemptStartTime = time.Time{}
 			state.repositionAttempts = 0 // Reset attempts when damage is successfully dealt
+			ctx.Logger.Debug("Damage detected on monster",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.Int("hpChange", hpChange),
+				slog.Int("hpBefore", state.lastHealth),
+				slog.Int("hpAfter", currentHealth),
+			)
 		} else if state.failedAttemptStartTime.IsZero() &&
 			monster.Position == state.position { // only start failing if monster hasn't moved
 			state.failedAttemptStartTime = time.Now()
 			state.repositionAttempts = 0 // Reset attempts when starting a new failed phase
+			ctx.Logger.Debug("No damage detected, starting failure timer",
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.Int("currentHP", currentHealth),
+			)
 		}
 
 		state.lastHealth = currentHealth
@@ -593,10 +862,18 @@ func checkMonsterDamage(monster data.Monster) (bool, *attackState) {
 		// Clean up old entries periodically
 		if len(monsterStates) > 100 {
 			now := time.Now()
+			cleaned := 0
 			for id, s := range monsterStates {
 				if now.Sub(s.lastHealthCheckTime) > 5*time.Minute {
 					delete(monsterStates, id)
+					cleaned++
 				}
+			}
+			if cleaned > 0 {
+				ctx.Logger.Debug("Cleaned up old attack states",
+					slog.Int("cleaned", cleaned),
+					slog.Int("remaining", len(monsterStates)),
+				)
 			}
 		}
 	}
