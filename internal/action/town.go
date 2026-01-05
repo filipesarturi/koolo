@@ -93,6 +93,14 @@ func PreRun(firstRun bool) error {
 	RefillBeltFromInventory()
 	_, isLevelingChar := ctx.Char.(context.LevelingCharacter)
 
+	// Apply Memory buff on first run after recovering corpse (if enabled and in town)
+	if firstRun && ctx.Data.PlayerUnit.Area.IsTown() {
+		if ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff {
+			ctx.Logger.Debug("First run: applying Memory buff after initial PreRun routines")
+			BuffIfRequired()
+		}
+	}
+
 	if firstRun && !isLevelingChar {
 		Stash(false)
 	}
