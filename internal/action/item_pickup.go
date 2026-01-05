@@ -41,7 +41,7 @@ var midRunes = map[item.Name]bool{
 	"GulRune": true,
 }
 
-// isHighPriorityItem checks if an item is high priority (high runes, mid runes, uniques, sets, charms)
+// isHighPriorityItem checks if an item is high priority (high runes, mid runes, uniques, sets, charms, flawless amethyst)
 func isHighPriorityItem(itm data.Item) bool {
 	// Check for high/mid runes, uniques, sets
 	if highRunes[itm.Name] || midRunes[itm.Name] ||
@@ -51,8 +51,14 @@ func isHighPriorityItem(itm data.Item) bool {
 
 	// Check for charms (GrandCharm and SmallCharm) - check both case variations
 	charmName := string(itm.Name)
-	return charmName == "GrandCharm" || charmName == "grandcharm" ||
-		charmName == "SmallCharm" || charmName == "smallcharm"
+	if charmName == "GrandCharm" || charmName == "grandcharm" ||
+		charmName == "SmallCharm" || charmName == "smallcharm" {
+		return true
+	}
+
+	// Check for FlawlessAmethyst - high priority gem
+	itemName := string(itm.Name)
+	return itemName == "FlawlessAmethyst" || itemName == "flawlessamethyst"
 }
 
 // handlePickupError handles pickup errors and returns:
@@ -820,6 +826,12 @@ func getItemPickupPriority(itm data.Item) int {
 	charmName := string(itm.Name)
 	if charmName == "GrandCharm" || charmName == "grandcharm" ||
 		charmName == "SmallCharm" || charmName == "smallcharm" {
+		return 3
+	}
+
+	// Priority 3: FlawlessAmethyst - high priority gem
+	itemName := string(itm.Name)
+	if itemName == "FlawlessAmethyst" || itemName == "flawlessamethyst" {
 		return 3
 	}
 
