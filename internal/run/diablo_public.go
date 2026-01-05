@@ -118,7 +118,7 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 				}
 			}
 			d.openTPIfNoNearbyPortal(diabloStarTPPosition, 40)
-			action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
+			action.ClearAreaAroundPlayer(25, data.MonsterAnyFilter())
 		}
 
 		if !d.ctx.Data.CanTeleport() {
