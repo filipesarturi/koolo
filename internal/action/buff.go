@@ -244,6 +244,16 @@ func BuffIfRequired() {
 
 			// Refresh data after moving
 			ctx.RefreshGameData()
+
+			// Verify that the position is still safe after movement
+			// (monsters may have moved to the safe position, especially in cows)
+			closestMonsterDist := GetDistanceFromClosestEnemy(ctx.Data.PlayerUnit.Position, ctx.Data.Monsters)
+			if closestMonsterDist < float64(safeDistanceForBuff) {
+				ctx.Logger.Debug("Safe position no longer safe after movement (monsters may have moved), aborting buff",
+					slog.Float64("closestMonsterDistance", closestMonsterDist),
+					slog.Int("requiredDistance", safeDistanceForBuff))
+				return
+			}
 		} else if !found {
 			ctx.Logger.Debug("No safe position found for buffing, skipping buff this time")
 			return
