@@ -150,13 +150,8 @@ func BuffIfRequired() {
 			inProgress := memoryBuffInProgress[ctx.Name]
 			memoryBuffAppliedMu.Unlock()
 
-			// Skip if already applied or currently in progress
+			// Skip if already applied or currently in progress (silently to avoid log spam)
 			if alreadyApplied || inProgress {
-				if inProgress {
-					ctx.Logger.Debug("Memory buff already in progress, skipping")
-				} else if alreadyApplied {
-					ctx.Logger.Debug("Memory buff already applied, skipping")
-				}
 				return
 			}
 
