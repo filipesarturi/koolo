@@ -395,11 +395,11 @@ func (s *SinglePlayerSupervisor) Start() error {
 
 						stuckDuration := time.Since(stuckSince)
 
-						// After 30 seconds stuck, try aggressive recovery actions
-						if stuckDuration > 30*time.Second && stuckDuration <= 90*time.Second {
+						// After 15 seconds stuck, try aggressive recovery actions
+						if stuckDuration > 15*time.Second && stuckDuration <= 90*time.Second {
 							// Try teleport if available
 							if s.bot.ctx.Data.CanTeleport() && !s.bot.ctx.Data.PlayerUnit.Area.IsTown() {
-								s.bot.ctx.Logger.Warn("Player stuck for 30 seconds. Attempting teleport escape...")
+								s.bot.ctx.Logger.Warn("Player stuck for 15 seconds. Attempting teleport escape...")
 								// Try to teleport to a nearby position
 								s.bot.ctx.PathFinder.SmartEscapeMovement()
 								time.Sleep(200 * time.Millisecond)
@@ -416,7 +416,7 @@ func (s *SinglePlayerSupervisor) Start() error {
 								}
 							} else {
 								// Try SmartEscapeMovement if teleport not available
-								s.bot.ctx.Logger.Warn("Player stuck for 30 seconds. Attempting escape movement...")
+								s.bot.ctx.Logger.Warn("Player stuck for 15 seconds. Attempting escape movement...")
 								s.bot.ctx.PathFinder.SmartEscapeMovement()
 								time.Sleep(200 * time.Millisecond)
 								s.bot.ctx.RefreshGameData()

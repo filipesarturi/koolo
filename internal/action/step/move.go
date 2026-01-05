@@ -147,7 +147,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 	blockThreshold := 200 * time.Millisecond
 	stuckThreshold := 1500 * time.Millisecond // Reduced from 2s for faster response
-	maxStuckDuration := 30 * time.Second      // Maximum time to be stuck before aborting
+	maxStuckDuration := 15 * time.Second      // Maximum time to be stuck before aborting
 	stuckCheckStartTime := time.Now()
 	escapeAttempts := 0
 	const maxEscapeAttempts = 3
@@ -306,8 +306,19 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		//If teleporting, sleep for the cast duration
 		if ctx.Data.CanTeleport() {
-			if time.Since(lastRun) < ctx.Data.PlayerCastDuration() {
-				time.Sleep(ctx.Data.PlayerCastDuration() - time.Since(lastRun))
+			castDuration := ctx.Data.PlayerCastDuration()
+			timeSinceLastRun := time.Since(lastRun)
+			
+			// Only sleep if we're within cast duration AND lastRun was actually set
+			// If lastRun is zero (first iteration) or player is stuck, don't wait
+			if !lastRun.IsZero() && timeSinceLastRun < castDuration {
+				// Add maximum sleep cap to prevent excessive delays when stuck
+				maxSleep := 500 * time.Millisecond
+				sleepDuration := castDuration - timeSinceLastRun
+				if sleepDuration > maxSleep {
+					sleepDuration = maxSleep
+				}
+				time.Sleep(sleepDuration)
 				continue
 			}
 		}
@@ -406,7 +417,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			stuckTime := time.Since(stuckCheckStartTime)
 			totalStuckTime := time.Since(movementStartTime)
 
-			// If stuck for too long (30+ seconds), abort immediately
+			// Reset lastRun when stuck to prevent sleep loop
+			if stuckTime > blockThreshold {
+				lastRun = time.Time{} // Reset to allow movement attempts
+			}
+
+			// If stuck for too long (15+ seconds), abort immediately
 			if totalStuckTime > maxStuckDuration {
 				ctx.Logger.Error("Movement stuck for too long, aborting",
 					slog.Duration("totalStuckTime", totalStuckTime),
