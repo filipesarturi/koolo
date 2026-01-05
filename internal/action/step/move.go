@@ -350,7 +350,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		currentPosition := ctx.Data.PlayerUnit.Position
 		blocked = false
-		
+
 		// Check if we're making progress towards destination (using currentDistanceToDest calculated above)
 		isMakingProgress := false
 		currentDistanceToDestFloat := float64(currentDistanceToDest)
@@ -362,12 +362,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			isMakingProgress = true
 		}
 		previousDistanceToDest = currentDistanceToDestFloat
-		
+
 		//Detect if player is doing round trips around a position for too long and return error if it's the case
 		roundTripDistance := utils.CalculateDistance(currentPosition, roundTripReferencePosition)
 		if roundTripDistance <= float64(roundTripMaxRadius) {
 			timeInRoundtrip := time.Since(roundTripCheckStartTime)
-			
+
 			// If not making progress and stuck in round trip, abort faster
 			if !isMakingProgress && timeInRoundtrip > roundTripThreshold {
 				ctx.Logger.Warn("Player is doing round trips, aborting movement",
@@ -405,7 +405,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		if currentPosition == previousPosition && !ctx.Data.PlayerUnit.States.HasState(state.Stunned) {
 			stuckTime := time.Since(stuckCheckStartTime)
 			totalStuckTime := time.Since(movementStartTime)
-			
+
 			// If stuck for too long (30+ seconds), abort immediately
 			if totalStuckTime > maxStuckDuration {
 				ctx.Logger.Error("Movement stuck for too long, aborting",
@@ -419,7 +419,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 				)
 				return ErrPlayerStuck
 			}
-			
+
 			if stuckTime > stuckThreshold {
 				// Try escape before giving up
 				if escapeAttempts < maxEscapeAttempts {

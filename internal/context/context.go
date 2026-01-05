@@ -98,8 +98,8 @@ type CurrentGameHelper struct {
 	CurrentMuleIndex  int
 	ShouldCheckStash  bool
 	StashFull         bool
-	IsStuck           bool          // Flag to track if bot is stuck
-	StuckSince        time.Time     // Time when stuck was first detected
+	IsStuck           bool      // Flag to track if bot is stuck
+	StuckSince        time.Time // Time when stuck was first detected
 	mutex             sync.Mutex
 }
 
