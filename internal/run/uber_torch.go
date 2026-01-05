@@ -418,6 +418,10 @@ func (t *Torch) diablo() error {
 	var uberBaal data.Monster
 
 	for _, m := range t.ctx.Data.Monsters.Enemies() {
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+			continue
+		}
 		if m.Name == npc.UberDiablo && m.Stats[stat.Life] > 0 {
 			diabloAlive = true
 			uberDiablo = m

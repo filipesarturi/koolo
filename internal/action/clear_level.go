@@ -184,6 +184,12 @@ func getMonstersInRoom(room data.Room, filter data.MonsterFilter) []data.Monster
 		if m.Stats[stat.Life] <= 0 {
 			continue
 		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+			continue
+		}
+
 		if !(room.IsInside(m.Position) || ctx.PathFinder.DistanceFromMe(m.Position) < 30) {
 			continue
 		}

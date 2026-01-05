@@ -441,6 +441,12 @@ func hasMonstersNearPortal(ctx *context.Status, portalPos data.Position) bool {
 		if m.Stats[stat.Life] <= 0 {
 			continue
 		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+			continue
+		}
+
 		distance := ctx.PathFinder.DistanceFromMe(m.Position)
 		if distance <= checkRadius {
 			return true
@@ -452,6 +458,10 @@ func hasMonstersNearPortal(ctx *context.Status, portalPos data.Position) bool {
 
 func isBossNearby(ctx *context.Status, bossNPC npc.ID, maxDistance int) (bool, data.Monster, int) {
 	for _, m := range ctx.Data.Monsters.Enemies() {
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+			continue
+		}
 		if m.Name == bossNPC && m.Stats[stat.Life] > 0 {
 			distance := ctx.PathFinder.DistanceFromMe(m.Position)
 			if distance <= maxDistance {

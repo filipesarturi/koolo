@@ -302,6 +302,10 @@ func (a Cows) clearCowLevel() error {
 	closeMonsters := a.ctx.Data.Monsters.Enemies(data.MonsterAnyFilter())
 	hasCloseMonsters := false
 	for _, m := range closeMonsters {
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+			continue
+		}
 		if m.Stats[stat.Life] > 0 {
 			distance := a.ctx.PathFinder.DistanceFromMe(m.Position)
 			if distance <= 30 {

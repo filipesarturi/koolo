@@ -273,6 +273,10 @@ func (s Baal) checkForSoulsOrDolls(radius ...int) bool {
 	// If radius is specified, check within that radius
 	if len(radius) > 0 && radius[0] > 0 {
 		for _, m := range s.ctx.Data.Monsters.Enemies() {
+			// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+			if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+				continue
+			}
 			for _, id := range npcIds {
 				if m.Name == id && m.Stats[stat.Life] > 0 {
 					distance := s.ctx.PathFinder.DistanceFromMe(m.Position)

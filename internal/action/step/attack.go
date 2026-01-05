@@ -141,6 +141,11 @@ func isValidEnemy(monster data.Monster, ctx *context.Status) bool {
 		return false
 	}
 
+	// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+	if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+		return false
+	}
+
 	// Special case: Always allow Vizier seal boss even if off grid
 	isVizier := monster.Type == data.MonsterTypeSuperUnique && monster.Name == npc.StormCaster
 	if isVizier {

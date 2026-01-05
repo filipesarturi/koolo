@@ -432,7 +432,16 @@ func hasHostileMonstersNearby(pos data.Position) bool {
 	ctx := context.Get()
 
 	for _, monster := range ctx.Data.Monsters.Enemies() {
-		if monster.Stats[stat.Life] > 0 && pather.DistanceFromPoint(pos, monster.Position) <= 4 {
+		if monster.Stats[stat.Life] <= 0 {
+			continue
+		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+			continue
+		}
+
+		if pather.DistanceFromPoint(pos, monster.Position) <= 4 {
 			return true
 		}
 	}

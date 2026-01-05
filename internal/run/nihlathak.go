@@ -110,6 +110,10 @@ func (n Nihlathak) runStandard(parameters *RunParameters) error {
 
 		n.ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
 			for _, m := range d.Monsters.Enemies() {
+				// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+				if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+					continue
+				}
 				if d := pather.DistanceFromPoint(nihlaObject.Position, m.Position); d < 15 {
 					return m.UnitID, true
 				}
@@ -165,6 +169,10 @@ func (n Nihlathak) findBestCorner(nihlathakPosition data.Position) data.Position
 		if n.ctx.Data.AreaData.IsWalkable(c) {
 			averageDistance := 0
 			for _, m := range n.ctx.Data.Monsters.Enemies() {
+				// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+				if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+					continue
+				}
 				averageDistance += pather.DistanceFromPoint(c, m.Position)
 			}
 			if averageDistance > bestCornerDistance {

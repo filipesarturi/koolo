@@ -886,12 +886,23 @@ func (a Quests) killAncientsQuest() error {
 
 	for {
 		ancients := a.ctx.Data.Monsters.Enemies(data.MonsterEliteFilter())
-		if len(ancients) == 0 {
+		// Filter out pets, mercenaries, and friendly NPCs
+		filteredAncients := make([]data.Monster, 0, len(ancients))
+		for _, m := range ancients {
+			if !m.IsPet() && !m.IsMerc() && !m.IsGoodNPC() && !m.IsSkip() {
+				filteredAncients = append(filteredAncients, m)
+			}
+		}
+		if len(filteredAncients) == 0 {
 			break
 		}
 
 		err = a.ctx.Char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
 			for _, m := range d.Monsters.Enemies(data.MonsterEliteFilter()) {
+				// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+				if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+					continue
+				}
 				return m.UnitID, true
 			}
 			return 0, false

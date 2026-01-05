@@ -19,6 +19,11 @@ func GetDistanceFromClosestEnemy(pos data.Position, monsters data.Monsters) floa
 			continue
 		}
 
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+			continue
+		}
+
 		distance := pather.DistanceFromPoint(pos, monster.Position)
 		if float64(distance) < minDistance {
 			minDistance = float64(distance)
@@ -31,6 +36,11 @@ func IsAnyEnemyAroundPlayer(radius int) (bool, data.Monster) {
 	ctx := context.Get()
 	for _, monster := range ctx.Data.Monsters.Enemies() {
 		if monster.Stats[stat.Life] <= 0 {
+			continue
+		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
 			continue
 		}
 
@@ -48,6 +58,11 @@ func IsAnyEnemyAroundPosition(pos data.Position, radius int) (bool, data.Monster
 	ctx := context.Get()
 	for _, monster := range ctx.Data.Monsters.Enemies() {
 		if monster.Stats[stat.Life] <= 0 {
+			continue
+		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
 			continue
 		}
 
@@ -108,10 +123,17 @@ func ShouldSwitchTarget(targetID data.UnitID, targetMonster data.Monster, lastLi
 	// Check if there are any alive monsters in the area
 	hasAliveMonsters := false
 	for _, monster := range ctx.Data.Monsters.Enemies() {
-		if monster.Stats[stat.Life] > 0 {
-			hasAliveMonsters = true
-			break
+		if monster.Stats[stat.Life] <= 0 {
+			continue
 		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+			continue
+		}
+
+		hasAliveMonsters = true
+		break
 	}
 
 	if !hasAliveMonsters {
@@ -177,6 +199,12 @@ func FindSafePositionForBuff(minSafeDistance int, maxSearchDistance int) (data.P
 		if monster.Stats[stat.Life] <= 0 {
 			continue
 		}
+
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+			continue
+		}
+
 		dist := float64(pather.DistanceFromPoint(playerPos, monster.Position))
 		if dist < minDist {
 			minDist = dist

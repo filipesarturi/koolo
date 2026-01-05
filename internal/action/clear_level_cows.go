@@ -430,6 +430,11 @@ func getMonstersInRoomCowsOptimized(room data.Room, filter data.MonsterFilter, s
 			continue
 		}
 
+		// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+		if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+			continue
+		}
+
 		// Check cache first
 		state.cacheMutex.RLock()
 		cached, cachedExists := state.monsterCache[m.UnitID]

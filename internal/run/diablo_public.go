@@ -323,6 +323,10 @@ func (d *DiabloPublic) killSealElite(boss string) error {
 
 		// Check for living seal elite
 		for _, m := range d.ctx.Data.Monsters.Enemies(d.ctx.Data.MonsterFilterAnyReachable()) {
+			// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+			if m.IsPet() || m.IsMerc() || m.IsGoodNPC() || m.IsSkip() {
+				continue
+			}
 			if action.IsMonsterSealElite(m) && m.Name == bossNPCID {
 				sealElite = m
 				break
@@ -424,6 +428,10 @@ func (d *DiabloPublic) killSealElite(boss string) error {
 
 			if !found {
 				for _, monster := range d.ctx.Data.Monsters.Enemies(d.ctx.Data.MonsterFilterAnyReachable()) {
+					// Skip pets, mercenaries, and friendly NPCs (allies' summons)
+					if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+						continue
+					}
 					if action.IsMonsterSealElite(monster) && monster.Name == bossNPCID {
 						sealElite = monster
 						found = true
