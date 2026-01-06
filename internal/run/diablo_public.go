@@ -255,6 +255,20 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 	}
 
 	if d.ctx.CharacterCfg.Game.Diablo.KillDiablo {
+		// Check if Diablo is already dead before attempting to kill
+		d.ctx.RefreshGameData()
+		if d.isDiabloDead() {
+			d.ctx.Logger.Debug("Diablo already dead, skipping kill sequence")
+			action.ItemPickup(30)
+
+			if IsQuestRun(parameters) {
+				if err := d.goToAct5(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
 		action.Buff()
 
 		originalClearPathDistCfg := d.ctx.CharacterCfg.Character.ClearPathDist
@@ -270,6 +284,20 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 			step.MoveTo(diabloFightPosition, step.WithIgnoreMonsters())
 		} else {
 			action.MoveToCoords(diabloSpawnPosition)
+		}
+
+		// Check again after moving to position (in case Diablo was killed while moving)
+		d.ctx.RefreshGameData()
+		if d.isDiabloDead() {
+			d.ctx.Logger.Debug("Diablo already dead after moving to position, skipping kill sequence")
+			action.ItemPickup(30)
+
+			if IsQuestRun(parameters) {
+				if err := d.goToAct5(); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 
 		if d.ctx.CharacterCfg.Game.Diablo.DisableItemPickupDuringBosses {
@@ -634,4 +662,22 @@ func (d *DiabloPublic) distanceSquared(p1, p2 data.Position) float64 {
 	dx := float64(p1.X - p2.X)
 	dy := float64(p1.Y - p2.Y)
 	return dx*dx + dy*dy
+}
+
+// isDiabloDead checks if Diablo is already dead by checking monsters and corpses
+func (d *DiabloPublic) isDiabloDead() bool {
+	// Check if Diablo is in monsters list and dead (HP <= 0)
+	diablo, found := d.ctx.Data.Monsters.FindOne(npc.Diablo, data.MonsterTypeUnique)
+	if found && diablo.Stats[stat.Life] <= 0 {
+		return true
+	}
+
+	// Check if Diablo is in corpses (already dead)
+	for _, corpse := range d.ctx.Data.Corpses {
+		if corpse.Name == npc.Diablo {
+			return true
+		}
+	}
+
+	return false
 }
