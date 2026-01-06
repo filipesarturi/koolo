@@ -241,7 +241,11 @@ func (s *Baal) Run(parameters *RunParameters) error {
 			}
 		}
 
-		return s.ctx.Char.KillBaal()
+		if err := s.ctx.Char.KillBaal(); err != nil {
+			return err
+		}
+
+		action.ItemPickup(30)
 	}
 
 	return nil
