@@ -29,7 +29,7 @@ var (
 	memoryBuffApplied    = make(map[string]bool) // track if Memory buff was applied in first run
 	memoryBuffInProgress = make(map[string]bool) // track if Memory buff is currently being applied
 	memoryBuffAppliedMu  sync.Mutex
-	memoryBuffsBySkill    = make(map[string]map[skill.ID]bool) // track which specific skills were applied via Memory per character
+	memoryBuffsBySkill   = make(map[string]map[skill.ID]bool) // track which specific skills were applied via Memory per character
 )
 
 // ResetMemoryBuffFlag resets the Memory buff flag for a character when starting a new game
@@ -509,6 +509,16 @@ func Buff() {
 					slog.Int("skillID", int(entry.skill)))
 			}
 
+			// If buff was successfully applied normally (not via Memory), clear Memory flag
+			if buffSuccess {
+				memoryBuffAppliedMu.Lock()
+				if memoryBuffsBySkill[ctx.Name] != nil {
+					// Clear Memory flag for this skill since it was just applied normally
+					delete(memoryBuffsBySkill[ctx.Name], entry.skill)
+				}
+				memoryBuffAppliedMu.Unlock()
+			}
+
 			// If armor skill failed and we haven't applied armor yet, try fallback
 			if isArmorSkill && !buffSuccess && !armorApplied {
 				ctx.Logger.Info("Armor skill failed, trying fallback",
@@ -546,6 +556,12 @@ func Buff() {
 								fallbackFound = true
 								ctx.Logger.Info("Armor skill fallback succeeded",
 									slog.String("skill", armorName))
+								// Clear Memory flag since armor was applied normally
+								memoryBuffAppliedMu.Lock()
+								if memoryBuffsBySkill[ctx.Name] != nil {
+									delete(memoryBuffsBySkill[ctx.Name], armorSkill)
+								}
+								memoryBuffAppliedMu.Unlock()
 								break
 							}
 						} else {
@@ -554,6 +570,12 @@ func Buff() {
 							fallbackFound = true
 							ctx.Logger.Info("Armor skill fallback cast (no verification)",
 								slog.String("skill", armorName))
+							// Clear Memory flag since armor was applied normally
+							memoryBuffAppliedMu.Lock()
+							if memoryBuffsBySkill[ctx.Name] != nil {
+								delete(memoryBuffsBySkill[ctx.Name], armorSkill)
+							}
+							memoryBuffAppliedMu.Unlock()
 							break
 						}
 					}
@@ -623,24 +645,63 @@ func IsRebuffRequired() bool {
 	// TODO: Find a better way to convert skill to state
 	buffs := ctx.Char.BuffSkills()
 	for _, buff := range buffs {
-		if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff); found {
-			if buff == skill.HolyShield && !ctx.Data.PlayerUnit.States.HasState(state.Holyshield) {
-				return true
-			}
-			// Check for any armor skill (FrozenArmor, ShiverArmor, or ChillingArmor)
-			if buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor {
-				if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
-					!ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
-					!ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+		_, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff)
+		if !found {
+			continue
+		}
+
+		// Check if skill exists on character (has level > 0) with current weapon
+		// For armor skills, we check if ANY armor skill is available as fallback
+		isArmorSkill := buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor
+
+		if isArmorSkill {
+			// For armor skills, check if any armor buff is missing
+			armorMissing := !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
+				!ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
+				!ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor)
+
+			if armorMissing {
+				// Check if at least one armor skill is available (preferred or fallback)
+				skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+				hasSkill := skillExists && skillData.Level > 0
+
+				if hasSkill {
 					return true
 				}
+
+				// If preferred skill not available, check fallback options
+				armorSkills := []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor}
+				for _, armorSkill := range armorSkills {
+					if armorSkill == buff {
+						continue // Skip the one we already checked
+					}
+					armorSkillData, armorSkillExists := ctx.Data.PlayerUnit.Skills[armorSkill]
+					armorHasSkill := armorSkillExists && armorSkillData.Level > 0
+					if armorHasSkill {
+						if _, armorKbFound := ctx.Data.KeyBindings.KeyBindingForSkill(armorSkill); armorKbFound {
+							return true
+						}
+					}
+				}
 			}
-			if buff == skill.EnergyShield && !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
-				return true
-			}
-			if buff == skill.CycloneArmor && !ctx.Data.PlayerUnit.States.HasState(state.Cyclonearmor) {
-				return true
-			}
+			continue
+		}
+
+		// For non-armor skills, check if skill exists and state is missing
+		skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+		hasSkill := skillExists && skillData.Level > 0
+		if !hasSkill {
+			continue
+		}
+
+		if buff == skill.HolyShield && !ctx.Data.PlayerUnit.States.HasState(state.Holyshield) {
+			return true
+		}
+		if buff == skill.EnergyShield && !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+			return true
+		}
+		if buff == skill.CycloneArmor && !ctx.Data.PlayerUnit.States.HasState(state.Cyclonearmor) {
+			return true
 		}
 	}
 
