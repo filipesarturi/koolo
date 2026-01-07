@@ -38,8 +38,8 @@ var (
 
 type KooloCfg struct {
 	Debug struct {
-		Log         bool   `yaml:"log"`         // Deprecated: use LogLevel instead
-		LogLevel    string `yaml:"logLevel"`    // "debug", "info", "warn", "error"
+		Log         bool   `yaml:"log"`      // Deprecated: use LogLevel instead
+		LogLevel    string `yaml:"logLevel"` // "debug", "info", "warn", "error"
 		Screenshots bool   `yaml:"screenshots"`
 		RenderMap   bool   `yaml:"renderMap"`
 	} `yaml:"debug"`
