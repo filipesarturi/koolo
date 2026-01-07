@@ -38,9 +38,10 @@ var (
 
 type KooloCfg struct {
 	Debug struct {
-		Log         bool `yaml:"log"`
-		Screenshots bool `yaml:"screenshots"`
-		RenderMap   bool `yaml:"renderMap"`
+		Log         bool   `yaml:"log"`         // Deprecated: use LogLevel instead
+		LogLevel    string `yaml:"logLevel"`    // "debug", "info", "warn", "error"
+		Screenshots bool   `yaml:"screenshots"`
+		RenderMap   bool   `yaml:"renderMap"`
 	} `yaml:"debug"`
 	FirstRun              bool   `yaml:"firstRun"`
 	UseCustomSettings     bool   `yaml:"useCustomSettings"`
@@ -88,11 +89,11 @@ type Day struct {
 
 // RunewordOverrideConfig stores a character's overrides keyed by the display name (e.g. "Enigma").
 type RunewordOverrideConfig struct {
-	EthMode       string                       `yaml:"ethMode,omitempty"`       // "any", "eth", "noneth"
-	QualityMode   string                       `yaml:"qualityMode,omitempty"`   // "any", "normal", "superior"
-	BaseType      string                       `yaml:"baseType,omitempty"`      // armor, bow, polearm, etc.
-	BaseTier      string                       `yaml:"baseTier,omitempty"`      // "", "normal", "exceptional", "elite"
-	BaseName      string                       `yaml:"baseName,omitempty"`      // optional specific base name
+	EthMode     string `yaml:"ethMode,omitempty"`     // "any", "eth", "noneth"
+	QualityMode string `yaml:"qualityMode,omitempty"` // "any", "normal", "superior"
+	BaseType    string `yaml:"baseType,omitempty"`    // armor, bow, polearm, etc.
+	BaseTier    string `yaml:"baseTier,omitempty"`    // "", "normal", "exceptional", "elite"
+	BaseName    string `yaml:"baseName,omitempty"`    // optional specific base name
 }
 
 // RunewordTargetStatOverride captures the desired min/max for a stat (and optional layer) when rerolling.
@@ -166,11 +167,11 @@ type CharacterCfg struct {
 		MercChickenAt       int `yaml:"mercChickenAt"`
 	} `yaml:"health"`
 	Defense struct {
-		Enabled                        bool `yaml:"enabled"`
-		StationaryThresholdSeconds     int  `yaml:"stationaryThresholdSeconds"`
-		DamageThresholdSeconds         int  `yaml:"damageThresholdSeconds"`
-		IneffectiveAttackThresholdSeconds int `yaml:"ineffectiveAttackThresholdSeconds"`
-		LowHPThreshold                 int  `yaml:"lowHPThreshold"`
+		Enabled                           bool `yaml:"enabled"`
+		StationaryThresholdSeconds        int  `yaml:"stationaryThresholdSeconds"`
+		DamageThresholdSeconds            int  `yaml:"damageThresholdSeconds"`
+		IneffectiveAttackThresholdSeconds int  `yaml:"ineffectiveAttackThresholdSeconds"`
+		LowHPThreshold                    int  `yaml:"lowHPThreshold"`
 	} `yaml:"defense"`
 	Inventory struct {
 		InventoryLock      [][]int     `yaml:"inventoryLock"`
@@ -241,15 +242,15 @@ type CharacterCfg struct {
 			MaxNearbyDolls     int  `yaml:"max_nearby_dolls"`
 
 			// Kill speed optimizations
-			StaticFieldThreshold      int  `yaml:"static_field_threshold"`       // HP percentage threshold for Static Field (default: 50)
-			StaticFieldPackThreshold  int  `yaml:"static_field_pack_threshold"`   // Use Static Field in packs with N+ enemies (default: 7)
-			EnableMicroAdjustments    bool `yaml:"enable_micro_adjustments"`      // Enable micro position adjustments during combat
-			MicroAdjustmentCooldown   int  `yaml:"micro_adjustment_cooldown"`     // Cooldown between micro-adjustments in ms (default: 300)
+			StaticFieldThreshold       int  `yaml:"static_field_threshold"`         // HP percentage threshold for Static Field (default: 50)
+			StaticFieldPackThreshold   int  `yaml:"static_field_pack_threshold"`    // Use Static Field in packs with N+ enemies (default: 7)
+			EnableMicroAdjustments     bool `yaml:"enable_micro_adjustments"`       // Enable micro position adjustments during combat
+			MicroAdjustmentCooldown    int  `yaml:"micro_adjustment_cooldown"`      // Cooldown between micro-adjustments in ms (default: 300)
 			MicroAdjustmentMinHitsGain int  `yaml:"micro_adjustment_min_hits_gain"` // Minimum hits gain to justify micro-adjustment (default: 1)
-			MicroAdjustmentMaxDistance int  `yaml:"micro_adjustment_max_distance"` // Maximum distance for micro-adjustments in tiles (default: 4)
-			EarlyPackAbandonment       bool `yaml:"early_pack_abandonment"`       // Abandon packs when few enemies remain
-			PackAbandonmentThreshold   int  `yaml:"pack_abandonment_threshold"`   // Percentage of alive enemies to abandon pack (default: 25)
-			DynamicRepositionCooldown  bool `yaml:"dynamic_reposition_cooldown"`   // Use dynamic cooldowns based on pack size
+			MicroAdjustmentMaxDistance int  `yaml:"micro_adjustment_max_distance"`  // Maximum distance for micro-adjustments in tiles (default: 4)
+			EarlyPackAbandonment       bool `yaml:"early_pack_abandonment"`         // Abandon packs when few enemies remain
+			PackAbandonmentThreshold   int  `yaml:"pack_abandonment_threshold"`     // Percentage of alive enemies to abandon pack (default: 25)
+			DynamicRepositionCooldown  bool `yaml:"dynamic_reposition_cooldown"`    // Use dynamic cooldowns based on pack size
 		} `yaml:"nova_sorceress"`
 		LightningSorceress struct {
 		} `yaml:"lightning_sorceress"`
@@ -299,27 +300,27 @@ type CharacterCfg struct {
 	} `yaml:"character"`
 
 	Game struct {
-		MinGoldPickupThreshold   int                   `yaml:"minGoldPickupThreshold"`
-		UseCainIdentify          bool                  `yaml:"useCainIdentify"`
-		DisableIdentifyTome      bool                  `yaml:"disableIdentifyTome"`
-		InteractWithShrines      bool                  `yaml:"interactWithShrines"`
-		ClearAreaBeforeShrine    bool                  `yaml:"clearAreaBeforeShrine"`
-		InteractWithChests                      bool                  `yaml:"interactWithChests"`
-		ClearAreaBeforeChest                    bool                  `yaml:"clearAreaBeforeChest"`
+		MinGoldPickupThreshold                   int                   `yaml:"minGoldPickupThreshold"`
+		UseCainIdentify                          bool                  `yaml:"useCainIdentify"`
+		DisableIdentifyTome                      bool                  `yaml:"disableIdentifyTome"`
+		InteractWithShrines                      bool                  `yaml:"interactWithShrines"`
+		ClearAreaBeforeShrine                    bool                  `yaml:"clearAreaBeforeShrine"`
+		InteractWithChests                       bool                  `yaml:"interactWithChests"`
+		ClearAreaBeforeChest                     bool                  `yaml:"clearAreaBeforeChest"`
 		ExcludeDollsAndSoulsFromChestShrineClear bool                  `yaml:"excludeDollsAndSoulsFromChestShrineClear"`
-		StopLevelingAt                          int                   `yaml:"stopLevelingAt"`
-		IsNonLadderChar        bool                  `yaml:"isNonLadderChar"`
-		ClearTPArea            bool                  `yaml:"clearTPArea"`
-		Difficulty             difficulty.Difficulty `yaml:"difficulty"`
-		RandomizeRuns          bool                  `yaml:"randomizeRuns"`
-		Runs                   []Run                 `yaml:"runs"`
-		CreateLobbyGames       bool                  `yaml:"createLobbyGames"`
-		PublicGameCounter      int                   `yaml:"publicGameCounter"`
-		PublicGameNames        PublicGameNamesList   `yaml:"publicGameNames"` // List of predefined game names (comma-separated or array)
-		PublicGameNamesEnabled bool                  `yaml:"publicGameNamesEnabled"` // Enable/disable using public game names
-		PublicGameNameIndex    int                   `yaml:"-"`              // Current index in the PublicGameNames list
-		MaxFailedMenuAttempts  int                   `yaml:"maxFailedMenuAttempts"`
-		Pindleskin             struct {
+		StopLevelingAt                           int                   `yaml:"stopLevelingAt"`
+		IsNonLadderChar                          bool                  `yaml:"isNonLadderChar"`
+		ClearTPArea                              bool                  `yaml:"clearTPArea"`
+		Difficulty                               difficulty.Difficulty `yaml:"difficulty"`
+		RandomizeRuns                            bool                  `yaml:"randomizeRuns"`
+		Runs                                     []Run                 `yaml:"runs"`
+		CreateLobbyGames                         bool                  `yaml:"createLobbyGames"`
+		PublicGameCounter                        int                   `yaml:"publicGameCounter"`
+		PublicGameNames                          PublicGameNamesList   `yaml:"publicGameNames"`        // List of predefined game names (comma-separated or array)
+		PublicGameNamesEnabled                   bool                  `yaml:"publicGameNamesEnabled"` // Enable/disable using public game names
+		PublicGameNameIndex                      int                   `yaml:"-"`                      // Current index in the PublicGameNames list
+		MaxFailedMenuAttempts                    int                   `yaml:"maxFailedMenuAttempts"`
+		Pindleskin                               struct {
 			SkipOnImmunities []stat.Resist `yaml:"skipOnImmunities"`
 		} `yaml:"pindleskin"`
 		Cows struct {
@@ -400,8 +401,8 @@ type CharacterCfg struct {
 			KillShenk bool `yaml:"killShenk"`
 		} `yaml:"eldritch"`
 		LowerKurastChest struct {
-			OpenRacks       bool `yaml:"openRacks"`
-			OpenAllChests   bool `yaml:"openAllChests"`
+			OpenRacks        bool `yaml:"openRacks"`
+			OpenAllChests    bool `yaml:"openAllChests"`
 			ForceTelekinesis bool `yaml:"forceTelekinesis"`
 		} `yaml:"lowerkurastchests"`
 		TerrorZone struct {
@@ -416,12 +417,12 @@ type CharacterCfg struct {
 			EnsureKeyBinding         bool     `yaml:"ensureKeyBinding"`
 			AutoEquip                bool     `yaml:"autoEquip"`
 			AutoEquipFromSharedStash bool     `yaml:"autoEquipFromSharedStash"`
-			EnableRunewordMaker       bool     `yaml:"enableRunewordMaker"`
-			NightmareRequiredLevel    int      `yaml:"nightmareRequiredLevel"`
-			HellRequiredLevel         int      `yaml:"hellRequiredLevel"`
-			HellRequiredFireRes       int      `yaml:"hellRequiredFireRes"`
-			HellRequiredLightRes      int      `yaml:"hellRequiredLightRes"`
-			EnabledRunewordRecipes    []string `yaml:"enabledRunewordRecipes"`
+			EnableRunewordMaker      bool     `yaml:"enableRunewordMaker"`
+			NightmareRequiredLevel   int      `yaml:"nightmareRequiredLevel"`
+			HellRequiredLevel        int      `yaml:"hellRequiredLevel"`
+			HellRequiredFireRes      int      `yaml:"hellRequiredFireRes"`
+			HellRequiredLightRes     int      `yaml:"hellRequiredLightRes"`
+			EnabledRunewordRecipes   []string `yaml:"enabledRunewordRecipes"`
 		} `yaml:"leveling"`
 		RunewordMaker struct {
 			Enabled        bool     `yaml:"enabled"`
@@ -586,6 +587,15 @@ func Load() error {
 	d := yaml.NewDecoder(r)
 	if err = d.Decode(&Koolo); err != nil {
 		return fmt.Errorf("error reading config %s: %w", kooloPath, err)
+	}
+
+	// Normalize LogLevel for backward compatibility
+	if Koolo.Debug.LogLevel == "" {
+		if Koolo.Debug.Log {
+			Koolo.Debug.LogLevel = "debug"
+		} else {
+			Koolo.Debug.LogLevel = "info"
+		}
 	}
 
 	configDir := getAbsPath(BasePath + "/config")

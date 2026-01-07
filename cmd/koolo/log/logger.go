@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -26,7 +27,17 @@ func FlushAndClose() error {
 	return nil
 }
 
+// NewLogger creates a new logger with the specified log level
+// logLevel can be "debug", "info", "warn", or "error"
+// If logLevel is empty, it falls back to the debug bool parameter for backward compatibility
 func NewLogger(debug bool, logDir, supervisor string) (*slog.Logger, error) {
+	return NewLoggerWithLevel("", debug, logDir, supervisor)
+}
+
+// NewLoggerWithLevel creates a new logger with a specific log level
+// logLevel can be "debug", "info", "warn", or "error"
+// If logLevel is empty, it falls back to the debug bool parameter
+func NewLoggerWithLevel(logLevel string, debug bool, logDir, supervisor string) (*slog.Logger, error) {
 	if logDir == "" {
 		logDir = "logs"
 	}
@@ -49,9 +60,32 @@ func NewLogger(debug bool, logDir, supervisor string) (*slog.Logger, error) {
 	}
 	logFileHandler = lfh
 
-	level := slog.LevelDebug
-	if !debug {
-		level = slog.LevelInfo
+	var level slog.Level
+	if logLevel != "" {
+		switch strings.ToLower(logLevel) {
+		case "debug":
+			level = slog.LevelDebug
+		case "info":
+			level = slog.LevelInfo
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		default:
+			// Invalid level, fall back to debug bool
+			if debug {
+				level = slog.LevelDebug
+			} else {
+				level = slog.LevelInfo
+			}
+		}
+	} else {
+		// Backward compatibility: use debug bool
+		if debug {
+			level = slog.LevelDebug
+		} else {
+			level = slog.LevelInfo
+		}
 	}
 
 	opts := &slog.HandlerOptions{

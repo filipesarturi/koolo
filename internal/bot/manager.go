@@ -65,7 +65,7 @@ func (mng *SupervisorManager) Start(supervisorName string, attachToExisting bool
 		return fmt.Errorf("error loading config: %w", err)
 	}
 
-	supervisorLogger, err := log.NewLogger(config.Koolo.Debug.Log, config.Koolo.LogSaveDirectory, supervisorName)
+	supervisorLogger, err := log.NewLoggerWithLevel(config.Koolo.Debug.LogLevel, config.Koolo.Debug.Log, config.Koolo.LogSaveDirectory, supervisorName)
 	if err != nil {
 		return err
 	}

@@ -136,7 +136,8 @@
 
         input[type="text"],
         input[type="password"],
-        input[type="number"] {
+        input[type="number"],
+        select {
             background: var(--bg-primary);
             border: 2px solid var(--border-color);
             color: var(--text-primary);
@@ -147,7 +148,8 @@
 
         input[type="text"]:focus,
         input[type="password"]:focus,
-        input[type="number"]:focus {
+        input[type="number"]:focus,
+        select:focus {
             border-color: var(--primary);
             box-shadow: 0 0 0 4px rgba(0, 137, 235, 0.15);
             outline: none;
@@ -265,15 +267,14 @@
                 <h4>Debug</h4>
                 <fieldset class="grid">
                     <label>
-                        <input
-                                {{ if .Debug.Log }}
-                                    checked="checked"
-                                {{ end }}
-                                type="checkbox"
-                                name="debug_log"
-                                value="true"
-                        />
-                        Debug mode (better details in logs, more noise)
+                        Log Level
+                        <select name="log_level" style="background: var(--bg-primary); border: 2px solid var(--border-color); color: var(--text-primary); border-radius: var(--radius-md); padding: 12px var(--spacing-md); transition: all var(--transition-normal);">
+                            <option value="debug" {{ if or (eq .Debug.LogLevel "debug") (and (eq .Debug.LogLevel "") .Debug.Log) }}selected{{ end }}>Debug</option>
+                            <option value="info" {{ if or (eq .Debug.LogLevel "info") (and (eq .Debug.LogLevel "") (not .Debug.Log)) }}selected{{ end }}>Info</option>
+                            <option value="warn" {{ if eq .Debug.LogLevel "warn" }}selected{{ end }}>Warn</option>
+                            <option value="error" {{ if eq .Debug.LogLevel "error" }}selected{{ end }}>Error</option>
+                        </select>
+                        <small>Select the minimum log level to display</small>
                     </label>
                     <label>
                         <input

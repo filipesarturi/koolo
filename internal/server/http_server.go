@@ -1264,7 +1264,18 @@ func (s *HttpServer) config(w http.ResponseWriter, r *http.Request) {
 		newConfig.UseCustomSettings = r.Form.Get("use_custom_settings") == "true"
 		newConfig.GameWindowArrangement = r.Form.Get("game_window_arrangement") == "true"
 		// Debug
-		newConfig.Debug.Log = r.Form.Get("debug_log") == "true"
+		logLevel := strings.ToLower(strings.TrimSpace(r.Form.Get("log_level")))
+		if logLevel != "" {
+			newConfig.Debug.LogLevel = logLevel
+		} else {
+			// Backward compatibility: if log_level is not set, use debug_log checkbox
+			newConfig.Debug.Log = r.Form.Get("debug_log") == "true"
+			if newConfig.Debug.Log {
+				newConfig.Debug.LogLevel = "debug"
+			} else {
+				newConfig.Debug.LogLevel = "info"
+			}
+		}
 		newConfig.Debug.Screenshots = r.Form.Get("debug_screenshots") == "true"
 		// Discord
 		newConfig.Discord.Enabled = r.Form.Get("discord_enabled") == "true"
@@ -1922,7 +1933,7 @@ func (s *HttpServer) updateClassSpecificConfig(values url.Values, cfg *config.Ch
 	// Nova Sorceress specific options (Extra)
 	if cfg.Character.Class == "nova" {
 		cfg.Character.NovaSorceress.AggressiveNovaPositioning = values.Has("aggressiveNovaPositioning")
-		
+
 		// Kill speed optimizations
 		if staticFieldThreshold := values.Get("novaStaticFieldThreshold"); staticFieldThreshold != "" {
 			if val, err := strconv.Atoi(staticFieldThreshold); err == nil && val >= 1 && val <= 100 {
@@ -2388,7 +2399,7 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		// Nova Sorceress specific options
 		if cfg.Character.Class == "nova" {
 			cfg.Character.NovaSorceress.AggressiveNovaPositioning = r.Form.Has("aggressiveNovaPositioning")
-			
+
 			// Kill speed optimizations
 			if staticFieldThreshold := r.Form.Get("novaStaticFieldThreshold"); staticFieldThreshold != "" {
 				if val, err := strconv.Atoi(staticFieldThreshold); err == nil && val >= 1 && val <= 100 {
@@ -3365,7 +3376,7 @@ func calculateAreaLevel(areaID area.ID, diff difficulty.Difficulty) int {
 func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *data.PlayerUnit, memoryBuffs map[skill.ID]bool) (map[string]int, map[string]bool) {
 	buffs := make(map[string]int)
 	memoryBuffsMap := make(map[string]bool)
-	
+
 	// Reverse map from skillToState in buff.go - maps state to skill ID
 	// Only include buffs that have a corresponding skill ID
 	stateToSkill := map[state.State]skill.ID{
@@ -3384,7 +3395,7 @@ func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *
 		state.Hurricane:     skill.Hurricane,
 		state.Bonearmor:     skill.BoneArmor,
 	}
-	
+
 	// Map of states to readable names (for states that may not have direct skill mapping)
 	stateToName := map[state.State]string{
 		// Sorceress buffs
@@ -3393,53 +3404,53 @@ func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *
 		state.Shiverarmor:   "Shiver Armor",
 		state.Chillingarmor: "Chilling Armor",
 		state.Thunderstorm:  "Thunder Storm",
-		
+
 		// Paladin buffs (auras - may not have direct skill level)
-		state.Holyshield:    "Holy Shield",
-		state.Concentration: "Concentration",
-		state.Fanaticism:    "Fanaticism",
-		state.Might:         "Might",
-		state.Blessedaim:    "Blessed Aim",
-		state.Conviction:    "Conviction",
-		state.Redemption:    "Redemption",
-		state.Meditation:    "Meditation",
-		state.Cleansing:     "Cleansing",
-		state.Prayer:        "Prayer",
-		state.Resistfire:    "Resist Fire",
-		state.Resistcold:    "Resist Cold",
+		state.Holyshield:      "Holy Shield",
+		state.Concentration:   "Concentration",
+		state.Fanaticism:      "Fanaticism",
+		state.Might:           "Might",
+		state.Blessedaim:      "Blessed Aim",
+		state.Conviction:      "Conviction",
+		state.Redemption:      "Redemption",
+		state.Meditation:      "Meditation",
+		state.Cleansing:       "Cleansing",
+		state.Prayer:          "Prayer",
+		state.Resistfire:      "Resist Fire",
+		state.Resistcold:      "Resist Cold",
 		state.Resistlightning: "Resist Lightning",
-		state.Defiance:      "Defiance",
-		state.Holyfire:      "Holy Fire",
-		state.Holyshock:     "Holy Shock",
-		state.Sanctuary:     "Sanctuary",
-		state.Thorns:        "Thorns",
-		
+		state.Defiance:        "Defiance",
+		state.Holyfire:        "Holy Fire",
+		state.Holyshock:       "Holy Shock",
+		state.Sanctuary:       "Sanctuary",
+		state.Thorns:          "Thorns",
+
 		// Barbarian buffs
 		state.Battleorders:  "Battle Orders",
 		state.Battlecommand: "Battle Command",
 		state.Shout:         "Shout",
-		
+
 		// Assassin buffs
 		state.Fade:          "Fade",
 		state.Quickness:     "Burst of Speed",
 		state.Shadowwarrior: "Shadow Warrior",
-		
+
 		// Druid buffs
-		state.Cyclonearmor:  "Cyclone Armor",
-		state.Hurricane:     "Hurricane",
-		state.Oaksage:       "Oak Sage",
-		
+		state.Cyclonearmor: "Cyclone Armor",
+		state.Hurricane:    "Hurricane",
+		state.Oaksage:      "Oak Sage",
+
 		// Necromancer buffs
-		state.Bonearmor:     "Bone Armor",
+		state.Bonearmor: "Bone Armor",
 	}
-	
+
 	// Check each state and add to buffs map if active
 	for st, name := range stateToName {
 		if states.HasState(st) {
 			skillLevel := 0
 			var skillID skill.ID
 			hasSkillID := false
-			
+
 			// Try to get skill level if there's a corresponding skill ID
 			// Use the actual skill level from the game data (base level)
 			// Note: This is the base level, not including +skills bonuses
@@ -3451,16 +3462,16 @@ func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *
 					skillLevel = int(skillData.Level)
 				}
 			}
-			
+
 			// Only show level if we have a skill ID mapping and the skill exists
 			buffs[name] = skillLevel
-			
+
 			// Check if this buff was applied via Memory
 			if hasSkillID && memoryBuffs != nil && memoryBuffs[skillID] {
 				memoryBuffsMap[name] = true
 			}
 		}
 	}
-	
+
 	return buffs, memoryBuffsMap
 }

@@ -77,7 +77,7 @@ func main() {
 		config.Koolo.AutoStart.DelaySeconds = 60
 	}
 
-	logger, err := sloggger.NewLogger(config.Koolo.Debug.Log, config.Koolo.LogSaveDirectory, "")
+	logger, err := sloggger.NewLoggerWithLevel(config.Koolo.Debug.LogLevel, config.Koolo.Debug.Log, config.Koolo.LogSaveDirectory, "")
 	if err != nil {
 		log.Fatalf("Error starting logger: %s", err.Error())
 	}
