@@ -19,7 +19,10 @@ import (
 
 const (
 	clickDelay                   = 25 * time.Millisecond
-	spiralDelay                  = 25 * time.Millisecond
+	spiralDelayFallback          = 15 * time.Millisecond  // Fallback delay if zero delay doesn't work
+	spiralDelayAdaptiveThreshold = 5                      // Number of attempts before switching to fallback delay (reduced from 8 based on logs)
+	hoverCheckDelay              = 8 * time.Millisecond   // Small delay after moving mouse before checking hover
+	pickupClickDelay             = 100 * time.Millisecond // Delay after clicking item to check if pickup succeeded
 	pickupTimeout                = 3 * time.Second
 	telekinesisPickupMaxAttempts = 3
 )
@@ -40,6 +43,45 @@ var (
 	ErrMonsterAroundItem = errors.New("monsters detected around item")
 	ErrCastingMoving     = errors.New("char casting or moving")
 )
+
+// Pre-calculated spiral offsets cache
+var (
+	spiralOffsetsCache24   []struct{ x, y int } // Cache for maxInteractions = 24
+	spiralOffsetsCache44   []struct{ x, y int } // Cache for maxInteractions = 44
+	spiralCacheInitialized bool
+)
+
+// initSpiralCache pre-calculates all spiral offsets once for reuse
+func initSpiralCache() {
+	if spiralCacheInitialized {
+		return
+	}
+
+	// Pre-calculate for maxInteractions = 24
+	spiralOffsetsCache24 = make([]struct{ x, y int }, 24)
+	for i := 0; i < 24; i++ {
+		offsetX, offsetY := utils.ItemSpiral(i)
+		spiralOffsetsCache24[i] = struct{ x, y int }{x: offsetX, y: offsetY}
+	}
+
+	// Pre-calculate for maxInteractions = 44
+	spiralOffsetsCache44 = make([]struct{ x, y int }, 44)
+	for i := 0; i < 44; i++ {
+		offsetX, offsetY := utils.ItemSpiral(i)
+		spiralOffsetsCache44[i] = struct{ x, y int }{x: offsetX, y: offsetY}
+	}
+
+	spiralCacheInitialized = true
+}
+
+// getSpiralOffsets returns pre-calculated spiral offsets for the given maxInteractions
+func getSpiralOffsets(maxInteractions int) []struct{ x, y int } {
+	initSpiralCache()
+	if maxInteractions == 44 {
+		return spiralOffsetsCache44
+	}
+	return spiralOffsetsCache24
+}
 
 const (
 	waitForCharacterTimeout = 2 * time.Second
@@ -324,6 +366,12 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	}
 	baseScreenX, baseScreenY := ctx.PathFinder.GameCoordsToScreenCords(baseX, baseY)
 
+	// Calculate exact item position for first attempt (0, 0 offset)
+	exactScreenX, exactScreenY := ctx.PathFinder.GameCoordsToScreenCords(it.Position.X, it.Position.Y)
+
+	// Get pre-calculated spiral offsets (calculated once, reused for all pickups)
+	spiralOffsets := getSpiralOffsets(maxInteractions)
+
 	// Validate preconditions (monsters, LOS, distance)
 	if err := validatePickupPreconditions(it, 7, true); err != nil {
 		return err
@@ -337,6 +385,7 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	targetItem := it
 	lastMonsterCheck := time.Now()
 	const monsterCheckInterval = 150 * time.Millisecond
+	currentSpiralDelay := time.Duration(0) // Start with zero delay (adaptive)
 
 	startTime := time.Now()
 
@@ -346,11 +395,24 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 			return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
 		}
 
-		// Use timeout version to prevent infinite blocking
-		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
+		// Use timeout version to prevent infinite blocking (reduced timeout for faster pickup)
+		if !ctx.PauseIfNotPriorityWithTimeout(500 * time.Millisecond) {
 			ctx.Logger.Debug("Priority wait timeout in mouse pickup, continuing...")
 		}
-		ctx.RefreshGameData()
+
+		// Adaptive delay: switch to fallback delay after threshold attempts
+		if spiralAttempt >= spiralDelayAdaptiveThreshold && currentSpiralDelay == 0 {
+			currentSpiralDelay = spiralDelayFallback
+			ctx.Logger.Debug("Switching to fallback spiral delay after threshold attempts",
+				slog.Int("attempt", spiralAttempt),
+				slog.Duration("delay", currentSpiralDelay),
+			)
+		}
+
+		// Refresh game data after clicking to check if item was picked up
+		if !waitingForInteraction.IsZero() {
+			ctx.RefreshGameData()
+		}
 
 		// Periodic monster check
 		if time.Since(lastMonsterCheck) > monsterCheckInterval {
@@ -392,18 +454,42 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 			return fmt.Errorf("failed to pick up %s after %d attempts", it.Desc().Name, spiralAttempt)
 		}
 
-		offsetX, offsetY := utils.ItemSpiral(spiralAttempt)
-		cursorX := baseScreenX + offsetX
-		cursorY := baseScreenY + offsetY
+		// Calculate cursor position using pre-calculated spiral offsets
+		var cursorX, cursorY int
+		if spiralAttempt == 0 {
+			// First attempt: use exact item position
+			cursorX = exactScreenX
+			cursorY = exactScreenY
+		} else if spiralAttempt-1 < len(spiralOffsets) {
+			// Use pre-calculated offset
+			offset := spiralOffsets[spiralAttempt-1]
+			cursorX = baseScreenX + offset.x
+			cursorY = baseScreenY + offset.y
+		} else {
+			// Fallback: calculate on the fly (shouldn't happen in normal operation)
+			offsetX, offsetY := utils.ItemSpiral(spiralAttempt - 1)
+			cursorX = baseScreenX + offsetX
+			cursorY = baseScreenY + offsetY
+		}
 
-		// Move cursor directly to target position
+		// Move cursor first, then refresh to get updated HoverData
 		ctx.HID.MovePointer(cursorX, cursorY)
-		time.Sleep(spiralDelay)
 
-		// Click on item if mouse is hovering over
-		if currentItem.UnitID == ctx.GameReader.GameReader.GetData().HoverData.UnitID {
+		// Small delay to allow game to update hover state
+		if currentSpiralDelay > 0 {
+			time.Sleep(currentSpiralDelay)
+		} else {
+			// Even with zero delay, give a tiny delay for hover detection
+			time.Sleep(hoverCheckDelay)
+		}
+
+		// Refresh after moving mouse to get accurate HoverData
+		ctx.RefreshGameData()
+
+		// Click on item if mouse is hovering over (use cached HoverData)
+		if currentItem.UnitID == ctx.Data.HoverData.UnitID {
 			ctx.HID.Click(game.LeftButton, cursorX, cursorY)
-			utils.PingSleep(utils.Light, 150)
+			utils.PingSleep(utils.Light, int(pickupClickDelay.Milliseconds()))
 
 			if waitingForInteraction.IsZero() {
 				waitingForInteraction = time.Now()
