@@ -73,7 +73,8 @@ func BuyConsumables(forceRefill bool) {
 
 	ctx.Logger.Debug(fmt.Sprintf("Buying: %d Healing potions and %d Mana potions for belt", missingHealingPotionInBelt, missingManaPotiontInBelt))
 
-	if ShouldBuyTPs() || forceRefill {
+	// Handle TP Tome purchase (only if not using belt scrolls and not disabled)
+	if (!ctx.CharacterCfg.Inventory.UseScrollTPInBelt && !ctx.CharacterCfg.Inventory.DisableTomePortal) && (ShouldBuyTPs() || forceRefill) {
 		if _, found := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory); !found && ctx.Data.PlayerUnit.TotalPlayerGold() > 450 {
 			ctx.Logger.Info("TP Tome not found, buying one...")
 			if itm, itmFound := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationVendor); itmFound {
@@ -106,7 +107,19 @@ func BuyConsumables(forceRefill bool) {
 		missingManaPotionInInventory = 0
 	}
 
-	if ShouldBuyTPs() || forceRefill {
+	// Handle TP scrolls - buy for belt if using belt scrolls
+	if ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+		missingTPScrollCount := ctx.BeltManager.GetMissingScrollTPCount()
+		if missingTPScrollCount > 0 {
+			ctx.Logger.Debug(fmt.Sprintf("Buying %d TP scrolls for belt...", missingTPScrollCount))
+			if itm, found := ctx.Data.Inventory.Find(item.ScrollOfTownPortal, item.LocationVendor); found {
+				// Buy enough scrolls to fill the belt column
+				// The scrolls will be placed in belt by RefillBeltFromInventory when called later
+				BuyItem(itm, missingTPScrollCount)
+			}
+		}
+	} else if (!ctx.CharacterCfg.Inventory.DisableTomePortal) && (ShouldBuyTPs() || forceRefill) {
+		// Original behavior: fill TP tome if not using belt scrolls
 		ctx.Logger.Debug("Filling TP Tome...")
 		if itm, found := ctx.Data.Inventory.Find(item.ScrollOfTownPortal, item.LocationVendor); found {
 			if ctx.Data.PlayerUnit.TotalPlayerGold() > 6000 {
@@ -239,36 +252,66 @@ func ShouldBuyKeys() (int, bool) {
 	return totalKeys, totalKeys < keyCount
 }
 
+// getAvailableGold retorna o dinheiro disponível para uso: inventário + aba personal (excluindo shared tabs)
+func getAvailableGold(ctx *context.Status) int {
+	// Dinheiro disponível para uso = inventário + aba personal do baú (tab 1)
+	// Dinheiro das abas shared (tabs 2-4) NÃO deve ser contabilizado
+	inventoryGold := ctx.Data.Inventory.Gold
+	personalStashGold := 0
+	if len(ctx.Data.Inventory.StashedGold) > 0 {
+		personalStashGold = ctx.Data.Inventory.StashedGold[0] // Tab 1 (personal) = índice 0
+	}
+
+	return inventoryGold + personalStashGold
+}
+
+// canAffordMercRevive verifica se tem dinheiro suficiente para reviver o mercenário
+func canAffordMercRevive(ctx *context.Status) bool {
+	// Custo de reviver varia com nível, mas o máximo é 50k
+	const estimatedReviveCost = 50000
+
+	availableGold := getAvailableGold(ctx)
+	return availableGold >= estimatedReviveCost
+}
+
 func SellJunk(lockConfig ...[][]int) {
 	ctx := context.Get()
 	ctx.Logger.Debug("--- SellJunk() function entered ---")
 	ctx.Logger.Debug("Selling junk items...")
 
-	// Check if we should drop items instead of selling
-	currentGold := ctx.Data.PlayerUnit.TotalPlayerGold()
+	// Use available gold (inventory + personal stash) instead of just inventory gold
+	availableGold := getAvailableGold(ctx)
 	minGoldToDrop := ctx.CharacterCfg.Vendor.MinGoldToDrop
 	currentAct := ctx.Data.PlayerUnit.Area.Act()
 	alwaysDropAct := ctx.CharacterCfg.Vendor.AlwaysDropAct
+
+	// Check if mercenary is dead and we don't have enough gold to revive
+	mercDead := ctx.CharacterCfg.Character.UseMerc && ctx.Data.MercHPPercent() <= 0
+	needGoldForMerc := mercDead && !canAffordMercRevive(ctx)
 
 	// Determine if we should drop based on act or gold threshold
 	shouldDrop := false
 	dropNearStash := false
 	dropReason := ""
 
-	// If AlwaysDropAct is configured AND minGoldToDrop threshold is met, always drop in the configured act
-	if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+	// Force sale if mercenary is dead and we need gold to revive
+	if needGoldForMerc {
+		shouldDrop = false
+		ctx.Logger.Info(fmt.Sprintf("Mercenary is dead and insufficient gold to revive (available: %d) - forcing sale instead of drop", availableGold))
+	} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && availableGold >= minGoldToDrop {
+		// If AlwaysDropAct is configured AND minGoldToDrop threshold is met, always drop in the configured act
 		shouldDrop = true
 		dropNearStash = true
-		dropReason = fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d) AND AlwaysDropAct is set to Act %d - dropping items near stash in Act %d", currentGold, minGoldToDrop, alwaysDropAct, alwaysDropAct)
+		dropReason = fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d) AND AlwaysDropAct is set to Act %d - dropping items near stash in Act %d", availableGold, minGoldToDrop, alwaysDropAct, alwaysDropAct)
 	} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && currentAct == alwaysDropAct {
 		// If AlwaysDropAct is configured and we're already in that act, drop near stash
 		shouldDrop = true
 		dropNearStash = true
 		dropReason = fmt.Sprintf("AlwaysDropAct is set to Act %d - dropping items near stash", alwaysDropAct)
-	} else if minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+	} else if minGoldToDrop > 0 && availableGold >= minGoldToDrop {
 		// If only minGoldToDrop threshold is met (and AlwaysDropAct is not configured or we're not in that act)
 		shouldDrop = true
-		dropReason = fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d) - dropping items", currentGold, minGoldToDrop)
+		dropReason = fmt.Sprintf("Gold (%d) >= MinGoldToDrop (%d) - dropping items", availableGold, minGoldToDrop)
 	}
 
 	if shouldDrop {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -92,7 +93,12 @@ func checkMisplacedPotions() []data.Item {
 		if expectedType == "" {
 			return false
 		}
-		return strings.Contains(strings.ToLower(actualPotion), expectedType)
+		actualLower := strings.ToLower(actualPotion)
+		// Special handling for "tp" type - check for ScrollOfTownPortal
+		if expectedType == "tp" {
+			return actualLower == "scrolloftownportal" || strings.Contains(actualLower, "scrolloftownportal")
+		}
+		return strings.Contains(actualLower, expectedType)
 	}
 
 	misplacedPotions := []data.Item{}
@@ -103,6 +109,14 @@ func checkMisplacedPotions() []data.Item {
 		}
 
 		expectedPotionType := configuredBeltColumns[pot.Position.X%4]
+		// Skip validation for "tp" column if item is not a TP scroll (allow empty slots)
+		if strings.EqualFold(expectedPotionType, "tp") && string(pot.Name) != string(item.ScrollOfTownPortal) {
+			// Only mark as misplaced if it's a different item type (not empty)
+			if pot.Name != "" {
+				misplacedPotions = append(misplacedPotions, pot)
+			}
+			continue
+		}
 		if !matchPotionType(string(pot.Name), expectedPotionType) {
 			misplacedPotions = append(misplacedPotions, pot)
 		}

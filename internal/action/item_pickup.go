@@ -180,23 +180,35 @@ func checkInventoryFit(item data.Item, refreshInventory bool) (fits bool, needsT
 	return fits, needsTown
 }
 
-// HasTPsAvailable checks if the player has at least one Town Portal in their tome.
+// HasTPsAvailable checks if the player has at least one Town Portal in their tome or belt.
 func HasTPsAvailable() bool {
 	ctx := context.Get()
 
-	// Check for Tome of Town Portal
-	portalTome, found := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
-	if !found {
-		_, foundScroll := ctx.Data.Inventory.Find(item.ScrollOfTownPortal)
-		if foundScroll {
+	// Check if using scroll TP in belt
+	if ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+		_, found := ctx.BeltManager.GetFirstScrollTP()
+		if found {
 			return true
 		}
-		return false // No portal tome found at all
+		// If using belt but no scroll found, return false (don't fall back to tome)
+		return false
 	}
 
-	qty, found := portalTome.FindStat(stat.Quantity, 0)
-	// Return true only if the quantity stat was found and the value is greater than 0
-	return found && qty.Value > 0
+	// Check for Tome of Town Portal (unless disabled)
+	if !ctx.CharacterCfg.Inventory.DisableTomePortal {
+		portalTome, found := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
+		if found {
+			qty, found := portalTome.FindStat(stat.Quantity, 0)
+			// Return true only if the quantity stat was found and the value is greater than 0
+			if found && qty.Value > 0 {
+				return true
+			}
+		}
+	}
+
+	// Fallback: check for scroll in inventory
+	_, foundScroll := ctx.Data.Inventory.Find(item.ScrollOfTownPortal)
+	return foundScroll
 }
 
 // IsInventoryFull checks if the inventory is 100% full (no free space available).
@@ -1001,6 +1013,31 @@ func shouldBePickedUp(i data.Item) bool {
 	// Pick up scrolls if we have the corresponding tome and it's not full (low priority pickup)
 	const maxScrollsInTome = 20 // Maximum scrolls a tome can hold
 	if i.Name == item.ScrollOfTownPortal {
+		// If using belt for TP scrolls, check if belt needs scrolls
+		if ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+			missingCount := ctx.BeltManager.GetMissingScrollTPCount()
+			if missingCount > 0 {
+				return true // Pick up if belt needs scrolls
+			}
+			// If belt is full, don't pick up (unless we also have tome as backup)
+			if !ctx.CharacterCfg.Inventory.DisableTomePortal {
+				portalTome, found := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
+				if found {
+					qty, found := portalTome.FindStat(stat.Quantity, 0)
+					if !found {
+						return true
+					}
+					return qty.Value < maxScrollsInTome
+				}
+			}
+			return false // Belt is full and no tome backup
+		}
+
+		// Original behavior: check tome
+		if ctx.CharacterCfg.Inventory.DisableTomePortal {
+			return false // Don't pick up if tome is disabled and not using belt
+		}
+
 		portalTome, found := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
 		if !found {
 			return false // Don't pick up scrolls if we don't have the tome

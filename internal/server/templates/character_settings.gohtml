@@ -928,6 +928,7 @@
                         <option value="healing" {{ if eq $potionType "healing" }}selected{{ end }}>Healing</option>
                         <option value="mana" {{ if eq $potionType "mana" }}selected{{ end }}>Mana</option>
                         <option value="rejuvenation" {{ if eq $potionType "rejuvenation" }}selected{{ end }}>Rejuvenation</option>
+                        <option value="tp" {{ if eq $potionType "tp" }}selected{{ end }}>Town Portal</option>
                     </select>
                 </label>
                 {{ end }}
@@ -945,6 +946,17 @@
                 <label>
                     Rejuv Potions
                     <input type="number" name="rejuvPotionCount" min="0" max="99" placeholder="{{ .Config.Inventory.RejuvPotionCount }}" value="{{ .Config.Inventory.RejuvPotionCount }}"/>
+                </label>
+            </fieldset>
+            <h4>Town Portal Settings</h4><br>
+            <fieldset class="grid">
+                <label>
+                    <input type="checkbox" name="useScrollTPInBelt" {{ if .Config.Inventory.UseScrollTPInBelt }}checked{{ end }}/>
+                    Use Scroll TP in Belt (saves 2 inventory slots) - Select "Town Portal" in Belt Layout above
+                </label>
+                <label>
+                    <input type="checkbox" name="disableTomePortal" {{ if .Config.Inventory.DisableTomePortal }}checked{{ end }}/>
+                    Disable Tome Portal (only works with Scroll TP in Belt)
                 </label>
             </fieldset>
             <h3>Merc Settings</h3><br>

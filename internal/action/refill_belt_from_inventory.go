@@ -2,6 +2,7 @@ package action
 
 import (
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -23,7 +24,20 @@ func RefillBeltFromInventory() error {
 	missingManaPotionCount := ctx.BeltManager.GetMissingCount(data.ManaPotion)
 	missingRejuvPotionCount := ctx.BeltManager.GetMissingCount(data.RejuvenationPotion)
 
-	if !((missingHealingPotionCount > 0 && len(healingPotions) > 0) || (missingManaPotionCount > 0 && len(manaPotions) > 0) || (missingRejuvPotionCount > 0 && len(rejuvPotions) > 0)) {
+	// Check for TP scrolls if using belt for TP
+	missingTPScrollCount := 0
+	var tpScrolls []data.Item
+	if ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+		missingTPScrollCount = ctx.BeltManager.GetMissingScrollTPCount()
+		// Find TP scrolls in inventory
+		for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if itm.Name == item.ScrollOfTownPortal {
+				tpScrolls = append(tpScrolls, itm)
+			}
+		}
+	}
+
+	if !((missingHealingPotionCount > 0 && len(healingPotions) > 0) || (missingManaPotionCount > 0 && len(manaPotions) > 0) || (missingRejuvPotionCount > 0 && len(rejuvPotions) > 0) || (missingTPScrollCount > 0 && len(tpScrolls) > 0)) {
 		ctx.Logger.Debug("No need to refill belt from inventory")
 		return nil
 	}
@@ -50,6 +64,11 @@ func RefillBeltFromInventory() error {
 		putPotionInBelt(ctx, rejuvPotions[i])
 	}
 
+	// Refill TP scrolls
+	for i := 0; i < missingTPScrollCount && i < len(tpScrolls); i++ {
+		putScrollTPInBelt(ctx, tpScrolls[i])
+	}
+
 	ctx.Logger.Info("Belt refilled from inventory")
 	err := step.CloseAllMenus()
 	if err != nil {
@@ -64,6 +83,12 @@ func RefillBeltFromInventory() error {
 
 func putPotionInBelt(ctx *context.Status, potion data.Item) {
 	screenPos := ui.GetScreenCoordsForItem(potion)
+	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
+	utils.Sleep(150)
+}
+
+func putScrollTPInBelt(ctx *context.Status, scroll data.Item) {
+	screenPos := ui.GetScreenCoordsForItem(scroll)
 	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
 	utils.Sleep(150)
 }

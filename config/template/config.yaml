@@ -64,6 +64,9 @@ inventory:
   manaPotionCount: 0 # Number of mana potions to keep in inventory
   rejuvPotionCount: 0 # Number of rejuvenation potions to keep in inventory
   keyCount: 12 # Number of keys to keep in inventory (default: 12 if not defined, 0 = disabled)
+  useScrollTPInBelt: false # If true, use Scroll of Town Portal in belt instead of Tome of Town Portal (saves 2 inventory slots)
+  tpScrollBeltColumn: 3 # Belt column (0-3) to use for TP scrolls when useScrollTPInBelt is true (default: 3, which is column 4)
+  disableTomePortal: false # If true, completely disables using Tome of Town Portal (only works with useScrollTPInBelt)
 
 character:
   class: sorceress # Allowed values: sorceress, lightning, hammerdin, foh, dragondin, paladin (leveling only), barb_leveling

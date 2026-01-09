@@ -481,6 +481,7 @@ func (s *HttpServer) getStatusData() IndexData {
 		if data := s.manager.GetData(supervisorName); data != nil {
 			// Defaults
 			var lvl, life, maxLife, mana, maxMana, mf, gold, gf int
+			var availableGold, totalGold int
 			var exp, lastExp, nextExp uint64
 			var fr, cr, lr, pr int
 			var mfr, mcr, mlr, mpr int
@@ -519,7 +520,19 @@ func (s *HttpServer) getStatusData() IndexData {
 				gf = v.Value
 			}
 
-			gold = data.PlayerUnit.TotalPlayerGold()
+			gold = data.Inventory.Gold
+
+			// Calculate available gold (inventory + personal stash tab)
+			availableGold = gold
+			if len(data.Inventory.StashedGold) > 0 {
+				availableGold += data.Inventory.StashedGold[0] // Tab 1 (personal) = índice 0
+			}
+
+			// Calculate total gold (inventory + all stash tabs)
+			totalGold = gold
+			for _, stashedGold := range data.Inventory.StashedGold {
+				totalGold += stashedGold
+			}
 
 			if v, ok := data.PlayerUnit.FindStat(stat.FireResist, 0); ok {
 				fr = v.Value
@@ -617,6 +630,8 @@ func (s *HttpServer) getStatusData() IndexData {
 				MaxMana:         maxMana,
 				MagicFind:       mf,
 				Gold:            gold,
+				AvailableGold:   availableGold,
+				TotalGold:       totalGold,
 				GoldFind:        gf,
 				FireResist:      fr,
 				ColdResist:      cr,
@@ -1587,6 +1602,14 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			// Belt Columns
 			if cols, ok := values["inventoryBeltColumns[]"]; ok {
 				copy(cfg.Inventory.BeltColumns[:], cols)
+				// Check if any column is set to "tp" and set TPScrollBeltColumn accordingly
+				for i, col := range cols {
+					if col == "tp" {
+						cfg.Inventory.TPScrollBeltColumn = i
+						cfg.Inventory.UseScrollTPInBelt = true
+						break
+					}
+				}
 			}
 
 			if v := values.Get("healingPotionCount"); v != "" {
@@ -1598,6 +1621,22 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			if v := values.Get("rejuvPotionCount"); v != "" {
 				cfg.Inventory.RejuvPotionCount, _ = strconv.Atoi(v)
 			}
+
+			// UseScrollTPInBelt can be set explicitly or automatically when "tp" is in beltColumns
+			if values.Has("useScrollTPInBelt") {
+				cfg.Inventory.UseScrollTPInBelt = true
+			} else {
+				// Check if "tp" is in any belt column
+				hasTPColumn := false
+				for _, col := range cfg.Inventory.BeltColumns {
+					if col == "tp" {
+						hasTPColumn = true
+						break
+					}
+				}
+				cfg.Inventory.UseScrollTPInBelt = hasTPColumn
+			}
+			cfg.Inventory.DisableTomePortal = values.Has("disableTomePortal")
 
 			cfg.Game.CreateLobbyGames = values.Has("createLobbyGames")
 			cfg.Game.IsNonLadderChar = values.Has("isNonLadderChar")
@@ -2459,10 +2498,34 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		copy(cfg.Inventory.BeltColumns[:], r.Form["inventoryBeltColumns[]"])
+		// Check if any column is set to "tp" and set TPScrollBeltColumn accordingly
+		for i, col := range r.Form["inventoryBeltColumns[]"] {
+			if col == "tp" {
+				cfg.Inventory.TPScrollBeltColumn = i
+				cfg.Inventory.UseScrollTPInBelt = true
+				break
+			}
+		}
 
 		cfg.Inventory.HealingPotionCount, _ = strconv.Atoi(r.Form.Get("healingPotionCount"))
 		cfg.Inventory.ManaPotionCount, _ = strconv.Atoi(r.Form.Get("manaPotionCount"))
 		cfg.Inventory.RejuvPotionCount, _ = strconv.Atoi(r.Form.Get("rejuvPotionCount"))
+
+		// UseScrollTPInBelt can be set explicitly or automatically when "tp" is in beltColumns
+		if r.Form.Has("useScrollTPInBelt") {
+			cfg.Inventory.UseScrollTPInBelt = true
+		} else {
+			// Check if "tp" is in any belt column
+			hasTPColumn := false
+			for _, col := range cfg.Inventory.BeltColumns {
+				if col == "tp" {
+					hasTPColumn = true
+					break
+				}
+			}
+			cfg.Inventory.UseScrollTPInBelt = hasTPColumn
+		}
+		cfg.Inventory.DisableTomePortal = r.Form.Has("disableTomePortal")
 
 		// Game
 		cfg.Game.CreateLobbyGames = r.Form.Has("createLobbyGames")

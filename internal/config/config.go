@@ -180,6 +180,9 @@ type CharacterCfg struct {
 		ManaPotionCount    int         `yaml:"manaPotionCount"`
 		RejuvPotionCount   int         `yaml:"rejuvPotionCount"`
 		KeyCount           *int        `yaml:"keyCount"`
+		UseScrollTPInBelt  bool        `yaml:"useScrollTPInBelt"`
+		TPScrollBeltColumn int         `yaml:"tpScrollBeltColumn"`
+		DisableTomePortal  bool        `yaml:"disableTomePortal"`
 	} `yaml:"inventory"`
 	Character struct {
 		Class                        string `yaml:"class"`

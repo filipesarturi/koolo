@@ -346,19 +346,36 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				needManaPotionsRefill := !manaPotionsFoundInBelt && b.ctx.CharacterCfg.Inventory.BeltColumns.Total(data.ManaPotion) > 0
 				needRejuvPotionsRefill := !rejuvPotionsFoundInBelt && b.ctx.CharacterCfg.Inventory.BeltColumns.Total(data.RejuvenationPotion) > 0
 
+				// Check TP scrolls in belt if using belt for TP
+				needTPScrollsRefill := false
+				hasTPScrollsInInventory := false
+				if b.ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+					_, tpScrollsFoundInBelt := b.ctx.BeltManager.GetFirstScrollTP()
+					needTPScrollsRefill = !tpScrollsFoundInBelt
+					// Check if we have TP scrolls in inventory
+					for _, itm := range b.ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+						if itm.Name == item.ScrollOfTownPortal {
+							hasTPScrollsInInventory = true
+							break
+						}
+					}
+				}
+
 				// Determine if we should refill for each type based on availability in inventory
 				shouldRefillHealingPotions := needHealingPotionsRefill && hasHealingPotionsInInventory
 				shouldRefillManaPotions := needManaPotionsRefill && hasManaPotionsInInventory
 				shouldRefillRejuvPotions := needRejuvPotionsRefill && hasRejuvPotionsInInventory
+				shouldRefillTPScrolls := needTPScrollsRefill && hasTPScrollsInInventory
 
 				// Refill belt if:
 				// 1. Each potion type (healing/mana) is either already in belt or needed and available in inventory
 				// 2. And at least one potion type actually needs refilling
 				// Note: If one type (healing/mana) can be refilled but the other cannot, we skip refill and go to town instead
 				// 3. BUT will refill in any case if rejuvenation potions are needed and available in inventory
+				// 4. OR if TP scrolls are needed and available in inventory
 				shouldRefillBelt := ((shouldRefillHealingPotions || healingPotionsFoundInBelt) &&
 					(shouldRefillManaPotions || manaPotionsFoundInBelt) &&
-					(needHealingPotionsRefill || needManaPotionsRefill)) || shouldRefillRejuvPotions
+					(needHealingPotionsRefill || needManaPotionsRefill)) || shouldRefillRejuvPotions || shouldRefillTPScrolls
 
 				if shouldRefillBelt && !isInTown {
 					action.ManageBelt()
@@ -386,14 +403,32 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 							(b.ctx.Data.PlayerUnit.TotalPlayerGold() > 1000 && lvl.Value < 20) ||
 							(b.ctx.Data.PlayerUnit.TotalPlayerGold() > 5000 && lvl.Value >= 20) {
 
+							// Check mercenary death condition separately to verify gold availability
+							mercDead := b.ctx.CharacterCfg.BackToTown.MercDied &&
+								b.ctx.Data.MercHPPercent() <= 0 &&
+								b.ctx.CharacterCfg.Character.UseMerc
+							shouldGoToTownForMerc := false
+							if mercDead {
+								// Get Status from context to pass to action functions
+								status := botCtx.Get()
+								// Only go to town if we have enough gold OR if last attempt didn't fail due to no gold
+								hasEnoughGold := action.CanAffordMercRevive(status)
+								lastAttemptFailedNoGold := b.ctx.MercReviveFailedNoGold
+								shouldGoToTownForMerc = hasEnoughGold && !lastAttemptFailedNoGold
+								if !shouldGoToTownForMerc && !lastAttemptFailedNoGold {
+									// First time detecting merc death without gold - log and set flag
+									availableGold := action.GetAvailableGold(status)
+									b.ctx.Logger.Info("Mercenary is dead but insufficient gold to revive, skipping town trip",
+										"availableGold", availableGold,
+										"requiredGold", 50000)
+								}
+							}
+
 							if (b.ctx.CharacterCfg.BackToTown.NoHpPotions && needHealingPotionsRefill ||
 								b.ctx.CharacterCfg.BackToTown.EquipmentBroken && action.IsEquipmentBroken() ||
 								b.ctx.CharacterCfg.BackToTown.NoMpPotions && needManaPotionsRefill ||
 								townChicken ||
-								b.ctx.CharacterCfg.BackToTown.MercDied &&
-									b.ctx.Data.MercHPPercent() <= 0 &&
-									b.ctx.CharacterCfg.Character.UseMerc &&
-									b.ctx.Data.PlayerUnit.TotalPlayerGold() > 100000 ||
+								shouldGoToTownForMerc ||
 								b.ctx.CharacterCfg.BackToTown.InventoryFull && action.IsInventoryFull()) &&
 								!b.ctx.Data.PlayerUnit.Area.IsTown() &&
 								b.ctx.Data.PlayerUnit.Area != area.UberTristram {
@@ -406,7 +441,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 									reason = "Equipment broken"
 								} else if b.ctx.CharacterCfg.BackToTown.NoMpPotions && needManaPotionsRefill {
 									reason = "No mana potions found"
-								} else if b.ctx.CharacterCfg.BackToTown.MercDied && b.ctx.Data.MercHPPercent() <= 0 && b.ctx.CharacterCfg.Character.UseMerc {
+								} else if shouldGoToTownForMerc {
 									reason = "Mercenary is dead"
 								} else if townChicken {
 									reason = "Town chicken"

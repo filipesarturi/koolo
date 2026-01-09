@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/koolo/internal/event"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -120,4 +121,75 @@ func (bm BeltManager) GetMissingCount(potionType data.PotionType) int {
 	}
 
 	return 0
+}
+
+// getTPScrollColumn finds which belt column is configured for TP scrolls
+func (bm BeltManager) getTPScrollColumn() (int, bool) {
+	// First check if "tp" is in any belt column
+	for i, col := range bm.data.CharacterCfg.Inventory.BeltColumns {
+		if strings.EqualFold(col, "tp") {
+			return i, true
+		}
+	}
+	// Fallback to TPScrollBeltColumn if no "tp" found in beltColumns
+	tpScrollColumn := bm.data.CharacterCfg.Inventory.TPScrollBeltColumn
+	if tpScrollColumn >= 0 && tpScrollColumn <= 3 {
+		return tpScrollColumn, true
+	}
+	return -1, false
+}
+
+// GetFirstScrollTP finds the first Scroll of Town Portal in the belt
+func (bm BeltManager) GetFirstScrollTP() (data.Item, bool) {
+	if !bm.data.CharacterCfg.Inventory.UseScrollTPInBelt {
+		return data.Item{}, false
+	}
+
+	tpScrollColumn, found := bm.getTPScrollColumn()
+	if !found {
+		return data.Item{}, false
+	}
+
+	rows := bm.data.Inventory.Belt.Rows()
+	for row := 0; row < rows; row++ {
+		beltIndex := row*4 + tpScrollColumn
+		for _, beltItem := range bm.data.Inventory.Belt.Items {
+			if beltItem.Position.X == beltIndex && beltItem.Name == item.ScrollOfTownPortal {
+				return beltItem, true
+			}
+		}
+	}
+
+	return data.Item{}, false
+}
+
+// GetMissingScrollTPCount returns how many TP scrolls are missing in the belt
+func (bm BeltManager) GetMissingScrollTPCount() int {
+	if !bm.data.CharacterCfg.Inventory.UseScrollTPInBelt {
+		return 0
+	}
+
+	tpScrollColumn, found := bm.getTPScrollColumn()
+	if !found {
+		return 0
+	}
+
+	rows := bm.data.Inventory.Belt.Rows()
+	targetAmount := rows
+	currentCount := 0
+
+	for _, beltItem := range bm.data.Inventory.Belt.Items {
+		if beltItem.Name == item.ScrollOfTownPortal {
+			// Check if it's in the correct column
+			if beltItem.Position.X%4 == tpScrollColumn {
+				currentCount++
+			}
+		}
+	}
+
+	missing := targetAmount - currentCount
+	if missing < 0 {
+		return 0
+	}
+	return missing
 }

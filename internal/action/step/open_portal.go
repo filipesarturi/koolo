@@ -2,8 +2,10 @@ package step
 
 import (
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
@@ -18,7 +20,6 @@ var ErrPlayerDied = errors.New("player is dead")
 func OpenPortal() error {
 	ctx := context.Get()
 	ctx.SetLastStep("OpenPortal")
-	tpItem, tpItemFound := ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
 
 	// Portal cooldown: Prevent rapid portal creation during lag
 	// Check last portal time to avoid spam during network delays
@@ -55,19 +56,55 @@ func OpenPortal() error {
 		}
 
 		usedKB := false
-		//Already have tome of portal
-		if tpItemFound {
-			if _, bindingFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.TomeOfTownPortal); bindingFound {
-				ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.MustKBForSkill(skill.TomeOfTownPortal))
-				utils.PingSleep(utils.Medium, 250) // Medium operation: Wait for tome activation
-				ctx.HID.Click(game.RightButton, 300, 300)
-				usedKB = true
+		tpItemFound := false
+		var tpItem data.Item
+
+		// Check if we should use scroll TP from belt
+		if ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+			_, found := ctx.BeltManager.GetFirstScrollTP()
+			if found {
+				// Get the TP scroll column from beltColumns or TPScrollBeltColumn
+				tpScrollColumn := -1
+				for i, col := range ctx.CharacterCfg.Inventory.BeltColumns {
+					if strings.EqualFold(col, "tp") {
+						tpScrollColumn = i
+						break
+					}
+				}
+				if tpScrollColumn < 0 {
+					tpScrollColumn = ctx.CharacterCfg.Inventory.TPScrollBeltColumn
+				}
+				if tpScrollColumn >= 0 && tpScrollColumn <= 3 {
+					binding := ctx.Data.KeyBindings.UseBelt[tpScrollColumn]
+					ctx.HID.PressKeyBinding(binding)
+					utils.PingSleep(utils.Medium, 250) // Medium operation: Wait for scroll activation
+					ctx.HID.Click(game.RightButton, 300, 300)
+					usedKB = true
+					tpItemFound = true
+					ctx.Logger.Debug("Using TP scroll from belt", "column", tpScrollColumn+1)
+				}
 			}
-		} else {
+		}
+
+		// If not using belt scroll, try tome (unless disabled)
+		if !usedKB && !ctx.CharacterCfg.Inventory.DisableTomePortal {
+			tpItem, tpItemFound = ctx.Data.Inventory.Find(item.TomeOfTownPortal, item.LocationInventory)
+			if tpItemFound {
+				if _, bindingFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.TomeOfTownPortal); bindingFound {
+					ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.MustKBForSkill(skill.TomeOfTownPortal))
+					utils.PingSleep(utils.Medium, 250) // Medium operation: Wait for tome activation
+					ctx.HID.Click(game.RightButton, 300, 300)
+					usedKB = true
+				}
+			}
+		}
+
+		// If still not used, try scroll from inventory
+		if !usedKB && !tpItemFound {
 			tpItem, tpItemFound = ctx.Data.Inventory.Find(item.ScrollOfTownPortal, item.LocationInventory)
 		}
 
-		//Try to tp through inventory using tome or scroll
+		// Try to tp through inventory using tome or scroll
 		if !usedKB && tpItemFound {
 			ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
 			screenPos := ui.GetScreenCoordsForItem(tpItem)
@@ -75,7 +112,7 @@ func OpenPortal() error {
 			CloseAllMenus()
 		}
 
-		if !tpItemFound {
+		if !tpItemFound && !usedKB {
 			return errors.New("no tp item, can't open portal")
 		}
 		lastRun = time.Now()
