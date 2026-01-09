@@ -458,7 +458,15 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				if !skipTownRoutines {
 					err = action.PreRun(firstRun)
 					if err != nil {
-						return err
+						// Only exit game for critical health errors, other errors just skip to next run
+						if b.isCriticalHealthError(err) {
+							b.ctx.Logger.Warn("PreRun failed with critical health error, exiting game", "error", err.Error(), "run", r.Name())
+							return err
+						}
+						// Non-critical error: log and continue to next run
+						b.ctx.Logger.Warn("PreRun failed with non-critical error, skipping run", "error", err.Error(), "run", r.Name())
+						event.Send(event.RunFinished(event.Text(b.ctx.Name, fmt.Sprintf("Skipped run: %s (PreRun error)", r.Name())), r.Name(), event.FinishedError))
+						continue
 					}
 					firstRun = false
 				}
@@ -513,13 +521,36 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				event.Send(event.RunFinished(event.Text(b.ctx.Name, fmt.Sprintf("Finished run: %s", r.Name())), r.Name(), runFinishReason))
 
 				if err != nil {
-					return err
+					// Only exit game for critical health errors, other errors just skip to next run
+					if b.isCriticalHealthError(err) {
+						b.ctx.Logger.Warn("Critical health error detected, exiting game", "error", err.Error(), "run", r.Name())
+						return err
+					}
+					// Non-critical error: log and continue to next run
+					b.ctx.Logger.Warn("Run failed with non-critical error, continuing to next run", "error", err.Error(), "run", r.Name())
+					if !skipTownRoutines {
+						// Try to execute PostRun even if run failed, but don't fail if PostRun also errors
+						if postRunErr := action.PostRun(r == runs[len(runs)-1]); postRunErr != nil {
+							if b.isCriticalHealthError(postRunErr) {
+								b.ctx.Logger.Warn("PostRun failed with critical error, exiting game", "error", postRunErr.Error())
+								return postRunErr
+							}
+							b.ctx.Logger.Warn("PostRun failed with non-critical error, continuing", "error", postRunErr.Error())
+						}
+					}
+					continue
 				}
 
 				if !skipTownRoutines {
 					err = action.PostRun(r == runs[len(runs)-1])
 					if err != nil {
-						return err
+						// Check if PostRun error is critical
+						if b.isCriticalHealthError(err) {
+							return err
+						}
+						// Non-critical PostRun error: log and continue
+						b.ctx.Logger.Warn("PostRun failed with non-critical error, continuing to next run", "error", err.Error())
+						continue
 					}
 				}
 			}
@@ -528,6 +559,16 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 	})
 
 	return g.Wait()
+}
+
+// isCriticalHealthError checks if an error is a critical health error that should exit the game
+func (b *Bot) isCriticalHealthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, health.ErrChicken) ||
+		errors.Is(err, health.ErrMercChicken) ||
+		errors.Is(err, health.ErrDied)
 }
 
 func (b *Bot) Stop() {
