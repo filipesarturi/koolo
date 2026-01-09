@@ -696,7 +696,10 @@ function updateCharacterOverview(card, ui, status) {
     if (manaEl) manaEl.textContent = "Mana: —";
     if (mfEl) mfEl.textContent = "MF: —";
     if (gfEl) gfEl.textContent = "GF: —";
-    if (goldEl) goldEl.textContent = "Gold: —";
+    if (goldEl) {
+      goldEl.textContent = "Gold: —";
+      goldEl.title = "";
+    }
     if (resEl) resEl.textContent = "Res: —";
     if (gameNameEl) gameNameEl.textContent = "—";
     if (buffsLineEl) buffsLineEl.style.display = "none";
@@ -938,7 +941,12 @@ function updateCharacterOverview(card, ui, status) {
   if (manaEl) manaEl.textContent = `Mana: ${mana}/${maxMana}`;
   if (mfEl) mfEl.textContent = `MF: ${mf}%`;
   if (gfEl) gfEl.textContent = `GF: ${gf}%`;
-  if (goldEl) goldEl.textContent = `Gold: ${gold}`;
+  if (goldEl) {
+    const availableGold = ui.AvailableGold ?? gold;
+    const totalGold = ui.TotalGold ?? gold;
+    goldEl.textContent = `Gold: ${formatNumber(availableGold)} / ${formatNumber(totalGold)}`;
+    goldEl.title = `Available: ${formatNumber(availableGold)} (Inventory + Personal Stash)\nTotal: ${formatNumber(totalGold)} (Inventory + All Stash Tabs)`;
+  }
   if (resEl)
     resEl.innerHTML = `<span class="res-fr">FR: ${fr}</span> | <span class="res-cr">CR: ${cr}</span> | <span class="res-lr">LR: ${lr}</span> | <span class="res-pr">PR: ${pr}</span>`;
   

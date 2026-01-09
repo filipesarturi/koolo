@@ -147,7 +147,9 @@ type CharacterOverview struct {
 	ColdResist      int
 	LightningResist int
 	PoisonResist    int
-	Gold            int
+	Gold            int            // Inventory gold only
+	AvailableGold   int            // Inventory + personal stash (available for use)
+	TotalGold       int            // Inventory + all stash tabs (total gold)
 	GameName        string         // Current game name
 	ActiveBuffs     map[string]int // Map of active buff names to their levels
 	MemoryBuffs     map[string]bool // Map of buff names that were applied via Memory staff (key = buff name, value = true if via Memory)

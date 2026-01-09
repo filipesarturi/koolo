@@ -64,14 +64,21 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 		}
 		hasKeysToSell = totalKeys > 12
 
-		currentGold := ctx.Data.PlayerUnit.TotalPlayerGold()
+		// Use available gold (inventory + personal stash) instead of just inventory gold
+		availableGold := GetAvailableGold(ctx)
 		minGoldToDrop := ctx.CharacterCfg.Vendor.MinGoldToDrop
 		currentAct := ctx.Data.PlayerUnit.Area.Act()
 		alwaysDropAct := ctx.CharacterCfg.Vendor.AlwaysDropAct
 
-		// Check if should drop based on act or gold threshold
-		// Priority: If AlwaysDropAct is configured AND minGoldToDrop threshold is met, always drop in configured act
-		if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+		// Check if mercenary is dead and we don't have enough gold to revive
+		mercDead := ctx.CharacterCfg.Character.UseMerc && ctx.Data.MercHPPercent() <= 0
+		needGoldForMerc := mercDead && !CanAffordMercRevive(ctx)
+
+		// Force sale if mercenary is dead and we need gold to revive
+		if needGoldForMerc {
+			shouldDrop = false
+			ctx.Logger.Info(fmt.Sprintf("Mercenary is dead and insufficient gold to revive (available: %d) - forcing sale instead of drop", availableGold))
+		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && availableGold >= minGoldToDrop {
 			// Need to drop in the configured act - move there if not already there
 			shouldDrop = true
 			if !ctx.Data.PlayerUnit.Area.IsTown() || currentAct != alwaysDropAct {
@@ -91,7 +98,7 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && currentAct == alwaysDropAct {
 			// Already in the configured act, drop near stash
 			shouldDrop = ctx.Data.PlayerUnit.Area.IsTown()
-		} else if minGoldToDrop > 0 && currentGold >= minGoldToDrop {
+		} else if minGoldToDrop > 0 && availableGold >= minGoldToDrop {
 			// Only minGoldToDrop threshold is met (AlwaysDropAct not configured or not in that act)
 			shouldDrop = ctx.Data.PlayerUnit.Area.IsTown()
 		}

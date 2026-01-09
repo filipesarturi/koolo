@@ -107,7 +107,9 @@ func (o Organs) Run(parameters *RunParameters) error {
 			o.ctx.Logger.Warn(fmt.Sprintf("Failed to visit vendor after portal %d: %v", portalNum, err))
 		}
 
-		action.ReviveMerc()
+		if err := action.ReviveMerc(); err != nil {
+			o.ctx.Logger.Warn(fmt.Sprintf("Failed to revive mercenary after portal %d: %v", portalNum, err))
+		}
 
 		if err := action.Stash(true); err != nil {
 			o.ctx.Logger.Warn(fmt.Sprintf("Failed to stash items after portal %d: %v", portalNum, err))

@@ -69,6 +69,7 @@ type Context struct {
 	LastPortalTick        time.Time     // NEW FIELD: Tracks last portal creation for spam prevention
 	IsBossEquipmentActive bool          // flag for barb leveling
 	Drop                  *drop.Manager // Drop: Per-supervisor Drop manager
+	MercReviveFailedNoGold bool         // Flag to track if last revive attempt failed due to insufficient gold
 	lastRefreshTime       time.Time
 	refreshMutex          sync.RWMutex
 	refreshInterval       time.Duration

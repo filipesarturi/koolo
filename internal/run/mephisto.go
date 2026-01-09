@@ -100,7 +100,9 @@ func (m Mephisto) Run(parameters *RunParameters) error {
 		action.ReturnTown()
 		action.IdentifyAll(false)
 		action.Stash(false)
-		action.ReviveMerc()
+		if err := action.ReviveMerc(); err != nil {
+			m.ctx.Logger.Warn("Failed to revive mercenary", "error", err)
+		}
 		action.Repair()
 		action.VendorRefill(true, true)
 

@@ -178,7 +178,10 @@ func PreRun(firstRun bool) error {
 	}
 
 	HealAtNPC()
-	ReviveMerc()
+	if err := ReviveMerc(); err != nil {
+		ctx.Logger.Warn("Failed to revive mercenary", "error", err)
+		// Continue without mercenary - don't block the bot
+	}
 	HireMerc()
 
 	return Repair()
@@ -270,7 +273,10 @@ func InRunReturnTownRoutine() error {
 
 	HealAtNPC()
 	ctx.PauseIfNotPriority() // Check after HealAtNPC
-	ReviveMerc()
+	if err := ReviveMerc(); err != nil {
+		ctx.Logger.Warn("Failed to revive mercenary", "error", err)
+		// Continue without mercenary - don't block the bot
+	}
 	ctx.PauseIfNotPriority() // Check after ReviveMerc
 	HireMerc()
 	ctx.PauseIfNotPriority() // Check after HireMerc

@@ -111,7 +111,9 @@ func (t Torch) Run(parameters *RunParameters) error {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to visit vendor: %v", err))
 	}
 
-	action.ReviveMerc()
+	if err := action.ReviveMerc(); err != nil {
+		t.ctx.Logger.Warn(fmt.Sprintf("Failed to revive mercenary: %v", err))
+	}
 
 	if err := action.Stash(true); err != nil {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to stash items: %v", err))
@@ -223,7 +225,9 @@ func (t Torch) mephisto() error {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to visit vendor/heal: %v", err))
 	}
 
-	action.ReviveMerc()
+	if err := action.ReviveMerc(); err != nil {
+		t.ctx.Logger.Warn(fmt.Sprintf("Failed to revive mercenary: %v", err))
+	}
 
 	if err := checkForRejuv(t.ctx); err != nil {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to check/fill rejuvs: %v", err))
@@ -364,7 +368,9 @@ func (t Torch) baal() error {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to visit vendor/heal: %v", err))
 	}
 
-	action.ReviveMerc()
+	if err := action.ReviveMerc(); err != nil {
+		t.ctx.Logger.Warn(fmt.Sprintf("Failed to revive mercenary: %v", err))
+	}
 
 	if err := checkForRejuv(t.ctx); err != nil {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to check/fill rejuvs: %v", err))
@@ -392,7 +398,9 @@ func (t *Torch) diablo() error {
 		if err := action.VendorRefill(true, true); err != nil {
 			t.ctx.Logger.Warn(fmt.Sprintf("Failed to visit vendor: %v", err))
 		}
-		action.ReviveMerc()
+		if err := action.ReviveMerc(); err != nil {
+			t.ctx.Logger.Warn(fmt.Sprintf("Failed to revive mercenary: %v", err))
+		}
 
 		if err := goToStashPosition(t.ctx); err != nil {
 			return fmt.Errorf("failed to go to stash: %w", err)
@@ -543,7 +551,9 @@ func (t *Torch) townTorch() error {
 	if err := action.VendorRefill(true, true); err != nil {
 		t.ctx.Logger.Warn(fmt.Sprintf("Failed to visit vendor: %v", err))
 	}
-	action.ReviveMerc()
+	if err := action.ReviveMerc(); err != nil {
+		t.ctx.Logger.Warn(fmt.Sprintf("Failed to revive mercenary: %v", err))
+	}
 
 	if err := goToStashPosition(t.ctx); err != nil {
 		return fmt.Errorf("failed to go to stash: %w", err)

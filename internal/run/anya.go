@@ -120,7 +120,9 @@ func (a Anya) Run(parameters *RunParameters) error {
 
 		action.IdentifyAll(false)
 		action.Stash(false)
-		action.ReviveMerc()
+		if err := action.ReviveMerc(); err != nil {
+			a.ctx.Logger.Warn("Failed to revive mercenary", "error", err)
+		}
 		action.Repair()
 		action.VendorRefill(false, true)
 
