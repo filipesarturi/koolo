@@ -45,10 +45,6 @@ func ReviveMerc() error {
 		return nil
 	}
 
-	if !NeedsTPsToContinue(status.Context) {
-		return fmt.Errorf("no town portals available to revive mercenary")
-	}
-
 	// Verificar dinheiro antes de tentar reviver
 	if !CanAffordMercRevive(status) {
 		availableGold := GetAvailableGold(status)
