@@ -909,7 +909,9 @@ func buffWithMemory() error {
 	if err := OpenStash(); err != nil {
 		return fmt.Errorf("failed to open stash: %w", err)
 	}
-	utils.PingSleep(utils.Medium, 500)
+	if err := waitForStashOpen(2 * time.Second); err != nil {
+		return fmt.Errorf("stash did not open: %w", err)
+	}
 
 	// Step 2: Swap to weapon slot 1 (tab 2) to see what's currently equipped
 	ctx.Logger.Debug("Swapping to weapon slot 1 (tab 2)")
@@ -917,7 +919,9 @@ func buffWithMemory() error {
 		step.CloseAllMenus()
 		return fmt.Errorf("failed to swap to weapon slot 1: %w", err)
 	}
-	utils.PingSleep(utils.Light, 300)
+	if err := waitForSlotSwap(1, 1*time.Second); err != nil {
+		ctx.Logger.Debug("Slot swap verification timeout, continuing anyway", "error", err)
+	}
 
 	// Refresh to get current equipped items
 	ctx.RefreshGameData()
@@ -932,7 +936,10 @@ func buffWithMemory() error {
 
 	// Step 4: Switch to the correct stash tab
 	SwitchStashTab(memoryTab)
-	utils.PingSleep(utils.Medium, 500)
+	if err := waitForStashTabSwitch(memoryTab, memoryStaff.UnitID, 1*time.Second); err != nil {
+		step.CloseAllMenus()
+		return fmt.Errorf("failed to switch to stash tab %d: %w", memoryTab, err)
+	}
 
 	// Refresh to get updated item position
 	ctx.RefreshGameData()
@@ -957,22 +964,15 @@ func buffWithMemory() error {
 	ctx.Logger.Info("Equipping Memory staff with SHIFT + Click")
 	screenPos := ui.GetScreenCoordsForItem(memoryStaff)
 	ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-	utils.PingSleep(utils.Medium, 200)
+	utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
 	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
-	utils.PingSleep(utils.Medium, 800)
 
-	// Verify Memory is equipped with retry
-	ctx.RefreshGameData()
+	// Verify Memory is equipped with retry using polling
 	memoryEquipped := false
 	maxEquipRetries := 3
 	for retry := 0; retry < maxEquipRetries; retry++ {
-		for _, eqItem := range ctx.Data.Inventory.ByLocation(item.LocationEquipped) {
-			if eqItem.IsRuneword && eqItem.RunewordName == item.RunewordMemory {
-				memoryEquipped = true
-				break
-			}
-		}
-		if memoryEquipped {
+		if waitForItemEquipped(memoryStaff.UnitID, item.LocLeftArm, 2*time.Second) {
+			memoryEquipped = true
 			break
 		}
 		if retry < maxEquipRetries-1 {
@@ -988,10 +988,8 @@ func buffWithMemory() error {
 			}
 			retryScreenPos := ui.GetScreenCoordsForItem(memoryStaff)
 			ctx.HID.MovePointer(retryScreenPos.X, retryScreenPos.Y)
-			utils.PingSleep(utils.Medium, 200)
+			utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
 			ctx.HID.ClickWithModifier(game.LeftButton, retryScreenPos.X, retryScreenPos.Y, game.ShiftKey)
-			utils.PingSleep(utils.Medium, 800)
-			ctx.RefreshGameData()
 		}
 	}
 
@@ -1003,7 +1001,7 @@ func buffWithMemory() error {
 
 	// Step 6: Close stash
 	step.CloseAllMenus()
-	utils.PingSleep(utils.Medium, 300)
+	// No delay needed - stash is closed immediately
 
 	// Step 7: Apply Energy Shield and Armor skills
 	ctx.Logger.Info("Applying Energy Shield and Armor buffs")
@@ -1126,7 +1124,7 @@ func buffWithMemory() error {
 	memoryBuffAppliedMu.Unlock()
 
 	// Step 8: Open stash again to restore original weapon
-	utils.PingSleep(utils.Medium, 300)
+	// No delay needed before opening stash
 
 	// Verify Memory is still equipped before proceeding
 	ctx.RefreshGameData()
@@ -1153,14 +1151,20 @@ func buffWithMemory() error {
 		if foundInInv {
 			ctx.Logger.Info("Found Memory in inventory, will put it back in stash")
 			if err := OpenStash(); err == nil {
-				SwitchStashTab(memoryTab)
-				utils.PingSleep(utils.Medium, 300)
-				ctx.RefreshGameData()
-				recoveryScreenPos := ui.GetScreenCoordsForItem(memoryInInventory)
-				ctx.HID.MovePointer(recoveryScreenPos.X, recoveryScreenPos.Y)
-				utils.PingSleep(utils.Medium, 200)
-				ctx.HID.ClickWithModifier(game.LeftButton, recoveryScreenPos.X, recoveryScreenPos.Y, game.CtrlKey)
-				utils.PingSleep(utils.Medium, 800)
+				if err := waitForStashOpen(2 * time.Second); err == nil {
+					SwitchStashTab(memoryTab)
+					if err := waitForStashTabSwitch(memoryTab, memoryInInventory.UnitID, 1*time.Second); err == nil {
+						ctx.RefreshGameData()
+						recoveryScreenPos := ui.GetScreenCoordsForItem(memoryInInventory)
+						ctx.HID.MovePointer(recoveryScreenPos.X, recoveryScreenPos.Y)
+						utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
+						ctx.HID.ClickWithModifier(game.LeftButton, recoveryScreenPos.X, recoveryScreenPos.Y, game.CtrlKey)
+						// Wait for item to be moved to stash
+						if !waitForItemInStash(memoryInInventory.UnitID, 1*time.Second) {
+							ctx.Logger.Debug("Memory not found in stash after recovery click")
+						}
+					}
+				}
 			}
 		}
 		step.CloseAllMenus()
@@ -1171,12 +1175,13 @@ func buffWithMemory() error {
 		ctx.Logger.Warn("Failed to reopen stash, cannot restore original weapon", "error", err)
 		// Try to close any open menus and retry
 		step.CloseAllMenus()
-		utils.PingSleep(utils.Medium, 500)
 		if err := OpenStash(); err != nil {
 			return fmt.Errorf("failed to reopen stash after retry: %w", err)
 		}
 	}
-	utils.PingSleep(utils.Medium, 500)
+	if err := waitForStashOpen(2 * time.Second); err != nil {
+		return fmt.Errorf("stash did not open after retry: %w", err)
+	}
 
 	// Step 9: Restore original weapon(s) if they exist
 	// SHIFT + Click on the original weapon in stash will automatically replace Memory
@@ -1191,7 +1196,10 @@ func buffWithMemory() error {
 		// Search all stash tabs for the original weapon
 		for tab := 1; tab <= 4; tab++ {
 			SwitchStashTab(tab)
-			utils.PingSleep(utils.Medium, 300)
+			// Wait for tab switch by checking if we can find items on this tab
+			ctx.RefreshGameData()
+			// Small delay to allow tab switch animation
+			utils.PingSleep(utils.Light, 100)
 			ctx.RefreshGameData()
 
 			stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
@@ -1220,7 +1228,9 @@ func buffWithMemory() error {
 		if foundOriginal {
 			// Make sure we're on the correct tab
 			SwitchStashTab(originalWeaponTab)
-			utils.PingSleep(utils.Medium, 300)
+			if err := waitForStashTabSwitch(originalWeaponTab, originalLeftArm.UnitID, 1*time.Second); err != nil {
+				ctx.Logger.Debug("Tab switch verification timeout, continuing anyway", "error", err)
+			}
 			ctx.RefreshGameData()
 
 			// Find the weapon again after tab switch
@@ -1236,9 +1246,12 @@ func buffWithMemory() error {
 			ctx.Logger.Info("Equipping original weapon with SHIFT + Click (will replace Memory)")
 			screenPos = ui.GetScreenCoordsForItem(originalWeapon)
 			ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-			utils.PingSleep(utils.Medium, 200)
+			utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
 			ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
-			utils.PingSleep(utils.Medium, 800)
+			// Wait for weapon to be equipped and Memory to be in stash
+			if !waitForItemEquipped(originalLeftArm.UnitID, item.LocLeftArm, 2*time.Second) {
+				ctx.Logger.Debug("Original weapon equip verification timeout, continuing anyway")
+			}
 
 			// Verify Memory is back in stash and original weapon is equipped
 			ctx.RefreshGameData()
@@ -1319,7 +1332,10 @@ func buffWithMemory() error {
 		if !foundRight {
 			for tab := 1; tab <= 4; tab++ {
 				SwitchStashTab(tab)
-				utils.PingSleep(utils.Medium, 300)
+				// Wait for tab switch by checking if we can find items on this tab
+				ctx.RefreshGameData()
+				// Small delay to allow tab switch animation
+				utils.PingSleep(utils.Light, 100)
 				ctx.RefreshGameData()
 
 				stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
@@ -1346,7 +1362,9 @@ func buffWithMemory() error {
 
 			if foundRight {
 				SwitchStashTab(rightItemTab)
-				utils.PingSleep(utils.Medium, 300)
+				if err := waitForStashTabSwitch(rightItemTab, originalRightArm.UnitID, 1*time.Second); err != nil {
+					ctx.Logger.Debug("Tab switch verification timeout, continuing anyway", "error", err)
+				}
 				ctx.RefreshGameData()
 
 				stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
@@ -1362,9 +1380,12 @@ func buffWithMemory() error {
 		if foundRight {
 			screenPos = ui.GetScreenCoordsForItem(originalRightItem)
 			ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-			utils.PingSleep(utils.Medium, 200)
+			utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
 			ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
-			utils.PingSleep(utils.Medium, 800)
+			// Wait for item to be equipped
+			if !waitForItemEquipped(originalRightArm.UnitID, item.LocRightArm, 2*time.Second) {
+				ctx.Logger.Debug("Right arm item equip verification timeout, continuing anyway")
+			}
 			ctx.Logger.Info("Original right arm item restored")
 		}
 	}
@@ -1391,9 +1412,12 @@ func buffWithMemory() error {
 				slotCoords = data.Position{X: ui.EquipLArmX, Y: ui.EquipLArmY}
 			}
 			ctx.HID.MovePointer(slotCoords.X, slotCoords.Y)
-			utils.PingSleep(utils.Medium, 200)
+			utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
 			ctx.HID.ClickWithModifier(game.LeftButton, slotCoords.X, slotCoords.Y, game.CtrlKey)
-			utils.PingSleep(utils.Medium, 1000)
+			// Wait for Memory to be moved to stash
+			if !waitForItemInStash(memoryStaff.UnitID, 1*time.Second) {
+				ctx.Logger.Debug("Memory not found in stash after manual recovery")
+			}
 			ctx.RefreshGameData()
 
 			// Check again
@@ -1531,6 +1555,134 @@ func buffWithMemoryAlreadyEquipped() error {
 	return restoreWeaponFromCTA()
 }
 
+// waitForStashOpen polls until stash is open or timeout is reached
+func waitForStashOpen(timeout time.Duration) error {
+	ctx := context.Get()
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		<-ticker.C
+		ctx.RefreshGameData()
+		if ctx.Data.OpenMenus.Stash {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("stash did not open within %v", timeout)
+}
+
+// waitForStashTabSwitch polls until item is visible on the specified tab or timeout is reached
+func waitForStashTabSwitch(tab int, itemID data.UnitID, timeout time.Duration) error {
+	ctx := context.Get()
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		<-ticker.C
+		ctx.RefreshGameData()
+		items := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
+		for _, itm := range items {
+			// Check if item is on the current tab
+			itemTab := 1
+			if itm.Location.LocationType == item.LocationSharedStash {
+				itemTab = itm.Location.Page + 1
+			}
+			if itemTab == tab && itm.UnitID == itemID {
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("item not found on tab %d within %v", tab, timeout)
+}
+
+// waitForItemEquipped polls until item is equipped at the expected location or timeout is reached
+func waitForItemEquipped(itemID data.UnitID, expectedLocation item.LocationType, timeout time.Duration) bool {
+	ctx := context.Get()
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		<-ticker.C
+		ctx.RefreshGameData()
+		equippedItem := GetEquippedItem(ctx.Data.Inventory, expectedLocation)
+		if equippedItem.UnitID == itemID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// waitForItemInStash polls until item is found in stash or timeout is reached
+func waitForItemInStash(itemID data.UnitID, timeout time.Duration) bool {
+	ctx := context.Get()
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		<-ticker.C
+		ctx.RefreshGameData()
+		items := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
+		for _, itm := range items {
+			if itm.UnitID == itemID {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// waitForSlotSwap polls until slot swap is complete by checking if skills changed or timeout is reached
+func waitForSlotSwap(slotNumber int, timeout time.Duration) error {
+	ctx := context.Get()
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	// Get initial skills to compare
+	ctx.RefreshGameData()
+	initialSkills := make(map[skill.ID]bool)
+	for skillID := range ctx.Data.PlayerUnit.Skills {
+		initialSkills[skillID] = true
+	}
+
+	for time.Now().Before(deadline) {
+		<-ticker.C
+		ctx.RefreshGameData()
+
+		// Check if skills changed (indicates swap completed)
+		skillsChanged := false
+		for skillID := range ctx.Data.PlayerUnit.Skills {
+			if !initialSkills[skillID] {
+				skillsChanged = true
+				break
+			}
+		}
+		// Also check if a skill from initial set is missing
+		if !skillsChanged {
+			for skillID := range initialSkills {
+				if _, exists := ctx.Data.PlayerUnit.Skills[skillID]; !exists {
+					skillsChanged = true
+					break
+				}
+			}
+		}
+
+		if skillsChanged {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("slot swap did not complete within %v", timeout)
+}
+
 // restoreWeaponFromCTA finds CTA in stash and equips it to replace Memory
 func restoreWeaponFromCTA() error {
 	ctx := context.Get()
@@ -1546,7 +1698,9 @@ func restoreWeaponFromCTA() error {
 		if err := OpenStash(); err != nil {
 			return fmt.Errorf("failed to open stash: %w", err)
 		}
-		utils.PingSleep(utils.Medium, 500)
+		if err := waitForStashOpen(2 * time.Second); err != nil {
+			return fmt.Errorf("stash did not open: %w", err)
+		}
 	}
 
 	// Find CTA in stash
@@ -1556,7 +1710,10 @@ func restoreWeaponFromCTA() error {
 
 	for tab := 1; tab <= 4; tab++ {
 		SwitchStashTab(tab)
-		utils.PingSleep(utils.Medium, 300)
+		// Wait for tab switch by checking if we can find items on this tab
+		ctx.RefreshGameData()
+		// Small delay to allow tab switch animation
+		utils.PingSleep(utils.Light, 100)
 		ctx.RefreshGameData()
 
 		stashItems := ctx.Data.Inventory.ByLocation(item.LocationStash, item.LocationSharedStash)
@@ -1589,7 +1746,9 @@ func restoreWeaponFromCTA() error {
 
 	// Make sure we're on the correct tab
 	SwitchStashTab(ctaTab)
-	utils.PingSleep(utils.Medium, 300)
+	if err := waitForStashTabSwitch(ctaTab, ctaWeapon.UnitID, 1*time.Second); err != nil {
+		ctx.Logger.Debug("Tab switch verification timeout, continuing anyway", "error", err)
+	}
 	ctx.RefreshGameData()
 
 	// Find CTA again after tab switch
@@ -1604,9 +1763,12 @@ func restoreWeaponFromCTA() error {
 	// Equip CTA using SHIFT + Click (will replace Memory)
 	screenPos := ui.GetScreenCoordsForItem(ctaWeapon)
 	ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-	utils.PingSleep(utils.Medium, 200)
+	utils.PingSleep(utils.Light, 50) // Small delay for mouse movement
 	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
-	utils.PingSleep(utils.Medium, 1000)
+	// Wait for CTA to be equipped and Memory to be in stash
+	if !waitForItemEquipped(ctaWeapon.UnitID, item.LocLeftArm, 2*time.Second) {
+		ctx.Logger.Debug("CTA equip verification timeout, continuing anyway")
+	}
 
 	// Verify CTA is equipped and Memory is back in stash
 	ctx.RefreshGameData()
