@@ -269,9 +269,13 @@ func shouldStashIt(i data.Item, firstRun bool) (bool, bool, string, string) {
 		return false, false, "", "" // Explicitly do NOT stash the Horadric Staff
 	}
 
+	// Protect cow run items only if Cows run is active
 	if i.Name == "TomeOfTownPortal" || i.Name == "TomeOfIdentify" || i.Name == "WirtsLeg" {
-		fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (Quest/Special item exclusion).\n", i.Name)
-		return false, false, "", ""
+		if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+			fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (Cows run active).\n", i.Name)
+			return false, false, "", ""
+		}
+		// If not cow run, allow stashing these items
 	}
 
 	// Handle keys based on KeyCount configuration
@@ -542,10 +546,18 @@ func DropItem(i data.Item) {
 	ctx := context.Get()
 	ctx.SetLastAction("DropItem")
 
-	// Never drop essential items
-	if i.Name == item.TomeOfTownPortal || i.Name == item.TomeOfIdentify || i.Name == "HoradricCube" {
+	// Never drop HoradricCube
+	if i.Name == "HoradricCube" {
 		ctx.Logger.Debug(fmt.Sprintf("Skipping drop for protected item: %s", i.Name))
 		return
+	}
+
+	// Protect TomeOfTownPortal and TomeOfIdentify only if Cows run is active
+	if i.Name == item.TomeOfTownPortal || i.Name == item.TomeOfIdentify {
+		if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+			ctx.Logger.Debug(fmt.Sprintf("Skipping drop for %s (Cows run active): %s", i.Name, i.Name))
+			return
+		}
 	}
 
 	// Protect Wirt's Leg only if Cows run is active

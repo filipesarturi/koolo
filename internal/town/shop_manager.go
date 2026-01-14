@@ -13,6 +13,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
+	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/hectorgimenez/koolo/internal/ui"
@@ -916,8 +917,12 @@ func ItemsToBeSold(lockConfig ...[][]int) (items []data.Item) {
 			continue
 		}
 
+		// Protect cow run items only if Cows run is active
 		if itm.Name == item.TomeOfTownPortal || itm.Name == item.TomeOfIdentify || itm.Name == "WirtsLeg" {
-			continue
+			if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+				continue
+			}
+			// If not cow run, allow selling/dropping these items
 		}
 
 		// Handle keys: always sell/drop keys from unlocked slots

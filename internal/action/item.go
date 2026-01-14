@@ -58,10 +58,18 @@ func DropInventoryItem(i data.Item) error {
 	ctx := context.Get()
 	ctx.SetLastAction("DropInventoryItem")
 
-	// Never drop essential items
-	if i.Name == item.TomeOfTownPortal || i.Name == item.TomeOfIdentify || i.Name == "HoradricCube" {
+	// Never drop HoradricCube
+	if i.Name == "HoradricCube" {
 		ctx.Logger.Debug(fmt.Sprintf("Skipping drop for protected item: %s", i.Name))
 		return nil
+	}
+
+	// Protect TomeOfTownPortal and TomeOfIdentify only if Cows run is active
+	if i.Name == item.TomeOfTownPortal || i.Name == item.TomeOfIdentify {
+		if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+			ctx.Logger.Debug(fmt.Sprintf("Skipping drop for %s (Cows run active): %s", i.Name, i.Name))
+			return nil
+		}
 	}
 
 	// Protect Wirt's Leg only if Cows run is active
