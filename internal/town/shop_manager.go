@@ -113,9 +113,25 @@ func BuyConsumables(forceRefill bool) {
 		if missingTPScrollCount > 0 {
 			ctx.Logger.Debug(fmt.Sprintf("Buying %d TP scrolls for belt...", missingTPScrollCount))
 			if itm, found := ctx.Data.Inventory.Find(item.ScrollOfTownPortal, item.LocationVendor); found {
-				// Buy enough scrolls to fill the belt column
-				// The scrolls will be placed in belt by RefillBeltFromInventory when called later
-				BuyItem(itm, missingTPScrollCount)
+				// Check if there's at least one scroll TP in the belt
+				_, hasScrollInBelt := ctx.BeltManager.GetFirstScrollTP()
+				
+				if hasScrollInBelt {
+					// If there's at least one scroll in belt, use Shift+Right Click to fill all columns automatically
+					ctx.Logger.Debug("TP scrolls found in belt, using Shift+Right Click to fill all columns")
+					screenPos := ui.GetScreenCoordsForItem(itm)
+					utils.PingSleep(utils.Medium, 250) // Medium operation: Pre-buy delay
+					ctx.HID.ClickWithModifier(game.RightButton, screenPos.X, screenPos.Y, game.ShiftKey)
+					utils.PingSleep(utils.Medium, 600) // Medium operation: Wait for purchase to process
+					ctx.Logger.Debug("Purchased TP scrolls using Shift+Right Click")
+				} else {
+					// If no scrolls in belt, use normal buy and then refill from inventory
+					BuyItem(itm, missingTPScrollCount)
+					// Refresh game data after purchase
+					ctx.RefreshGameData()
+					// Refill scrolls from inventory to belt and discard extras
+					refillTPScrollsToBeltAndDiscardExtras()
+				}
 			}
 		}
 	} else if (!ctx.CharacterCfg.Inventory.DisableTomePortal) && (ShouldBuyTPs() || forceRefill) {
@@ -340,6 +356,181 @@ func SellJunk(lockConfig ...[][]int) {
 			SellItem(i)
 		}
 	}
+}
+
+// refillTPScrollsToBeltAndDiscardExtras moves TP scrolls from inventory to belt and discards extras in unlocked slots
+func refillTPScrollsToBeltAndDiscardExtras() {
+	ctx := context.Get()
+	ctx.SetLastAction("refillTPScrollsToBeltAndDiscardExtras")
+	
+	if !ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+		return
+	}
+	
+	// Refresh game data to get current state
+	ctx.RefreshGameData()
+	
+	missingTPScrollCount := ctx.BeltManager.GetMissingScrollTPCount()
+	if missingTPScrollCount == 0 {
+		// No missing scrolls, but check if there are extras in unlocked slots
+		discardExtraTPScrolls()
+		return
+	}
+	
+	// Find TP scrolls in inventory
+	var tpScrolls []data.Item
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name == item.ScrollOfTownPortal {
+			tpScrolls = append(tpScrolls, itm)
+		}
+	}
+	
+	if len(tpScrolls) == 0 {
+		// No scrolls in inventory to move
+		return
+	}
+	
+	ctx.Logger.Debug(fmt.Sprintf("Refilling %d TP scrolls from inventory to belt...", missingTPScrollCount))
+	
+	// Close any open menus first
+	_ = closeAllMenus()
+	utils.Sleep(200)
+	
+	// Open inventory
+	ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+	utils.Sleep(300)
+	ctx.RefreshGameData()
+	
+	// Wait for inventory to be open
+	attempts := 0
+	for !ctx.Data.OpenMenus.Inventory && attempts < 10 {
+		utils.Sleep(100)
+		ctx.RefreshGameData()
+		attempts++
+	}
+	
+	if !ctx.Data.OpenMenus.Inventory {
+		ctx.Logger.Warn("Failed to open inventory for TP scroll refill")
+		_ = closeAllMenus()
+		return
+	}
+	
+	// Move scrolls from inventory to belt
+	movedCount := 0
+	for i := 0; i < missingTPScrollCount && i < len(tpScrolls); i++ {
+		scroll := tpScrolls[i]
+		screenPos := ui.GetScreenCoordsForItem(scroll)
+		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
+		utils.Sleep(150)
+		movedCount++
+	}
+	
+	ctx.Logger.Debug(fmt.Sprintf("Moved %d TP scrolls to belt", movedCount))
+	
+	// Refresh to get updated state
+	ctx.RefreshGameData()
+	
+	// Close inventory
+	_ = closeAllMenus()
+	utils.Sleep(200)
+	
+	// Discard any remaining TP scrolls in unlocked slots
+	discardExtraTPScrolls()
+}
+
+// discardExtraTPScrolls discards TP scrolls that are in unlocked inventory slots
+func discardExtraTPScrolls() {
+	ctx := context.Get()
+	ctx.SetLastAction("discardExtraTPScrolls")
+	
+	if !ctx.CharacterCfg.Inventory.UseScrollTPInBelt {
+		return
+	}
+	
+	// Refresh game data
+	ctx.RefreshGameData()
+	
+	// Find TP scrolls in inventory that are in unlocked slots
+	var scrollsToDiscard []data.Item
+	lockConfig := ctx.CharacterCfg.Inventory.InventoryLock
+	
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name == item.ScrollOfTownPortal {
+			// Check if item is in unlocked slot (lockConfig[y][x] == 1 means unlocked)
+			if !isInLockedInventorySlot(itm, lockConfig) {
+				scrollsToDiscard = append(scrollsToDiscard, itm)
+			}
+		}
+	}
+	
+	if len(scrollsToDiscard) == 0 {
+		return
+	}
+	
+	ctx.Logger.Debug(fmt.Sprintf("Discarding %d extra TP scrolls from unlocked inventory slots", len(scrollsToDiscard)))
+	
+	// Close any open menus first
+	_ = closeAllMenus()
+	utils.Sleep(200)
+	
+	// Open inventory
+	ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+	utils.Sleep(300)
+	ctx.RefreshGameData()
+	
+	// Wait for inventory to be open
+	attempts := 0
+	for !ctx.Data.OpenMenus.Inventory && attempts < 10 {
+		utils.Sleep(100)
+		ctx.RefreshGameData()
+		attempts++
+	}
+	
+	if !ctx.Data.OpenMenus.Inventory {
+		ctx.Logger.Warn("Failed to open inventory for discarding extra TP scrolls")
+		_ = closeAllMenus()
+		return
+	}
+	
+	// Discard each scroll
+	for _, scroll := range scrollsToDiscard {
+		// Refresh to get current item position (items may shift after previous drops)
+		ctx.RefreshGameData()
+		
+		// Find the current item by UnitID
+		var currentItem data.Item
+		var found bool
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == scroll.UnitID {
+				currentItem = it
+				found = true
+				break
+			}
+		}
+		
+		if !found {
+			ctx.Logger.Debug(fmt.Sprintf("TP scroll (UnitID: %d) not found in inventory, skipping", scroll.UnitID))
+			continue
+		}
+		
+		// Check again if it's in unlocked slot (position may have changed)
+		if isInLockedInventorySlot(currentItem, lockConfig) {
+			// Item is in locked slot, skip
+			continue
+		}
+		
+		screenPos := ui.GetScreenCoordsForItem(currentItem)
+		ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+		utils.Sleep(100)
+		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+		utils.Sleep(200)
+		
+		ctx.Logger.Debug(fmt.Sprintf("Discarded TP scroll (UnitID: %d)", currentItem.UnitID))
+	}
+	
+	// Close inventory
+	_ = closeAllMenus()
+	utils.Sleep(200)
 }
 
 // closeAllMenus closes all open menus by pressing ESC
