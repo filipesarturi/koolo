@@ -641,11 +641,14 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				}); err != nil {
 					ctx.Logger.Warn("Failed to interact with chest", slog.Any("error", err))
 					blacklistedInteractions[chest.ID] = true
-				}
-				if !opts.IgnoreItems() {
-					lootErr := ItemPickup(lootAfterCombatRadius)
-					if lootErr != nil {
-						ctx.Logger.Warn("Error picking up items after chest opening", slog.String("error", lootErr.Error()))
+				} else {
+					// Wait for items to drop from the opened chest before attempting pickup
+					WaitForItemsAfterContainerOpen(chest.Position, chest)
+					if !opts.IgnoreItems() {
+						lootErr := ItemPickup(lootAfterCombatRadius)
+						if lootErr != nil {
+							ctx.Logger.Warn("Error picking up items after chest opening", slog.String("error", lootErr.Error()))
+						}
 					}
 				}
 				chest = data.Object{}

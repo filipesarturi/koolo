@@ -3,15 +3,18 @@ package action
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
+	"github.com/hectorgimenez/koolo/internal/pather"
 	"github.com/hectorgimenez/koolo/internal/ui"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
@@ -196,4 +199,84 @@ func getKeyCount() int {
 	}
 	// If explicitly set to 0, it's disabled
 	return *ctx.CharacterCfg.Inventory.KeyCount
+}
+
+// WaitForItemsAfterContainerOpen waits for items to drop from opened containers
+// It checks periodically if items appeared on the ground near the container position
+// Returns as soon as items are detected or timeout is reached
+// Different container types have different maximum wait times based on their animation duration
+func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object) {
+	ctx := context.Get()
+	ctx.SetLastAction("WaitForItemsAfterContainerOpen")
+
+	const (
+		checkInterval   = 50 * time.Millisecond  // Check interval - small for quick detection
+		itemCheckRadius = 3                      // Radius to check for items (tiles)
+		initialDelay    = 50 * time.Millisecond  // Initial delay before first check
+	)
+
+	// Determine maximum wait time based on container type
+	var maxWaitTime time.Duration
+	isStash := obj.Name == object.Bank
+	
+	if isStash {
+		// Stashes have longer animations
+		maxWaitTime = 3000 * time.Millisecond
+	} else if obj.IsSuperChest() {
+		// Super chests may have longer animations
+		maxWaitTime = 2000 * time.Millisecond
+	} else if obj.IsChest() {
+		// Regular chests
+		maxWaitTime = 1500 * time.Millisecond
+	} else {
+		// Other containers (barrels, urns, corpses, etc.)
+		maxWaitTime = 2000 * time.Millisecond
+	}
+
+	// Small initial delay to allow animation to start
+	time.Sleep(initialDelay)
+
+	startTime := time.Now()
+
+	// Check periodically for items
+	for time.Since(startTime) < maxWaitTime {
+		ctx.RefreshGameData()
+
+		// Get items on the ground near the container position
+		itemsNearby := getItemsNearPosition(containerPos, itemCheckRadius)
+
+		if len(itemsNearby) > 0 {
+			// Items detected, we can return immediately
+			ctx.Logger.Debug("Items detected after container open",
+				"container", obj.Name,
+				"itemsCount", len(itemsNearby),
+				"waitTime", time.Since(startTime),
+			)
+			return
+		}
+
+		// Wait before next check
+		time.Sleep(checkInterval)
+	}
+
+	// Timeout reached - log if in debug mode
+	ctx.Logger.Debug("Timeout reached waiting for items after container open",
+		"container", obj.Name,
+		"maxWaitTime", maxWaitTime,
+	)
+}
+
+// getItemsNearPosition returns items on the ground near a position within the specified radius
+func getItemsNearPosition(pos data.Position, radius int) []data.Item {
+	ctx := context.Get()
+	var items []data.Item
+
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationGround) {
+		distance := pather.DistanceFromPoint(itm.Position, pos)
+		if distance <= radius {
+			items = append(items, itm)
+		}
+	}
+
+	return items
 }

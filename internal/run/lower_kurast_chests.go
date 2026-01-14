@@ -1,14 +1,12 @@
 package run
 
 import (
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
-	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
@@ -16,7 +14,6 @@ import (
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/pather"
-	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
 var minChestDistanceFromBonfire = 25
@@ -125,9 +122,15 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 				return !object.Selectable
 			})
 			if err != nil {
-				run.ctx.Logger.Warn(fmt.Sprintf("[%s] failed interacting with object [%v] in Area: [%s]", run.ctx.Name, closestObject.Name, run.ctx.Data.PlayerUnit.Area.Area().Name), err)
+				run.ctx.Logger.Warn("Failed interacting with object",
+					"name", run.ctx.Name,
+					"object", closestObject.Name,
+					"area", run.ctx.Data.PlayerUnit.Area.Area().Name,
+					"error", err)
+			} else {
+				// Wait for items to drop from the opened container
+				action.WaitForItemsAfterContainerOpen(closestObject.Position, closestObject)
 			}
-			utils.Sleep(500) // Add small delay to allow the game to open the object and drop the content
 
 			// Remove the interacted container from the list
 			objects = objects[1:]
@@ -245,7 +248,7 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 			}
 
 			// Wait for items to drop from chest/stash (some have delays, stashes have longer animations)
-			run.waitForItemsToDrop(o.Position, o)
+			action.WaitForItemsAfterContainerOpen(o.Position, o)
 		}
 
 		// Pick up items after clearing room (less frequent for speed)
@@ -273,67 +276,6 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 	return nil
 }
 
-// waitForItemsToDrop waits for items to drop from opened chests/stashes
-// Some containers have delays before items appear on the ground
-// Stashes have longer animations and need more wait time
-func (run LowerKurastChests) waitForItemsToDrop(containerPos data.Position, obj data.Object) {
-	// Stashes have longer animations, need more wait time
-	isStash := obj.Name == object.Bank
-	
-	var (
-		initialDelay    int
-		maxWaitTime     int
-		checkInterval   = 100  // Check interval in ms
-		itemCheckRadius = 2    // Radius to check for items (small to avoid detecting items from nearby containers)
-	)
-
-	if isStash {
-		// Stashes have longer animations, wait more
-		initialDelay = 800  // Initial delay for stashes in ms
-		maxWaitTime = 3000  // Maximum total wait time for stashes in ms
-	} else {
-		// Regular chests and containers
-		initialDelay = 300  // Initial delay in ms
-		maxWaitTime = 1500  // Maximum total wait time in ms
-	}
-
-	utils.Sleep(initialDelay)
-
-	// Check if items appeared on ground near the container
-	run.ctx.RefreshGameData()
-	itemsNearby := run.getItemsNearPosition(containerPos, itemCheckRadius)
-
-	// If items already appeared, we're done
-	if len(itemsNearby) > 0 {
-		return
-	}
-
-	// Wait up to maxWaitTime for items to appear
-	elapsed := initialDelay
-	for elapsed < maxWaitTime {
-		utils.Sleep(checkInterval)
-		elapsed += checkInterval
-
-		run.ctx.RefreshGameData()
-		itemsNearby = run.getItemsNearPosition(containerPos, itemCheckRadius)
-		if len(itemsNearby) > 0 {
-			// Items appeared, we can continue
-			return
-		}
-	}
-}
-
-// getItemsNearPosition returns items on the ground near a position
-func (run LowerKurastChests) getItemsNearPosition(pos data.Position, radius int) []data.Item {
-	var items []data.Item
-	for _, itm := range run.ctx.Data.Inventory.ByLocation(item.LocationGround) {
-		distance := pather.DistanceFromPoint(itm.Position, pos)
-		if distance <= radius {
-			items = append(items, itm)
-		}
-	}
-	return items
-}
 
 // getTelekinesisRange returns the configured telekinesis range, defaulting to 23 if not set
 func (run LowerKurastChests) getTelekinesisRange() int {

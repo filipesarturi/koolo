@@ -12,7 +12,6 @@ import (
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
-	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
 var interactableShrines = []object.ShrineType{
@@ -48,7 +47,7 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 		// First, clear the room of monsters
 		err := clearRoom(r, filter)
 		if err != nil {
-			ctx.Logger.Warn("Failed to clear room: %v", err)
+			ctx.Logger.Warn("Failed to clear room", slog.Any("error", err))
 		}
 
 		//ctx.Logger.Debug(fmt.Sprintf("Clearing room complete, attempting to pickup items in a radius of %d", pickupRadius))
@@ -90,8 +89,10 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 					})
 					if err != nil {
 						ctx.Logger.Warn("Failed interacting with chest", slog.Any("error", err))
+					} else {
+						// Wait for items to drop from the opened chest
+						WaitForItemsAfterContainerOpen(o.Position, o)
 					}
-					utils.Sleep(500) // Add small delay to allow the game to open the chest and drop the content
 				}
 			}
 		}
