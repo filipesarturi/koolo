@@ -40,40 +40,40 @@ type Status struct {
 }
 
 type Context struct {
-	Name                  string
-	ExecutionPriority     Priority
-	CharacterCfg          *config.CharacterCfg
-	Data                  *game.Data
-	EventListener         *event.Listener
-	HID                   *game.HID
-	Logger                *slog.Logger
-	Manager               *game.Manager
-	GameReader            *game.MemoryReader
-	MemoryInjector        *game.MemoryInjector
-	PathFinder            *pather.PathFinder
-	BeltManager           *health.BeltManager
-	HealthManager         *health.Manager
-	DefenseManager        *health.DefenseManager
-	Char                  Character
-	LastBuffAt            time.Time
-	ContextDebug          map[Priority]*Debug
-	CurrentGame           *CurrentGameHelper
-	SkillPointIndex       int // NEW FIELD: Tracks the next skill to consider from the character's SkillPoints() list
-	ForceAttack           bool
-	StopSupervisorFn      StopFunc
-	CleanStopRequested    bool
-	RestartWithCharacter  string
-	PacketSender          *game.PacketSender
-	IsLevelingCharacter   *bool
-	ManualModeActive      bool          // Manual play mode: stops after character selection
-	LastPortalTick        time.Time     // NEW FIELD: Tracks last portal creation for spam prevention
-	IsBossEquipmentActive bool          // flag for barb leveling
-	Drop                  *drop.Manager // Drop: Per-supervisor Drop manager
-	MercReviveFailedNoGold bool         // Flag to track if last revive attempt failed due to insufficient gold
-	lastRefreshTime       time.Time
-	refreshMutex          sync.RWMutex
-	refreshInterval       time.Duration
-	checkItemsAfterDeath  func() // Callback para verificar itens após morte de monstro
+	Name                   string
+	ExecutionPriority      Priority
+	CharacterCfg           *config.CharacterCfg
+	Data                   *game.Data
+	EventListener          *event.Listener
+	HID                    *game.HID
+	Logger                 *slog.Logger
+	Manager                *game.Manager
+	GameReader             *game.MemoryReader
+	MemoryInjector         *game.MemoryInjector
+	PathFinder             *pather.PathFinder
+	BeltManager            *health.BeltManager
+	HealthManager          *health.Manager
+	DefenseManager         *health.DefenseManager
+	Char                   Character
+	LastBuffAt             time.Time
+	ContextDebug           map[Priority]*Debug
+	CurrentGame            *CurrentGameHelper
+	SkillPointIndex        int // NEW FIELD: Tracks the next skill to consider from the character's SkillPoints() list
+	ForceAttack            bool
+	StopSupervisorFn       StopFunc
+	CleanStopRequested     bool
+	RestartWithCharacter   string
+	PacketSender           *game.PacketSender
+	IsLevelingCharacter    *bool
+	ManualModeActive       bool          // Manual play mode: stops after character selection
+	LastPortalTick         time.Time     // NEW FIELD: Tracks last portal creation for spam prevention
+	IsBossEquipmentActive  bool          // flag for barb leveling
+	Drop                   *drop.Manager // Drop: Per-supervisor Drop manager
+	MercReviveFailedNoGold bool          // Flag to track if last revive attempt failed due to insufficient gold
+	lastRefreshTime        time.Time
+	refreshMutex           sync.RWMutex
+	refreshInterval        time.Duration
+	checkItemsAfterDeath   func() // Callback para verificar itens após morte de monstro
 }
 
 type Debug struct {
@@ -183,46 +183,14 @@ func getGoroutineID() uint64 {
 }
 
 func (ctx *Context) RefreshGameData() {
-	ctx.refreshMutex.RLock()
-	now := time.Now()
-	// Early return if cache is still valid
-	if !ctx.lastRefreshTime.IsZero() && now.Sub(ctx.lastRefreshTime) < ctx.refreshInterval {
-		ctx.refreshMutex.RUnlock()
-		return
-	}
-	ctx.refreshMutex.RUnlock()
-
-	// Upgrade to write lock for actual refresh
-	ctx.refreshMutex.Lock()
-	defer ctx.refreshMutex.Unlock()
-
-	// Double-check pattern: another goroutine might have refreshed while we waited
-	if !ctx.lastRefreshTime.IsZero() && time.Since(ctx.lastRefreshTime) < ctx.refreshInterval {
-		return
-	}
-
 	*ctx.Data = ctx.GameReader.GetData()
+
 	if ctx.IsLevelingCharacter == nil {
 		_, isLevelingCharacter := ctx.Char.(LevelingCharacter)
 		ctx.IsLevelingCharacter = &isLevelingCharacter
 	}
-	ctx.Data.IsLevelingCharacter = *ctx.IsLevelingCharacter
-	ctx.lastRefreshTime = time.Now()
-}
 
-// RefreshGameDataForce forces a refresh of game data, ignoring the cache TTL.
-// Use this when you need guaranteed fresh data, such as after critical actions.
-func (ctx *Context) RefreshGameDataForce() {
-	ctx.refreshMutex.Lock()
-	defer ctx.refreshMutex.Unlock()
-
-	*ctx.Data = ctx.GameReader.GetData()
-	if ctx.IsLevelingCharacter == nil {
-		_, isLevelingCharacter := ctx.Char.(LevelingCharacter)
-		ctx.IsLevelingCharacter = &isLevelingCharacter
-	}
 	ctx.Data.IsLevelingCharacter = *ctx.IsLevelingCharacter
-	ctx.lastRefreshTime = time.Now()
 }
 
 func (ctx *Context) RefreshInventory() {
