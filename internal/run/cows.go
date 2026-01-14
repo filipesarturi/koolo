@@ -362,6 +362,23 @@ func (a Cows) checkCowPortalWithTimeout() (bool, error) {
 	return false, nil
 }
 
+// waitForLegWithPolling waits for Wirt's Leg to be obtained using continuous polling
+// Returns true if leg was found, false if timeout was reached
+func (a Cows) waitForLegWithPolling(maxWaitTime time.Duration) bool {
+	const pollIntervalMs = 100 // milliseconds
+	verificationStart := time.Now()
+
+	for time.Since(verificationStart) < maxWaitTime {
+		a.ctx.RefreshInventory()
+		if a.hasWirtsLeg() {
+			return true
+		}
+		utils.Sleep(pollIntervalMs)
+	}
+
+	return false
+}
+
 // getWirtsLegWithTimeout gets Wirt's Leg with timeout protection
 func (a Cows) getWirtsLegWithTimeout() error {
 	startTime := time.Now()
@@ -534,11 +551,10 @@ func (a Cows) getWirtsLegWithTimeout() error {
 		return a.hasWirtsLeg()
 	})
 
-	// Check if we got the leg even if interaction returned an error
-	utils.Sleep(300)
-	a.ctx.RefreshInventory()
-	if a.hasWirtsLeg() {
-		a.ctx.Logger.Info("Successfully obtained Wirt's Leg from corpse (despite interaction error)")
+	// Check if we got the leg using continuous polling instead of fixed delay
+	// This allows immediate detection when leg is obtained
+	if a.waitForLegWithPolling(1 * time.Second) {
+		a.ctx.Logger.Info("Successfully obtained Wirt's Leg from corpse")
 		if err := action.ReturnTown(); err != nil {
 			return fmt.Errorf("failed to return to town: %w", err)
 		}
@@ -549,20 +565,6 @@ func (a Cows) getWirtsLegWithTimeout() error {
 	if interactionErr != nil {
 		a.ctx.Logger.Warn("Corpse interaction failed, but checking if leg is on ground", "error", interactionErr)
 		// Don't return error yet, check ground first
-	}
-
-	// Wait a bit for the item to appear (either in inventory or on ground)
-	// Reduced from 800ms to 300ms - item usually appears quickly after interaction
-	utils.Sleep(300)
-	a.ctx.RefreshInventory()
-
-	// Check if we got it in inventory first
-	if a.hasWirtsLeg() {
-		a.ctx.Logger.Info("Successfully obtained Wirt's Leg from corpse")
-		if err := action.ReturnTown(); err != nil {
-			return fmt.Errorf("failed to return to town: %w", err)
-		}
-		return nil
 	}
 
 	// Check if leg dropped on ground in Tristram before leaving
@@ -706,27 +708,18 @@ func (a Cows) getWirtsLegWithTimeout() error {
 		return fmt.Errorf("failed to return to town: %w", err)
 	}
 
-	// After returning from Tristram, check if we got the leg
-	utils.Sleep(500)
-	a.ctx.RefreshInventory()
-	if !a.hasWirtsLeg() {
+	// After returning from Tristram, check if we got the leg using continuous polling
+	if !a.waitForLegWithPolling(1 * time.Second) {
 		// If we didn't get the leg, check for it on the ground in town
 		a.ctx.Logger.Info("Wirt's Leg not found after interacting with corpse, checking ground in town")
 		a.checkForLegOnGround()
 	}
 
-	// Final verification with multiple attempts
-	maxVerificationAttempts := 3
-	for i := 0; i < maxVerificationAttempts; i++ {
-		utils.Sleep(500)
-		a.ctx.RefreshInventory()
-		if a.hasWirtsLeg() {
-			a.ctx.Logger.Info("Successfully obtained Wirt's Leg", "elapsed", time.Since(startTime))
-			return nil
-		}
-		if i < maxVerificationAttempts-1 {
-			a.ctx.Logger.Debug("Wirt's Leg still not found, retrying verification", "attempt", i+1)
-		}
+	// Final verification with continuous polling instead of fixed delays
+	// This allows immediate detection when leg is obtained
+	if a.waitForLegWithPolling(2 * time.Second) {
+		a.ctx.Logger.Info("Successfully obtained Wirt's Leg", "elapsed", time.Since(startTime))
+		return nil
 	}
 
 	return errors.New("failed to obtain Wirt's Leg after all attempts")
