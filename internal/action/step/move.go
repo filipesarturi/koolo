@@ -146,8 +146,22 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 	stepLastMonsterCheck := time.Time{}
 
 	blockThreshold := 200 * time.Millisecond
-	stuckThreshold := 1500 * time.Millisecond // Reduced from 2s for faster response
-	maxStuckDuration := 15 * time.Second      // Maximum time to be stuck before aborting
+	stuckThreshold := 1500 * time.Millisecond // Base threshold for walking
+	if canTeleport {
+		// Dynamic threshold based on cast duration + network latency
+		// Teleport needs: cast time + server response + safety margin
+		castDuration := ctx.Data.PlayerCastDuration()
+		pingBuffer := time.Duration(ctx.Data.Game.Ping*2) * time.Millisecond // Round trip latency
+		safetyMargin := 200 * time.Millisecond
+		stuckThreshold = castDuration*3 + pingBuffer + safetyMargin // ~3 failed teleport attempts before stuck
+		// Clamp to reasonable bounds
+		if stuckThreshold < 1000*time.Millisecond {
+			stuckThreshold = 1000 * time.Millisecond
+		} else if stuckThreshold > 3000*time.Millisecond {
+			stuckThreshold = 3000 * time.Millisecond
+		}
+	}
+	maxStuckDuration := 15 * time.Second // Maximum time to be stuck before aborting
 	stuckCheckStartTime := time.Now()
 	escapeAttempts := 0
 	const maxEscapeAttempts = 3
@@ -366,8 +380,9 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 		isMakingProgress := false
 		currentDistanceToDestFloat := float64(currentDistanceToDest)
 		if previousDistanceToDest >= 0 {
-			// Consider progress if we're getting closer to destination (with small tolerance for pathfinding variations)
-			isMakingProgress = currentDistanceToDestFloat < previousDistanceToDest-1.0
+			// Consider progress if we're getting closer to destination OR staying at same distance
+			// (teleport can sometimes land at same distance due to obstacles)
+			isMakingProgress = currentDistanceToDestFloat <= previousDistanceToDest
 		} else {
 			// First iteration, assume progress
 			isMakingProgress = true
@@ -392,19 +407,20 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 					slog.Bool("isMakingProgress", isMakingProgress),
 				)
 				return ErrPlayerRoundTrip
-			} else if timeInRoundtrip > roundTripThreshold/2.0 {
-				blocked = true
-				if time.Since(lastLogTime) > logThrottleInterval {
-					ctx.Logger.Debug("Round trip detected (warning phase)",
-						slog.Duration("roundTripTime", timeInRoundtrip),
-						slog.Int("roundTripRadius", roundTripMaxRadius),
-						slog.Float64("currentDistance", roundTripDistance),
-						slog.Float64("distanceToDest", currentDistanceToDestFloat),
-						slog.Bool("isMakingProgress", isMakingProgress),
-					)
-					lastLogTime = time.Now()
-				}
+		} else if timeInRoundtrip > roundTripThreshold/2.0 && !isMakingProgress {
+			// Only consider blocked if we're NOT making progress towards destination
+			blocked = true
+			if time.Since(lastLogTime) > logThrottleInterval {
+				ctx.Logger.Debug("Round trip detected (warning phase)",
+					slog.Duration("roundTripTime", timeInRoundtrip),
+					slog.Int("roundTripRadius", roundTripMaxRadius),
+					slog.Float64("currentDistance", roundTripDistance),
+					slog.Float64("distanceToDest", currentDistanceToDestFloat),
+					slog.Bool("isMakingProgress", isMakingProgress),
+				)
+				lastLogTime = time.Now()
 			}
+		}
 		} else {
 			//Player moved significantly, reset Round Trip detection
 			roundTripReferencePosition = currentPosition
