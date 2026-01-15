@@ -33,7 +33,7 @@ func getTelekinesisPickupMaxRange() int {
 	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
 		return ctx.CharacterCfg.Character.TelekinesisRange
 	}
-	return 23 // Default: 23 tiles (~15.3 yards)
+	return 18 // Default: 18 tiles (~12 yards)
 }
 
 var (
@@ -257,6 +257,9 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	utils.Sleep(80)
 
 	targetItem := it
+	spiralAttempts := 0
+	const maxSpiralAttempts = 20
+	currentMouseCoords := data.Position{}
 
 	for attempt := 0; attempt < telekinesisPickupMaxAttempts; attempt++ {
 		// Check timeout
@@ -273,6 +276,13 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		// Check if item still exists
 		_, exists := findItemOnGround(targetItem.UnitID)
 		if !exists {
+			if spiralAttempts > 0 {
+				ctx.Logger.Debug("Item picked up via Telekinesis after spiral attempts",
+					slog.String("itemName", string(targetItem.Desc().Name)),
+					slog.Int("spiralAttempts", spiralAttempts),
+					slog.Int("unitID", int(targetItem.UnitID)),
+				)
+			}
 			ctx.Logger.Info("Picked up item via Telekinesis",
 				slog.String("itemName", string(targetItem.Desc().Name)),
 				slog.String("itemQuality", targetItem.Quality.ToString()),
@@ -284,23 +294,43 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 			return nil
 		}
 
-		// Calculate screen position for the item
-		screenX, screenY := ctx.PathFinder.GameCoordsToScreenCords(targetItem.Position.X, targetItem.Position.Y)
+		// Use spiral pattern for better accuracy (similar to container interaction)
+		itemX := targetItem.Position.X - 2
+		itemY := targetItem.Position.Y - 2
+		baseScreenX, baseScreenY := ctx.PathFinder.GameCoordsToScreenCords(itemX, itemY)
+
+		// Use spiral pattern like container interaction for better accuracy
+		x, y := utils.Spiral(spiralAttempts)
+		currentMouseCoords = data.Position{X: baseScreenX + x, Y: baseScreenY + y}
 		currentDistance := ctx.PathFinder.DistanceFromMe(targetItem.Position)
 
-		ctx.Logger.Debug("Using Telekinesis to pick up item via HID",
-			slog.String("itemName", string(targetItem.Desc().Name)),
-			slog.Int("unitID", int(targetItem.UnitID)),
-			slog.Int("distance", currentDistance),
-			slog.Int("attempt", attempt+1),
-			slog.Int("screenX", screenX),
-			slog.Int("screenY", screenY),
-		)
+		if spiralAttempts > 0 {
+			ctx.Logger.Debug("Telekinesis pickup using spiral pattern",
+				slog.String("itemName", string(targetItem.Desc().Name)),
+				slog.Int("spiralAttempt", spiralAttempts+1),
+				slog.String("offset", fmt.Sprintf("(%d, %d)", x, y)),
+				slog.Int("distance", currentDistance),
+				slog.Int("tkRange", telekinesisPickupMaxRange),
+				slog.Int("attempt", attempt+1),
+			)
+		} else {
+			ctx.Logger.Debug("Using Telekinesis to pick up item via HID",
+				slog.String("itemName", string(targetItem.Desc().Name)),
+				slog.Int("unitID", int(targetItem.UnitID)),
+				slog.Int("distance", currentDistance),
+				slog.Int("tkRange", telekinesisPickupMaxRange),
+				slog.Int("attempt", attempt+1),
+				slog.Int("screenX", currentMouseCoords.X),
+				slog.Int("screenY", currentMouseCoords.Y),
+			)
+		}
 
-		// Move mouse to item and right-click (Telekinesis)
-		ctx.HID.MovePointer(screenX, screenY)
+		// Move mouse to item position (with spiral offset) and right-click (Telekinesis)
+		ctx.HID.MovePointer(currentMouseCoords.X, currentMouseCoords.Y)
 		utils.Sleep(50)
-		ctx.HID.Click(game.RightButton, screenX, screenY)
+		ctx.HID.Click(game.RightButton, currentMouseCoords.X, currentMouseCoords.Y)
+
+		spiralAttempts++
 
 		// Wait for pickup to complete
 		utils.Sleep(350)
@@ -309,6 +339,13 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		ctx.RefreshGameData()
 		_, stillExists := findItemOnGround(targetItem.UnitID)
 		if !stillExists {
+			if spiralAttempts > 1 {
+				ctx.Logger.Debug("Item picked up via Telekinesis after spiral attempts",
+					slog.String("itemName", string(targetItem.Desc().Name)),
+					slog.Int("spiralAttempts", spiralAttempts),
+					slog.Int("unitID", int(targetItem.UnitID)),
+				)
+			}
 			ctx.Logger.Info("Picked up item via Telekinesis",
 				slog.String("itemName", string(targetItem.Desc().Name)),
 				slog.String("itemQuality", targetItem.Quality.ToString()),
@@ -319,13 +356,22 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
 			return nil
 		}
+
+		// If we've tried many spiral attempts, reset and try next pickup attempt
+		if spiralAttempts >= maxSpiralAttempts {
+			spiralAttempts = 0
+		}
 	}
 
 	// Telekinesis failed, fallback to normal pickup
+	finalDistance := ctx.PathFinder.DistanceFromMe(it.Position)
 	ctx.Logger.Debug("Telekinesis pickup failed after max attempts, falling back to normal pickup",
 		slog.String("itemName", string(it.Desc().Name)),
 		slog.Int("unitID", int(it.UnitID)),
 		slog.Int("maxAttempts", telekinesisPickupMaxAttempts),
+		slog.Int("finalDistance", finalDistance),
+		slog.Int("tkRange", telekinesisPickupMaxRange),
+		slog.Bool("hasLoS", ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position)),
 	)
 	if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
 		return PickupItemPacket(it, itemPickupAttempt)

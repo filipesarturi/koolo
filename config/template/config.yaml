@@ -74,7 +74,7 @@ character:
   stashToShared: false
   useTeleport: true # If set to false, bot will not use teleport skill and will walk to the destination
   useTelekinesis: false # Use Telekinesis for interactions (waypoints, chests, shrines, portals, potions, gold) - Sorceress only
-  telekinesisRange: 23 # Telekinesis range in tiles (default: 23, ~15.3 yards). 1 yard = 1.5 tiles
+  telekinesisRange: 18 # Telekinesis range in tiles (default: 18, ~12 yards). 1 yard = 1.5 tiles
   pickupOnKill: false # If true, bot will pick up items immediately after each kill instead of waiting to clear the area
   clearPathDist: 7 # Distance (in game units) to clear enemies while walking through areas
   shouldHireAct2MercFrozenAura: false # If true, bot will try to hire Act 2 merc with Frozen Aura skill

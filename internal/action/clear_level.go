@@ -56,33 +56,56 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 			ctx.Logger.Warn("Failed to pickup items", slog.Any("error", err))
 		}
 
-		// Iterate through objects in the current room
-		for _, o := range ctx.Data.Objects {
-			if r.IsInside(o.Position) {
-				// Interact with chests if openChests is true
-				if openChests && o.IsChest() && o.Selectable {
+		// Collect all chests in the room
+		var chestsInRoom []data.Object
+		if openChests {
+			for _, o := range ctx.Data.Objects {
+				if r.IsInside(o.Position) && o.IsChest() && o.Selectable {
 					// Check if we have keys before attempting to open locked chests
 					if !hasKeysInInventory() {
 						ctx.Logger.Debug("Skipping chest - no keys in inventory", slog.Any("chest_id", o.ID))
 						continue
 					}
+					chestsInRoom = append(chestsInRoom, o)
+				}
+			}
+		}
 
-					ctx.Logger.Debug(fmt.Sprintf("Found chest. attempting to interact. Name=%s. ID=%v UnitID=%v Pos=%v,%v Area='%s' InteractType=%v", o.Desc().Name, o.Name, o.ID, o.Position.X, o.Position.Y, ctx.Data.PlayerUnit.Area.Area().Name, o.InteractType))
+		// Open chests in batch (works with or without Telekinesis)
+		if len(chestsInRoom) > 0 {
+			// Use batch opening for multiple chests, individual for single chest
+			if len(chestsInRoom) > 1 {
+				ctx.Logger.Debug("Opening multiple chests in batch",
+					"chestsCount", len(chestsInRoom),
+				)
+				_ = OpenContainersInBatch(chestsInRoom)
+			} else {
+				// Single chest - use individual method
+				o := chestsInRoom[0]
+				ctx.Logger.Debug(fmt.Sprintf("Found chest. attempting to interact. Name=%s. ID=%v UnitID=%v Pos=%v,%v Area='%s' InteractType=%v", o.Desc().Name, o.Name, o.ID, o.Position.X, o.Position.Y, ctx.Data.PlayerUnit.Area.Area().Name, o.InteractType))
 
-					// Check if we can use Telekinesis from current position
-					chestDistance := ctx.PathFinder.DistanceFromMe(o.Position)
-					canUseTK := canUseTelekinesisForObject(o)
+				chestDistance := ctx.PathFinder.DistanceFromMe(o.Position)
+				canUseTK := canUseTelekinesisForObject(o)
+				telekinesisRange := getTelekinesisRange()
 
-					// Only move if not within Telekinesis range (or TK not available)
-					telekinesisRange := getTelekinesisRange()
-					if !canUseTK || chestDistance > telekinesisRange {
-						err = MoveToCoords(o.Position)
+				// Only move if not within Telekinesis range (or TK not available)
+				if !canUseTK || chestDistance > telekinesisRange {
+					err = MoveToCoords(o.Position)
+					if err != nil {
+						ctx.Logger.Warn("Failed moving to chest", slog.Any("error", err))
+					} else {
+						err = InteractObject(o, func() bool {
+							chest, _ := ctx.Data.Objects.FindByID(o.ID)
+							return !chest.Selectable
+						})
 						if err != nil {
-							ctx.Logger.Warn("Failed moving to chest", slog.Any("error", err))
-							continue
+							ctx.Logger.Warn("Failed interacting with chest", slog.Any("error", err))
+						} else {
+							// Wait for items to drop from the opened chest
+							WaitForItemsAfterContainerOpen(o.Position, o)
 						}
 					}
-
+				} else {
 					err = InteractObject(o, func() bool {
 						chest, _ := ctx.Data.Objects.FindByID(o.ID)
 						return !chest.Selectable

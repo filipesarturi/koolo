@@ -115,7 +115,7 @@ func getTelekinesisItemPickupRange() int {
 	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
 		return ctx.CharacterCfg.Character.TelekinesisRange
 	}
-	return 23 // Default: 23 tiles (~15.3 yards)
+	return 18 // Default: 18 tiles (~12 yards)
 }
 
 func itemFitsInventory(i data.Item) bool {

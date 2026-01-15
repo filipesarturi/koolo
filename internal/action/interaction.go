@@ -18,13 +18,13 @@ import (
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
-// getTelekinesisRange returns the configured telekinesis range, defaulting to 23 if not set
+// getTelekinesisRange returns the configured telekinesis range, defaulting to 18 if not set
 func getTelekinesisRange() int {
 	ctx := context.Get()
 	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
 		return ctx.CharacterCfg.Character.TelekinesisRange
 	}
-	return 23 // Default: 23 tiles (~15.3 yards)
+	return 18 // Default: 18 tiles (~12 yards)
 }
 
 func InteractNPC(npc npc.ID) error {

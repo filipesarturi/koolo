@@ -1534,10 +1534,10 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 			if rangeVal, err := strconv.Atoi(v); err == nil && rangeVal > 0 && rangeVal <= 50 {
 				cfg.Character.TelekinesisRange = rangeVal
 			} else {
-				cfg.Character.TelekinesisRange = 23 // Default if invalid
+				cfg.Character.TelekinesisRange = 18 // Default if invalid
 			}
 		} else {
-			cfg.Character.TelekinesisRange = 23 // Default if not provided
+			cfg.Character.TelekinesisRange = 18 // Default if not provided
 		}
 		cfg.Character.PickupOnKill = values.Has("characterPickupOnKill")
 		cfg.Character.UseExtraBuffs = values.Has("characterUseExtraBuffs")
@@ -2196,10 +2196,10 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 			if rangeVal, err := strconv.Atoi(v); err == nil && rangeVal > 0 && rangeVal <= 50 {
 				cfg.Character.TelekinesisRange = rangeVal
 			} else {
-				cfg.Character.TelekinesisRange = 23 // Default if invalid
+				cfg.Character.TelekinesisRange = 18 // Default if invalid
 			}
 		} else {
-			cfg.Character.TelekinesisRange = 23 // Default if not provided
+			cfg.Character.TelekinesisRange = 18 // Default if not provided
 		}
 		cfg.Character.PickupOnKill = r.Form.Has("characterPickupOnKill")
 		cfg.Character.UseExtraBuffs = r.Form.Has("characterUseExtraBuffs")

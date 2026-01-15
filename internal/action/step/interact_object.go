@@ -31,7 +31,7 @@ func getTelekinesisMaxInteractionRange() int {
 	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
 		return ctx.CharacterCfg.Character.TelekinesisRange
 	}
-	return 23 // Default: 23 tiles (~15.3 yards)
+	return 18 // Default: 18 tiles (~12 yards)
 }
 
 // InteractObject routes to packet or mouse implementation based on config
@@ -138,6 +138,8 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 
 	startingArea := ctx.Data.PlayerUnit.Area
 	interactionAttempts := 0
+	mouseOverAttempts := 0
+	currentMouseCoords := data.Position{}
 
 	// If there is no completion check, assume completed after successful interaction
 	waitingForInteraction := false
@@ -184,16 +186,13 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 		return InteractObjectMouse(obj, isCompletedFn)
 	}
 
-	for !isCompletedFn() {
-		ctx.PauseIfNotPriority()
+	const maxMouseOverAttempts = 20
 
-		if interactionAttempts >= telekinesisInteractionAttempts {
-			ctx.Logger.Debug("Telekinesis interaction failed, falling back to mouse interaction",
-				slog.String("object", string(obj.Name)),
-				slog.Int("attempts", interactionAttempts),
-			)
-			// Fallback to mouse interaction
-			return InteractObjectMouse(obj, isCompletedFn)
+	for !isCompletedFn() {
+		// For batch opening, skip priority pause to open containers rapidly
+		// Only pause if we haven't clicked yet (still trying to hover)
+		if interactionAttempts == 0 {
+			ctx.PauseIfNotPriority()
 		}
 
 		ctx.RefreshGameData()
@@ -219,11 +218,44 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 		// Check distance - Telekinesis has limited range
 		distance := ctx.PathFinder.DistanceFromMe(o.Position)
 		telekinesisMaxInteractionRange := getTelekinesisMaxInteractionRange()
+		
+		// If object is too far, fall back to mouse interaction
 		if distance > telekinesisMaxInteractionRange {
 			ctx.Logger.Debug("Object too far for Telekinesis, falling back to mouse",
 				slog.String("object", string(o.Name)),
 				slog.Int("distance", distance),
+				slog.Int("tkRange", telekinesisMaxInteractionRange),
+				slog.Int("spiralAttempts", mouseOverAttempts),
 			)
+			return InteractObjectMouse(obj, isCompletedFn)
+		}
+		
+		// If object is very close to the range limit (within 2 tiles), reduce max attempts
+		// to avoid wasting time on spiral when hover detection is unreliable at range edge
+		effectiveMaxMouseOverAttempts := maxMouseOverAttempts
+		if distance >= telekinesisMaxInteractionRange-2 {
+			// Reduce attempts when at range edge - hover detection is less reliable
+			effectiveMaxMouseOverAttempts = 8
+			if mouseOverAttempts == 0 {
+				ctx.Logger.Debug("Object near Telekinesis range limit, using reduced spiral attempts",
+					slog.String("object", string(o.Name)),
+					slog.Int("distance", distance),
+					slog.Int("tkRange", telekinesisMaxInteractionRange),
+					slog.Int("maxAttempts", effectiveMaxMouseOverAttempts),
+				)
+			}
+		}
+
+		if interactionAttempts >= telekinesisInteractionAttempts || mouseOverAttempts >= effectiveMaxMouseOverAttempts {
+			ctx.Logger.Debug("Telekinesis interaction failed, falling back to mouse interaction",
+				slog.String("object", string(obj.Name)),
+				slog.Int("interactionAttempts", interactionAttempts),
+				slog.Int("mouseOverAttempts", mouseOverAttempts),
+				slog.Int("distance", distance),
+				slog.Int("tkRange", telekinesisMaxInteractionRange),
+				slog.Bool("isHovered", o.IsHovered),
+			)
+			// Fallback to mouse interaction
 			return InteractObjectMouse(obj, isCompletedFn)
 		}
 
@@ -239,30 +271,131 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 			}
 		}
 
-		// Select Telekinesis as right skill via HID
-		ctx.HID.PressKeyBinding(tkKb)
-		utils.Sleep(80)
+		// Check if object is hovered before clicking (similar to mouse interaction)
+		if o.IsHovered && !utils.IsZeroPosition(currentMouseCoords) {
+			if mouseOverAttempts > 0 {
+				ctx.Logger.Debug("Telekinesis object hovered after spiral attempts",
+					"object", o.Name,
+					"spiralAttempts", mouseOverAttempts,
+					"distance", distance,
+					"tkRange", telekinesisMaxInteractionRange,
+				)
+			}
+			// Select Telekinesis as right skill via HID
+			ctx.HID.PressKeyBinding(tkKb)
+			utils.Sleep(80)
 
-		// Calculate screen position for the object
-		objectX := o.Position.X - 2
-		objectY := o.Position.Y - 2
-		screenX, screenY := ui.GameCoordsToScreenCords(objectX, objectY)
+			// Click on hovered object with Telekinesis
+			ctx.HID.Click(game.RightButton, currentMouseCoords.X, currentMouseCoords.Y)
 
-		ctx.Logger.Debug("Using Telekinesis on object via HID",
-			slog.String("object", string(o.Name)),
-			slog.Int("distance", distance),
-		)
+			waitingForInteraction = true
+			interactionAttempts++
 
-		// Move mouse to object and right-click (Telekinesis)
-		ctx.HID.MovePointer(screenX, screenY)
-		utils.Sleep(50)
-		ctx.HID.Click(game.RightButton, screenX, screenY)
+			// Wait for interaction to complete (animation starts)
+			utils.Sleep(350)
+			
+			// Refresh to check if container is now opened
+			ctx.RefreshGameData()
+			
+			// Re-find object to check if it's opened
+			var updatedObj data.Object
+			var found bool
+			if obj.ID != 0 {
+				updatedObj, found = ctx.Data.Objects.FindByID(obj.ID)
+			} else {
+				updatedObj, found = ctx.Data.Objects.FindOne(obj.Name)
+			}
+			
+			if found {
+				// Check if container is opened (not selectable anymore)
+				if !updatedObj.Selectable {
+					// Container is opened, return immediately for batch processing
+					// The batch opening will wait for items after all containers are opened
+					return nil
+				}
+			}
+			
+			// Check completion function - if it returns true, container is considered opened
+			// This allows the batch opening to continue to next container immediately
+			// The batch opening will wait for items after all containers are opened
+			if isCompletedFn() {
+				return nil
+			}
+			
+			// For batch opening, return immediately after clicking to allow rapid opening
+			// The batch opening will wait for items after all containers are opened
+			// Only wait longer if this is not a container (e.g., portals need verification)
+			if !obj.IsPortal() && !obj.IsRedPortal() && !obj.IsWaypoint() {
+				// For containers, return immediately after clicking - batch opening will handle waiting
+				return nil
+			}
+			
+			// For portals and waypoints, give it a bit more time and check again
+			// This handles cases where the object takes a moment to update
+			utils.Sleep(100)
+			ctx.RefreshGameData()
+			
+			if obj.ID != 0 {
+				updatedObj, found = ctx.Data.Objects.FindByID(obj.ID)
+			} else {
+				updatedObj, found = ctx.Data.Objects.FindOne(obj.Name)
+			}
+			
+			if found && !updatedObj.Selectable {
+				return nil
+			}
+			
+			if isCompletedFn() {
+				return nil
+			}
+		} else {
+			// Calculate screen position for the object using spiral pattern
+			objectX := o.Position.X - 2
+			objectY := o.Position.Y - 2
+			mX, mY := ui.GameCoordsToScreenCords(objectX, objectY)
 
-		waitingForInteraction = true
-		interactionAttempts++
+			// Use spiral pattern like mouse interaction for better accuracy
+			x, y := utils.Spiral(mouseOverAttempts)
+			currentMouseCoords = data.Position{X: mX + x, Y: mY + y}
+			ctx.HID.MovePointer(mX+x, mY+y)
+			mouseOverAttempts++
 
-		// Wait for interaction to complete
-		utils.Sleep(350)
+			if mouseOverAttempts > 1 {
+				ctx.Logger.Debug("Telekinesis using spiral pattern",
+					"object", o.Name,
+					"spiralAttempt", mouseOverAttempts,
+					"offset", fmt.Sprintf("(%d, %d)", x, y),
+					"distance", distance,
+					"tkRange", telekinesisMaxInteractionRange,
+					"isHovered", o.IsHovered,
+				)
+			}
+
+			// Small delay to allow hover detection
+			utils.Sleep(50)
+
+			// Refresh to get updated hover state
+			ctx.RefreshGameData()
+
+			// Re-find object to check if now hovered
+			var updatedObj data.Object
+			var found bool
+			if obj.ID != 0 {
+				updatedObj, found = ctx.Data.Objects.FindByID(obj.ID)
+			} else {
+				updatedObj, found = ctx.Data.Objects.FindOne(obj.Name)
+			}
+
+			if !found {
+				return fmt.Errorf("object %v not found", obj)
+			}
+
+			// Update o with latest data
+			o = updatedObj
+
+			// Continue loop to check if hovered on next iteration
+			continue
+		}
 
 		// For portals with expected area, verify transition
 		if expectedArea != 0 {
