@@ -202,8 +202,8 @@ func getKeyCount() int {
 }
 
 // WaitForItemsAfterContainerOpen waits for items to drop from opened containers
-// It checks periodically if items appeared on the ground near the container position
-// Returns as soon as items are detected or timeout is reached
+// It checks periodically if NEW items appeared on the ground near the container position
+// Returns as soon as new items are detected or timeout is reached
 // Different container types have different maximum wait times based on their animation duration
 func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object) {
 	ctx := context.Get()
@@ -211,9 +211,12 @@ func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object)
 
 	const (
 		checkInterval   = 50 * time.Millisecond  // Check interval - small for quick detection
-		itemCheckRadius = 3                      // Radius to check for items (tiles)
+		itemCheckRadius = 5                      // Radius to check for items (tiles) - increased from 3
 		initialDelay    = 50 * time.Millisecond  // Initial delay before first check
 	)
+
+	// Capture initial items BEFORE waiting - these existed before container was opened
+	initialItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
 
 	// Determine maximum wait time based on container type
 	var maxWaitTime time.Duration
@@ -238,18 +241,19 @@ func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object)
 
 	startTime := time.Now()
 
-	// Check periodically for items
+	// Check periodically for NEW items (items that weren't there before)
 	for time.Since(startTime) < maxWaitTime {
 		ctx.RefreshGameData()
 
-		// Get items on the ground near the container position
-		itemsNearby := getItemsNearPosition(containerPos, itemCheckRadius)
+		// Get current items and check if any are NEW
+		currentItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
 
-		if len(itemsNearby) > 0 {
-			// Items detected, we can return immediately
-			ctx.Logger.Debug("Items detected after container open",
+		if hasNewItems(initialItems, currentItems) {
+			newCount := countNewItems(initialItems, currentItems)
+			ctx.Logger.Debug("New items detected after container open",
 				"container", obj.Name,
-				"itemsCount", len(itemsNearby),
+				"newItemsCount", newCount,
+				"totalItemsNearby", len(currentItems),
 				"waitTime", time.Since(startTime),
 			)
 			return
@@ -260,11 +264,13 @@ func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object)
 	}
 
 	// Timeout reached - log if in debug mode
-	itemsNearby := getItemsNearPosition(containerPos, itemCheckRadius)
+	currentItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
+	newCount := countNewItems(initialItems, currentItems)
 	ctx.Logger.Debug("Timeout reached waiting for items after container open",
 		"container", obj.Name,
 		"maxWaitTime", maxWaitTime,
-		"itemsFound", len(itemsNearby),
+		"newItemsFound", newCount,
+		"totalItemsNearby", len(currentItems),
 		"containerPos", fmt.Sprintf("(%d, %d)", containerPos.X, containerPos.Y),
 	)
 }
@@ -282,6 +288,43 @@ func getItemsNearPosition(pos data.Position, radius int) []data.Item {
 	}
 
 	return items
+}
+
+// getItemIDsNearPosition returns a map of item IDs on the ground near a position
+// Used for tracking which items existed before opening a container
+func getItemIDsNearPosition(pos data.Position, radius int) map[data.UnitID]bool {
+	ctx := context.Get()
+	itemIDs := make(map[data.UnitID]bool)
+
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationGround) {
+		distance := pather.DistanceFromPoint(itm.Position, pos)
+		if distance <= radius {
+			itemIDs[itm.UnitID] = true
+		}
+	}
+
+	return itemIDs
+}
+
+// hasNewItems checks if there are any new items in current that weren't in initial
+func hasNewItems(initial, current map[data.UnitID]bool) bool {
+	for id := range current {
+		if !initial[id] {
+			return true // New item found
+		}
+	}
+	return false
+}
+
+// countNewItems returns the number of new items in current that weren't in initial
+func countNewItems(initial, current map[data.UnitID]bool) int {
+	count := 0
+	for id := range current {
+		if !initial[id] {
+			count++
+		}
+	}
+	return count
 }
 
 // getMaxWaitTimeForContainer returns the maximum wait time for a container type
@@ -306,8 +349,8 @@ type containerPosition struct {
 }
 
 // WaitForItemsAfterMultipleContainers waits for items to drop from multiple opened containers
-// It checks periodically if items appeared near any of the container positions
-// Returns as soon as items are detected in all positions or timeout is reached
+// It checks periodically if NEW items appeared near any of the container positions
+// Returns as soon as new items are detected in all positions or timeout is reached
 func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 	ctx := context.Get()
 	ctx.SetLastAction("WaitForItemsAfterMultipleContainers")
@@ -318,9 +361,15 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 
 	const (
 		checkInterval   = 50 * time.Millisecond
-		itemCheckRadius = 3
+		itemCheckRadius = 5 // Increased from 3
 		initialDelay    = 50 * time.Millisecond
 	)
+
+	// Capture initial items for each container BEFORE waiting
+	initialItemsPerContainer := make([]map[data.UnitID]bool, len(containers))
+	for i, c := range containers {
+		initialItemsPerContainer[i] = getItemIDsNearPosition(c.pos, itemCheckRadius)
+	}
 
 	// Calculate maximum wait time based on the slowest container type
 	var maxWaitTime time.Duration
@@ -335,24 +384,25 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 	time.Sleep(initialDelay)
 
 	startTime := time.Now()
-	itemsDetected := make(map[int]bool) // Track which containers have items detected
+	itemsDetected := make(map[int]bool) // Track which containers have NEW items detected
 
-	// Check periodically for items
+	// Check periodically for NEW items
 	for time.Since(startTime) < maxWaitTime {
 		ctx.RefreshGameData()
 
 		allDetected := true
 		for i, c := range containers {
 			if itemsDetected[i] {
-				continue // Already detected items for this container
+				continue // Already detected new items for this container
 			}
 
-			itemsNearby := getItemsNearPosition(c.pos, itemCheckRadius)
-			if len(itemsNearby) > 0 {
+			currentItems := getItemIDsNearPosition(c.pos, itemCheckRadius)
+			if hasNewItems(initialItemsPerContainer[i], currentItems) {
 				itemsDetected[i] = true
-				ctx.Logger.Debug("Items detected after batch container open",
+				newCount := countNewItems(initialItemsPerContainer[i], currentItems)
+				ctx.Logger.Debug("New items detected after batch container open",
 					"container", c.obj.Name,
-					"itemsCount", len(itemsNearby),
+					"newItemsCount", newCount,
 					"waitTime", time.Since(startTime),
 				)
 			} else {
@@ -360,9 +410,9 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 			}
 		}
 
-		// If items detected for all containers, we can return early
+		// If new items detected for all containers, we can return early
 		if allDetected && len(itemsDetected) == len(containers) {
-			ctx.Logger.Debug("All containers in batch have items detected",
+			ctx.Logger.Debug("All containers in batch have new items detected",
 				"containersCount", len(containers),
 				"waitTime", time.Since(startTime),
 			)
@@ -373,7 +423,7 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 		time.Sleep(checkInterval)
 	}
 
-	// Log which containers didn't get items (if any)
+	// Log which containers didn't get new items (if any)
 	undetected := len(containers) - len(itemsDetected)
 	if undetected > 0 {
 		ctx.Logger.Debug("Timeout reached waiting for items after batch container open",
