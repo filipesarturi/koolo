@@ -291,50 +291,26 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 			waitingForInteraction = true
 			interactionAttempts++
 
+			// For containers (not portals/waypoints), return immediately after clicking
+			// to enable rapid batch opening. The batch opening will wait for items after all containers are opened.
+			// For portals and waypoints, we need to verify the interaction completed.
+			if !obj.IsPortal() && !obj.IsRedPortal() && !obj.IsWaypoint() {
+				// Minimal delay to allow click to register (reduced from 350ms for faster batch opening)
+				utils.Sleep(100)
+				// Return immediately - batch opening will handle waiting for items
+				return nil
+			}
+
+			// For portals and waypoints, wait longer and verify interaction completed
 			// Wait for interaction to complete (animation starts)
 			utils.Sleep(350)
 			
-			// Refresh to check if container is now opened
+			// Refresh to check if object interaction completed
 			ctx.RefreshGameData()
 			
-			// Re-find object to check if it's opened
+			// Re-find object to check if interaction completed
 			var updatedObj data.Object
 			var found bool
-			if obj.ID != 0 {
-				updatedObj, found = ctx.Data.Objects.FindByID(obj.ID)
-			} else {
-				updatedObj, found = ctx.Data.Objects.FindOne(obj.Name)
-			}
-			
-			if found {
-				// Check if container is opened (not selectable anymore)
-				if !updatedObj.Selectable {
-					// Container is opened, return immediately for batch processing
-					// The batch opening will wait for items after all containers are opened
-					return nil
-				}
-			}
-			
-			// Check completion function - if it returns true, container is considered opened
-			// This allows the batch opening to continue to next container immediately
-			// The batch opening will wait for items after all containers are opened
-			if isCompletedFn() {
-				return nil
-			}
-			
-			// For batch opening, return immediately after clicking to allow rapid opening
-			// The batch opening will wait for items after all containers are opened
-			// Only wait longer if this is not a container (e.g., portals need verification)
-			if !obj.IsPortal() && !obj.IsRedPortal() && !obj.IsWaypoint() {
-				// For containers, return immediately after clicking - batch opening will handle waiting
-				return nil
-			}
-			
-			// For portals and waypoints, give it a bit more time and check again
-			// This handles cases where the object takes a moment to update
-			utils.Sleep(100)
-			ctx.RefreshGameData()
-			
 			if obj.ID != 0 {
 				updatedObj, found = ctx.Data.Objects.FindByID(obj.ID)
 			} else {
