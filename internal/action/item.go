@@ -656,11 +656,6 @@ func openContainerIndividually(obj data.Object, openedContainers *[]containerPos
 		pos: obj.Position,
 		obj: obj,
 	})
-
-	*openedContainers = append(*openedContainers, containerPosition{
-		pos: obj.Position,
-		obj: obj,
-	})
 }
 
 // OpenContainersInBatchWithTelekinesis opens multiple containers within telekinesis range in batch
