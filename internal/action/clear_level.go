@@ -6,13 +6,18 @@ import (
 	"log/slog"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
+	"github.com/hectorgimenez/d2go/pkg/data/quest"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
+
+// CountessQuestChest is the chest that only opens during the Forgotten Tower quest
+const CountessQuestChest = object.Name(371)
 
 var interactableShrines = []object.ShrineType{
 	object.ExperienceShrine,
@@ -61,6 +66,13 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 		if openChests {
 			for _, o := range ctx.Data.Objects {
 				if r.IsInside(o.Position) && o.IsChest() && o.Selectable {
+					// Skip Countess quest chest if quest is already completed (it only opens during the quest)
+					if o.Name == CountessQuestChest && ctx.Data.PlayerUnit.Area == area.TowerCellarLevel5 {
+						if ctx.Data.Quests[quest.Act1TheForgottenTower].Completed() {
+							ctx.Logger.Debug("Skipping Countess quest chest - quest already completed")
+							continue
+						}
+					}
 					// Check if we have keys before attempting to open locked chests
 					if !hasKeysInInventory() {
 						ctx.Logger.Debug("Skipping chest - no keys in inventory", slog.Any("chest_id", o.ID))
