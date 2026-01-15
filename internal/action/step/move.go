@@ -161,7 +161,8 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			stuckThreshold = 3000 * time.Millisecond
 		}
 	}
-	maxStuckDuration := 15 * time.Second // Maximum time to be stuck before aborting
+	maxStuckDuration := 15 * time.Second           // Maximum time to be stuck before aborting
+	const absoluteMovementTimeout = 30 * time.Second // Absolute timeout for any movement - NEVER reset
 	stuckCheckStartTime := time.Now()
 	escapeAttempts := 0
 	const maxEscapeAttempts = 3
@@ -206,6 +207,20 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		// Check if a Drop request is pending and interrupt
 		// the current movement early so the Drop flow can take over
+
+		// Check absolute timeout first - this NEVER resets
+		if time.Since(movementStartTime) > absoluteMovementTimeout {
+			ctx.Logger.Error("Movement absolute timeout (30s) exceeded",
+				slog.Duration("elapsed", time.Since(movementStartTime)),
+				slog.Int("startX", startPos.X),
+				slog.Int("startY", startPos.Y),
+				slog.Int("destX", dest.X),
+				slog.Int("destY", dest.Y),
+				slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
+				slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
+			)
+			return ErrPlayerStuck
+		}
 
 		if err := interruptDropIfRequested(); err != nil {
 			return err
@@ -407,7 +422,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 					slog.Bool("isMakingProgress", isMakingProgress),
 				)
 				return ErrPlayerRoundTrip
-		} else if timeInRoundtrip > roundTripThreshold/2.0 && !isMakingProgress {
+			} else if timeInRoundtrip > roundTripThreshold/2.0 && !isMakingProgress {
 			// Only consider blocked if we're NOT making progress towards destination
 			blocked = true
 			if time.Since(lastLogTime) > logThrottleInterval {

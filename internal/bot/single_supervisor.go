@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -358,7 +359,9 @@ func (s *SinglePlayerSupervisor) Start() error {
 			defer ticker.Stop()
 			var lastPosition data.Position
 			var stuckSince time.Time
-			var droppedMouseItem bool // Track if we've already tried dropping mouse item
+			var stuckStartPosition data.Position // Position when stuck was first detected
+			var droppedMouseItem bool            // Track if we've already tried dropping mouse item
+			const minProgressDistance = 15.0     // Minimum distance to consider real progress
 
 			// Initial position check
 			if s.bot.ctx.GameReader.InGame() && s.bot.ctx.Data.PlayerUnit.ID > 0 {
@@ -388,7 +391,8 @@ func (s *SinglePlayerSupervisor) Start() error {
 					if currentPos.X == lastPosition.X && currentPos.Y == lastPosition.Y {
 						if stuckSince.IsZero() {
 							stuckSince = time.Now()
-							droppedMouseItem = false // Reset flag when first detecting stuck
+							stuckStartPosition = currentPos // Save position when stuck started
+							droppedMouseItem = false        // Reset flag when first detecting stuck
 							s.bot.ctx.CurrentGame.IsStuck = true
 							s.bot.ctx.CurrentGame.StuckSince = time.Now()
 						}
@@ -452,14 +456,35 @@ func (s *SinglePlayerSupervisor) Start() error {
 							return
 						}
 					} else {
-						// Player moved, reset stuck state
-						if !stuckSince.IsZero() {
-							s.bot.ctx.Logger.Debug("Player movement detected, clearing stuck state")
+						// Player moved - check if it's real progress (not just escape micro-movement)
+						if !stuckSince.IsZero() && stuckStartPosition.X != 0 {
+							distFromStart := math.Sqrt(
+								math.Pow(float64(currentPos.X-stuckStartPosition.X), 2) +
+									math.Pow(float64(currentPos.Y-stuckStartPosition.Y), 2))
+
+							if distFromStart >= minProgressDistance {
+								// Real progress - reset stuck detection
+								s.bot.ctx.Logger.Debug("Real progress detected, clearing stuck state",
+									slog.Float64("distanceFromStart", distFromStart))
+								stuckSince = time.Time{}
+								stuckStartPosition = data.Position{}
+								droppedMouseItem = false
+								s.bot.ctx.CurrentGame.IsStuck = false
+								s.bot.ctx.CurrentGame.StuckSince = time.Time{}
+							} else {
+								// Micro-movement from escape - don't reset timer, just update lastPosition
+								s.bot.ctx.Logger.Debug("Micro-movement detected, keeping stuck timer",
+									slog.Float64("distanceFromStart", distFromStart),
+									slog.Duration("stuckDuration", time.Since(stuckSince)))
+							}
+						} else {
+							// Normal movement (not in stuck state), reset
+							stuckSince = time.Time{}
+							stuckStartPosition = data.Position{}
+							droppedMouseItem = false
+							s.bot.ctx.CurrentGame.IsStuck = false
+							s.bot.ctx.CurrentGame.StuckSince = time.Time{}
 						}
-						stuckSince = time.Time{} // Reset timer if the player has moved
-						droppedMouseItem = false // Reset flag if player moved
-						s.bot.ctx.CurrentGame.IsStuck = false
-						s.bot.ctx.CurrentGame.StuckSince = time.Time{}
 					}
 					lastPosition = currentPos
 				}

@@ -30,10 +30,6 @@ func doesExceedQuantity(rule nip.Rule) bool {
 		return false
 	}
 
-	if maxQuantity == 0 {
-		return false
-	}
-
 	matchedItemsInStash := 0
 
 	for _, stashItem := range stashItems {
@@ -51,9 +47,8 @@ func DropMouseItem() {
 	ctx.SetLastAction("DropMouseItem")
 
 	if len(ctx.Data.Inventory.ByLocation(item.LocationCursor)) > 0 {
-		utils.Sleep(1000)
 		ctx.HID.Click(game.LeftButton, 500, 500)
-		utils.Sleep(1000)
+		WaitForCursorEmpty(2000)
 	}
 }
 
@@ -87,10 +82,12 @@ func DropInventoryItem(i data.Item) error {
 
 	// Check if any other menu is open, except the inventory
 	for ctx.Data.OpenMenus.IsMenuOpen() {
-
 		// Press escape to close it
 		ctx.HID.PressKey(0x1B) // ESC
-		utils.Sleep(500)
+		WaitForCondition(func() bool {
+			ctx.RefreshGameData()
+			return !ctx.Data.OpenMenus.IsMenuOpen()
+		}, 1000, 50)
 		closeAttempts++
 
 		if closeAttempts >= 5 {
@@ -99,22 +96,22 @@ func DropInventoryItem(i data.Item) error {
 	}
 
 	if i.Location.LocationType == item.LocationInventory {
-
 		// Check if the inventory is open, if not open it
 		if !ctx.Data.OpenMenus.Inventory {
 			ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+			WaitForMenuOpen(MenuInventory, 1500)
 		}
-
-		// Wait a second
-		utils.Sleep(1000)
 
 		screenPos := ui.GetScreenCoordsForItem(i)
 		ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-		utils.Sleep(250)
+		utils.Sleep(100)
 		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
-		utils.Sleep(500)
 
-		// Close the inventory if its still open, which should be at this point
+		// Wait for item to be dropped (no longer in inventory)
+		WaitForItemNotInLocation(i.UnitID, item.LocationInventory, 1500)
+
+		// Close the inventory if its still open
+		ctx.RefreshGameData()
 		if ctx.Data.OpenMenus.Inventory {
 			ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
 		}
@@ -349,8 +346,9 @@ type containerPosition struct {
 }
 
 // WaitForItemsAfterMultipleContainers waits for items to drop from multiple opened containers
-// It checks periodically if NEW items appeared near any of the container positions
-// Returns as soon as new items are detected in all positions or timeout is reached
+// Each container has its own timeout based on type. Returns when ALL containers have either:
+// - Dropped items (detected new items nearby), OR
+// - Reached their individual timeout
 func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 	ctx := context.Get()
 	ctx.SetLastAction("WaitForItemsAfterMultipleContainers")
@@ -361,22 +359,25 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 
 	const (
 		checkInterval   = 50 * time.Millisecond
-		itemCheckRadius = 5 // Increased from 3
+		itemCheckRadius = 5
 		initialDelay    = 50 * time.Millisecond
 	)
 
-	// Capture initial items for each container BEFORE waiting
-	initialItemsPerContainer := make([]map[data.UnitID]bool, len(containers))
-	for i, c := range containers {
-		initialItemsPerContainer[i] = getItemIDsNearPosition(c.pos, itemCheckRadius)
+	// Capture initial items and timeout for each container
+	type containerState struct {
+		initialItems map[data.UnitID]bool
+		timeout      time.Duration
+		completed    bool // true if items detected OR timeout reached
+		droppedItems bool // true if items were detected
 	}
 
-	// Calculate maximum wait time based on the slowest container type
-	var maxWaitTime time.Duration
-	for _, c := range containers {
-		waitTime := getMaxWaitTimeForContainer(c.obj)
-		if waitTime > maxWaitTime {
-			maxWaitTime = waitTime
+	states := make([]containerState, len(containers))
+	for i, c := range containers {
+		states[i] = containerState{
+			initialItems: getItemIDsNearPosition(c.pos, itemCheckRadius),
+			timeout:      getMaxWaitTimeForContainer(c.obj),
+			completed:    false,
+			droppedItems: false,
 		}
 	}
 
@@ -384,59 +385,71 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 	time.Sleep(initialDelay)
 
 	startTime := time.Now()
-	itemsDetected := make(map[int]bool) // Track which containers have NEW items detected
 
-	// Check periodically for NEW items
-	for time.Since(startTime) < maxWaitTime {
+	// Check periodically until all containers are completed
+	for {
 		ctx.RefreshGameData()
+		elapsed := time.Since(startTime)
 
-		allDetected := true
+		allCompleted := true
 		for i, c := range containers {
-			if itemsDetected[i] {
-				continue // Already detected new items for this container
+			if states[i].completed {
+				continue
 			}
 
+			// Check if this container's timeout has been reached
+			if elapsed >= states[i].timeout {
+				states[i].completed = true
+				ctx.Logger.Debug("Container timeout reached without items",
+					"container", c.obj.Name,
+					"timeout", states[i].timeout,
+				)
+				continue
+			}
+
+			// Check for new items
 			currentItems := getItemIDsNearPosition(c.pos, itemCheckRadius)
-			if hasNewItems(initialItemsPerContainer[i], currentItems) {
-				itemsDetected[i] = true
-				newCount := countNewItems(initialItemsPerContainer[i], currentItems)
+			if hasNewItems(states[i].initialItems, currentItems) {
+				states[i].completed = true
+				states[i].droppedItems = true
+				newCount := countNewItems(states[i].initialItems, currentItems)
 				ctx.Logger.Debug("New items detected after batch container open",
 					"container", c.obj.Name,
 					"newItemsCount", newCount,
-					"waitTime", time.Since(startTime),
+					"waitTime", elapsed,
 				)
-			} else {
-				allDetected = false
+				continue
 			}
+
+			allCompleted = false
 		}
 
-		// If new items detected for all containers, we can return early
-		if allDetected && len(itemsDetected) == len(containers) {
-			ctx.Logger.Debug("All containers in batch have new items detected",
-				"containersCount", len(containers),
-				"waitTime", time.Since(startTime),
+		if allCompleted {
+			// Count results
+			droppedCount := 0
+			timeoutCount := 0
+			for _, s := range states {
+				if s.droppedItems {
+					droppedCount++
+				} else {
+					timeoutCount++
+				}
+			}
+			ctx.Logger.Debug("All containers completed",
+				"total", len(containers),
+				"droppedItems", droppedCount,
+				"timedOut", timeoutCount,
+				"totalWaitTime", time.Since(startTime),
 			)
 			return
 		}
 
-		// Wait before next check
 		time.Sleep(checkInterval)
-	}
-
-	// Log which containers didn't get new items (if any)
-	undetected := len(containers) - len(itemsDetected)
-	if undetected > 0 {
-		ctx.Logger.Debug("Timeout reached waiting for items after batch container open",
-			"containersCount", len(containers),
-			"undetectedCount", undetected,
-			"maxWaitTime", maxWaitTime,
-		)
 	}
 }
 
 // OpenContainersInBatch opens multiple containers in batch, works with or without Telekinesis
-// Groups containers by proximity and opens them rapidly without waiting between each
-// Then waits once for items from all containers
+// Opens all containers rapidly without waiting between each, then waits once for items from all
 func OpenContainersInBatch(containers []data.Object) []data.Object {
 	ctx := context.Get()
 	ctx.SetLastAction("OpenContainersInBatch")
@@ -454,188 +467,61 @@ func OpenContainersInBatch(containers []data.Object) []data.Object {
 		"tkRange", telekinesisRange,
 	)
 
-	// Separate containers into two groups: within TK range and outside TK range
-	var containersInTKRange []data.Object
-	var containersOutsideTKRange []data.Object
+	// Separate containers into two groups: within range (TK or close) and outside range
+	var containersInRange []data.Object
+	var containersOutsideRange []data.Object
 
 	for _, obj := range containers {
 		distance := pather.DistanceFromPoint(playerPos, obj.Position)
 		canUseTK := canUseTelekinesisForObject(obj)
 
-		if canUseTK && distance <= telekinesisRange {
-			containersInTKRange = append(containersInTKRange, obj)
+		// In range if: can use TK and within TK range, OR close enough to click (15 tiles)
+		if (canUseTK && distance <= telekinesisRange) || distance <= 15 {
+			containersInRange = append(containersInRange, obj)
 		} else {
-			containersOutsideTKRange = append(containersOutsideTKRange, obj)
+			containersOutsideRange = append(containersOutsideRange, obj)
 		}
 	}
 
-	// Open containers within TK range rapidly
-	tkOpenStartTime := time.Now()
-	tkSuccessCount := 0
-	tkFailCount := 0
-	ctx.Logger.Debug("Starting batch opening with Telekinesis",
-		"containersInTKRange", len(containersInTKRange),
-		"containersOutsideTKRange", len(containersOutsideTKRange),
-		"tkRange", telekinesisRange,
+	// Open containers in range rapidly using fast interaction
+	openStartTime := time.Now()
+	successCount := 0
+	failCount := 0
+	ctx.Logger.Debug("Starting rapid batch opening",
+		"containersInRange", len(containersInRange),
+		"containersOutsideRange", len(containersOutsideRange),
 	)
-	for _, obj := range containersInTKRange {
-		err := InteractObject(obj, func() bool {
-			openedObj, found := ctx.Data.Objects.FindByID(obj.ID)
-			return found && !openedObj.Selectable
-		})
 
-		if err != nil {
-			tkFailCount++
-			distance := pather.DistanceFromPoint(ctx.Data.PlayerUnit.Position, obj.Position)
-			ctx.Logger.Debug("Failed to open container in batch (TK)",
-				"container", obj.Name,
-				"error", err,
-				"distance", distance,
-				"tkRange", telekinesisRange,
-			)
-			continue
-		}
+	for _, obj := range containersInRange {
+		ctx.PauseIfNotPriority()
 
-		tkSuccessCount++
-		openedContainers = append(openedContainers, containerPosition{
-			pos: obj.Position,
-			obj: obj,
-		})
-	}
-	if len(containersInTKRange) > 0 {
-		ctx.Logger.Debug("Opened containers with Telekinesis in batch",
-			"total", len(containersInTKRange),
-			"success", tkSuccessCount,
-			"failed", tkFailCount,
-			"duration", time.Since(tkOpenStartTime),
-		)
-	}
-
-	// Group containers outside TK range by proximity (within 10 tiles of each other)
-	// and open them in batches
-	const proximityRadius = 10
-	processed := make(map[data.UnitID]bool)
-	groupCount := 0
-	nonTKOpenStartTime := time.Now()
-	nonTKSuccessCount := 0
-	nonTKFailCount := 0
-
-	for _, obj := range containersOutsideTKRange {
-		if processed[obj.ID] {
-			continue
-		}
-
-		// Find all containers near this one
-		var nearbyGroup []data.Object
-		for _, other := range containersOutsideTKRange {
-			if processed[other.ID] {
-				continue
-			}
-			distance := pather.DistanceFromPoint(obj.Position, other.Position)
-			if distance <= proximityRadius {
-				nearbyGroup = append(nearbyGroup, other)
-				processed[other.ID] = true
-			}
-		}
-
-		// If multiple containers nearby, move to center and open all
-		if len(nearbyGroup) > 1 {
-			groupCount++
-			ctx.Logger.Debug("Grouping containers for batch opening",
-				"groupSize", len(nearbyGroup),
-				"groupIndex", groupCount,
-			)
-			// Calculate center position
-			centerX, centerY := 0, 0
-			for _, c := range nearbyGroup {
-				centerX += c.Position.X
-				centerY += c.Position.Y
-			}
-			centerX /= len(nearbyGroup)
-			centerY /= len(nearbyGroup)
-			centerPos := data.Position{X: centerX, Y: centerY}
-
-			// Move to center position
-			moveStartTime := time.Now()
-			if err := MoveToCoords(centerPos); err != nil {
-				ctx.Logger.Debug("Failed to move to container group center",
-					"error", err,
-					"groupSize", len(nearbyGroup),
-				)
-				// Fall back to individual opening
-				for _, c := range nearbyGroup {
-					openContainerIndividually(c, &openedContainers)
-				}
-				continue
-			}
-			ctx.Logger.Debug("Moved to container group center",
-				"groupSize", len(nearbyGroup),
-				"moveDuration", time.Since(moveStartTime),
-			)
-
-			// Refresh to get updated positions
-			ctx.RefreshGameData()
-
-			// Open all containers in the group from center position
-			groupTKCount := 0
-			groupNonTKCount := 0
-			for _, c := range nearbyGroup {
-				// Re-find container to get updated data
-				updatedObj, found := ctx.Data.Objects.FindByID(c.ID)
-				if !found || !updatedObj.Selectable {
-					continue
-				}
-
-				// Check if now within TK range from center
-				newDistance := pather.DistanceFromPoint(centerPos, updatedObj.Position)
-				canUseTK := canUseTelekinesisForObject(updatedObj)
-
-				if canUseTK && newDistance <= telekinesisRange {
-					// Can use TK from center
-					err := InteractObject(updatedObj, func() bool {
-						openedObj, found := ctx.Data.Objects.FindByID(updatedObj.ID)
-						return found && !openedObj.Selectable
-					})
-
-					if err != nil {
-						nonTKFailCount++
-						ctx.Logger.Debug("Failed to open container in batch after moving to center",
-							"container", updatedObj.Name,
-							"error", err,
-							"distance", newDistance,
-						)
-					} else {
-						groupTKCount++
-						nonTKSuccessCount++
-						openedContainers = append(openedContainers, containerPosition{
-							pos: updatedObj.Position,
-							obj: updatedObj,
-						})
-					}
-				} else {
-					// Still need to move closer
-					groupNonTKCount++
-					openContainerIndividually(updatedObj, &openedContainers)
-				}
-			}
-			ctx.Logger.Debug("Opened container group from center",
-				"groupSize", len(nearbyGroup),
-				"openedWithTK", groupTKCount,
-				"openedWithoutTK", groupNonTKCount,
-			)
+		if step.InteractObjectFast(obj) {
+			successCount++
+			openedContainers = append(openedContainers, containerPosition{
+				pos: obj.Position,
+				obj: obj,
+			})
 		} else {
-			// Single container, open individually
-			openContainerIndividually(obj, &openedContainers)
+			failCount++
+			ctx.Logger.Debug("Failed to open container in batch",
+				"container", obj.Name,
+			)
 		}
 	}
-	if len(containersOutsideTKRange) > 0 {
-		ctx.Logger.Debug("Opened containers outside TK range",
-			"total", len(containersOutsideTKRange),
-			"groups", groupCount,
-			"success", nonTKSuccessCount,
-			"failed", nonTKFailCount,
-			"duration", time.Since(nonTKOpenStartTime),
+
+	if len(containersInRange) > 0 {
+		ctx.Logger.Debug("Opened containers in range rapidly",
+			"total", len(containersInRange),
+			"success", successCount,
+			"failed", failCount,
+			"duration", time.Since(openStartTime),
 		)
+	}
+
+	// Handle containers outside range - need to move to them
+	for _, obj := range containersOutsideRange {
+		ctx.PauseIfNotPriority()
+		openContainerIndividuallyFast(obj, &openedContainers)
 	}
 
 	// If any containers were opened, wait for items from all of them
@@ -659,7 +545,39 @@ func OpenContainersInBatch(containers []data.Object) []data.Object {
 	return result
 }
 
-// openContainerIndividually opens a single container and adds it to the opened list
+// openContainerIndividuallyFast moves to a container if needed and opens it quickly
+func openContainerIndividuallyFast(obj data.Object, openedContainers *[]containerPosition) {
+	ctx := context.Get()
+
+	// Move to container
+	chestDistance := ctx.PathFinder.DistanceFromMe(obj.Position)
+	canUseTK := canUseTelekinesisForObject(obj)
+	telekinesisRange := getTelekinesisRange()
+
+	if !canUseTK || chestDistance > telekinesisRange {
+		if err := MoveToCoords(obj.Position); err != nil {
+			ctx.Logger.Debug("Failed moving to container",
+				"container", obj.Name,
+				"error", err,
+			)
+			return
+		}
+	}
+
+	// Open the container quickly
+	if step.InteractObjectFast(obj) {
+		*openedContainers = append(*openedContainers, containerPosition{
+			pos: obj.Position,
+			obj: obj,
+		})
+	} else {
+		ctx.Logger.Debug("Failed to open container individually",
+			"container", obj.Name,
+		)
+	}
+}
+
+// openContainerIndividually opens a single container and adds it to the opened list (legacy, waits for completion)
 func openContainerIndividually(obj data.Object, openedContainers *[]containerPosition) {
 	ctx := context.Get()
 

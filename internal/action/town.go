@@ -3,6 +3,7 @@ package action
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data/item"
@@ -91,6 +92,7 @@ func PreRun(firstRun bool) error {
 	DropMouseItem()
 	step.SetSkill(skill.Vigor)
 	RecoverCorpse()
+	cleanupCowRunItems()
 	ManageBelt()
 	// Just to make sure messages like TZ change or public game spam arent on the way
 	ClearMessages()
@@ -185,6 +187,37 @@ func PreRun(firstRun bool) error {
 	HireMerc()
 
 	return Repair()
+}
+
+// cleanupCowRunItems drops cow run items when cows run is not active
+func cleanupCowRunItems() {
+	ctx := context.Get()
+
+	// Only cleanup if cows run is NOT in the active runs
+	if slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
+		return // Cows run active, keep items
+	}
+
+	ctx.RefreshInventory()
+
+	// Drop Wirt's Leg if found in inventory
+	if leg, found := ctx.Data.Inventory.Find("WirtsLeg", item.LocationInventory); found {
+		ctx.Logger.Info("Dropping Wirt's Leg (Cows run not active)")
+		DropInventoryItem(leg)
+	}
+
+	// Drop extra TomeOfTownPortal (keep only 1 in locked slot)
+	foundProtectedTome := false
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name == item.TomeOfTownPortal {
+			if IsInLockedInventorySlot(itm) && !foundProtectedTome {
+				foundProtectedTome = true
+				continue // Keep first protected tome
+			}
+			ctx.Logger.Info("Dropping extra TomeOfTownPortal (Cows run not active)")
+			DropInventoryItem(itm)
+		}
+	}
 }
 
 func InRunReturnTownRoutine() error {

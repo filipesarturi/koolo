@@ -263,27 +263,21 @@ func shouldStashIt(i data.Item, firstRun bool) (bool, bool, string, string) {
 	}
 
 	// These items should NEVER be stashed, regardless of quest status, pickit rules, or first run.
-	fmt.Printf("DEBUG: Evaluating item '%s' for *absolute* exclusion from stash.\n", i.Name)
-	if i.Name == "horadricstaff" { // This is the simplest way given your logs
-		fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (Horadric Staff exclusion).\n", i.Name)
+	if i.Name == "horadricstaff" {
 		return false, false, "", "" // Explicitly do NOT stash the Horadric Staff
 	}
 
 	// Protect cow run items only if Cows run is active
 	if i.Name == "TomeOfTownPortal" || i.Name == "TomeOfIdentify" || i.Name == "WirtsLeg" {
 		if ctx.CharacterCfg != nil && slices.Contains(ctx.CharacterCfg.Game.Runs, config.CowsRun) {
-			fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (Cows run active).\n", i.Name)
 			return false, false, "", ""
 		}
-		// If not cow run, allow stashing these items
 	}
 
 	// Handle keys based on KeyCount configuration
 	if i.Name == "Key" {
 		keyCount := getKeyCount()
 		if keyCount <= 0 {
-			// If KeyCount is 0 or disabled, never stash keys
-			fmt.Printf("DEBUG: ABSOLUTELY PREVENTING stash for '%s' (KeyCount disabled).\n", i.Name)
 			return false, false, "", ""
 		}
 
@@ -294,14 +288,13 @@ func shouldStashIt(i data.Item, firstRun bool) (bool, bool, string, string) {
 				if qty, found := itm.FindStat(stat.Quantity, 0); found {
 					totalKeys += qty.Value
 				} else {
-					totalKeys++ // If no quantity stat, assume stack of 1
+					totalKeys++
 				}
 			}
 		}
 
 		// Only stash keys if we have more than the configured amount
 		if totalKeys <= keyCount {
-			fmt.Printf("DEBUG: PREVENTING stash for '%s' (only %d keys, need to keep %d).\n", i.Name, totalKeys, keyCount)
 			return false, false, "", ""
 		}
 	}
@@ -311,7 +304,6 @@ func shouldStashIt(i data.Item, firstRun bool) (bool, bool, string, string) {
 	}
 
 	if firstRun {
-		fmt.Printf("DEBUG: Allowing stash for '%s' (first run).\n", i.Name)
 		return true, false, "FirstRun", ""
 	}
 
@@ -344,22 +336,16 @@ func shouldStashIt(i data.Item, firstRun bool) (bool, bool, string, string) {
 
 	if res == nip.RuleResultFullMatch {
 		if doesExceedQuantity(rule) {
-			// If it matches a rule but exceeds quantity, we want to drop it, not stash.
-			fmt.Printf("DEBUG: Dropping '%s' because MaxQuantity is exceeded.\n", i.Name)
 			return false, true, rule.RawLine, rule.Filename + ":" + strconv.Itoa(rule.LineNumber)
-		} else {
-			// If it matches a rule and quantity is fine, stash it.
-			fmt.Printf("DEBUG: Allowing stash for '%s' (pickit rule match: %s).\n", i.Name, rule.RawLine)
-			return true, false, rule.RawLine, rule.Filename + ":" + strconv.Itoa(rule.LineNumber)
 		}
+		return true, false, rule.RawLine, rule.Filename + ":" + strconv.Itoa(rule.LineNumber)
 	}
 
 	if i.IsRuneword {
 		return true, false, "Runeword", ""
 	}
 
-	fmt.Printf("DEBUG: Disallowing stash for '%s' (no rule match and not explicitly kept, and not exceeding quantity).\n", i.Name)
-	return false, false, "", "" // Default if no other rule matches
+	return false, false, "", ""
 }
 
 // shouldKeepRecipeItem decides whether the bot should stash a low-quality item that is part of an enabled cube recipe.
@@ -445,19 +431,31 @@ func stashItemAction(i data.Item, rule string, ruleFile string, skipLogging bool
 	displayName := formatItemName(i)
 
 	screenPos := ui.GetScreenCoordsForItem(i)
-	ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-	utils.PingSleep(utils.Medium, 170)        // Medium operation: Move pointer to item
 	screenshot := ctx.GameReader.Screenshot() // Take screenshot *before* attempting stash
-	utils.PingSleep(utils.Medium, 150)        // Medium operation: Wait for screenshot
-	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
-	utils.PingSleep(utils.Medium, 500) // Medium operation: Give game time to process the stash
 
-	// Verify if the item is no longer in inventory
-	ctx.RefreshGameData() // Crucial: Refresh data to see if item moved
+	// Try up to 3 times with increasing delays
+	maxAttempts := 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+		utils.PingSleep(utils.Medium, 150)
+		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+
+		// Wait for item to be stashed with polling
+		if waitForItemStashed(i.UnitID, 1500) {
+			break
+		}
+
+		if attempt < maxAttempts {
+			ctx.Logger.Debug(fmt.Sprintf("Stash attempt %d/%d failed for %s, retrying...", attempt, maxAttempts, displayName))
+		}
+	}
+
+	// Final verification
+	ctx.RefreshGameData()
 	for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
 		if it.UnitID == i.UnitID {
-			ctx.Logger.Debug(fmt.Sprintf("Failed to stash item %s (UnitID: %d), still in inventory.", i.Name, i.UnitID))
-			return false // Item is still in inventory, stash failed
+			ctx.Logger.Debug(fmt.Sprintf("Failed to stash item %s (UnitID: %d), still in inventory after %d attempts.", i.Name, i.UnitID, maxAttempts))
+			return false
 		}
 	}
 
@@ -487,6 +485,31 @@ func stashItemAction(i data.Item, rule string, ruleFile string, skipLogging bool
 	}
 
 	return true // Item successfully stashed
+}
+
+// waitForItemStashed polls until the item is no longer in inventory or timeout is reached
+func waitForItemStashed(unitID data.UnitID, timeoutMs int) bool {
+	ctx := context.Get()
+	pollInterval := 100
+	elapsed := 0
+
+	for elapsed < timeoutMs {
+		utils.Sleep(pollInterval)
+		elapsed += pollInterval
+
+		ctx.RefreshGameData()
+		found := false
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == unitID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return true // Item was stashed successfully
+		}
+	}
+	return false // Timeout - item still in inventory
 }
 
 func formatItemName(i data.Item) string {
@@ -624,44 +647,48 @@ func clickStashGoldBtn() {
 	ctx := context.Get()
 	ctx.SetLastStep("clickStashGoldBtn")
 
-	utils.PingSleep(utils.Medium, 170) // Medium operation: Prepare for gold button click
+	initialGold := ctx.Data.Inventory.Gold
+
 	if ctx.GameReader.LegacyGraphics() {
 		ctx.HID.Click(game.LeftButton, ui.StashGoldBtnXClassic, ui.StashGoldBtnYClassic)
-		utils.PingSleep(utils.Critical, 1000) // Critical operation: Wait for confirm dialog
+		utils.Sleep(150)
 		ctx.HID.Click(game.LeftButton, ui.StashGoldBtnConfirmXClassic, ui.StashGoldBtnConfirmYClassic)
 	} else {
 		ctx.HID.Click(game.LeftButton, ui.StashGoldBtnX, ui.StashGoldBtnY)
-		utils.PingSleep(utils.Critical, 1000) // Critical operation: Wait for confirm dialog
+		utils.Sleep(150)
 		ctx.HID.Click(game.LeftButton, ui.StashGoldBtnConfirmX, ui.StashGoldBtnConfirmY)
 	}
+
+	// Wait for gold to change (deposited)
+	WaitForGoldChange(initialGold, 2000)
 }
 
 func SwitchStashTab(tab int) {
 	// Ensure any chat messages that could prevent clicking on the tab are cleared
 	ClearMessages()
-	utils.Sleep(200)
+	utils.Sleep(100)
 
 	ctx := context.Get()
 	ctx.SetLastStep("switchTab")
 
+	var x, y int
 	if ctx.GameReader.LegacyGraphics() {
-		x := ui.SwitchStashTabBtnXClassic
-		y := ui.SwitchStashTabBtnYClassic
-
+		x = ui.SwitchStashTabBtnXClassic
+		y = ui.SwitchStashTabBtnYClassic
 		tabSize := ui.SwitchStashTabBtnTabSizeClassic
 		x = x + tabSize*tab - tabSize/2
-		ctx.HID.Click(game.LeftButton, x, y)
-		utils.PingSleep(utils.Medium, 500) // Medium operation: Wait for tab switch
 	} else {
-		x := ui.SwitchStashTabBtnX
-		y := ui.SwitchStashTabBtnY
-
+		x = ui.SwitchStashTabBtnX
+		y = ui.SwitchStashTabBtnY
 		tabSize := ui.SwitchStashTabBtnTabSize
 		x = x + tabSize*tab - tabSize/2
-		ctx.HID.Click(game.LeftButton, x, y)
-		utils.PingSleep(utils.Medium, 500) // Medium operation: Wait for tab switch
 	}
 
+	ctx.HID.Click(game.LeftButton, x, y)
+
+	// Wait for stash tab content to refresh (brief delay for UI update)
+	utils.Sleep(150)
+	ctx.RefreshGameData()
 }
 
 func OpenStash() error {

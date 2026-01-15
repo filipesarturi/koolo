@@ -8,7 +8,6 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
-	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/action"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -104,29 +103,12 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 			}
 		}
 
-		// Open objects in batch if multiple, otherwise individually
-		if len(objects) > 1 {
-			run.ctx.Logger.Debug("Opening multiple objects in batch near bonfire",
+		// Open all objects in batch (handles waiting for items internally)
+		if len(objects) > 0 {
+			run.ctx.Logger.Debug("Opening objects in batch near bonfire",
 				"objectsCount", len(objects),
 			)
 			_ = action.OpenContainersInBatch(objects)
-		} else if len(objects) == 1 {
-			// Single object - use individual method
-			closestObject := objects[0]
-			err = action.InteractObject(closestObject, func() bool {
-				object, _ := run.ctx.Data.Objects.FindByID(closestObject.ID)
-				return !object.Selectable
-			})
-			if err != nil {
-				run.ctx.Logger.Warn("Failed interacting with object",
-					"name", run.ctx.Name,
-					"object", closestObject.Name,
-					"area", run.ctx.Data.PlayerUnit.Area.Area().Name,
-					"error", err)
-			} else {
-				// Wait for items to drop from the opened container
-				action.WaitForItemsAfterContainerOpen(closestObject.Position, closestObject)
-			}
 		}
 	}
 
@@ -200,49 +182,12 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 			objectsInRoom = append(objectsInRoom, o)
 		}
 
-		// Open objects in batch if multiple, otherwise individually
-		if len(objectsInRoom) > 1 {
-			run.ctx.Logger.Debug("Opening multiple objects in batch in room",
+		// Open all objects in batch (handles waiting for items internally)
+		if len(objectsInRoom) > 0 {
+			run.ctx.Logger.Debug("Opening objects in batch in room",
 				"objectsCount", len(objectsInRoom),
 			)
 			_ = action.OpenContainersInBatch(objectsInRoom)
-		} else if len(objectsInRoom) == 1 {
-			// Single object - handle with ForceTelekinesis logic if needed
-			o := objectsInRoom[0]
-			objDistance := run.ctx.PathFinder.DistanceFromMe(o.Position)
-			canUseTK := run.canUseTelekinesisForObject(o)
-			forceTK := run.ctx.CharacterCfg.Game.LowerKurastChest.ForceTelekinesis
-
-			if forceTK && canUseTK {
-				// Force TK usage
-				err = run.interactObjectWithForcedTK(o, func() bool {
-					run.ctx.RefreshGameData()
-					obj, found := run.ctx.Data.Objects.FindByID(o.ID)
-					return !found || !obj.Selectable
-				})
-			} else {
-				// Normal interaction
-				telekinesisRange := run.getTelekinesisRange()
-				if !canUseTK || objDistance > telekinesisRange {
-					err = action.MoveToCoords(o.Position)
-					if err != nil {
-						continue
-					}
-				}
-
-				err = action.InteractObject(o, func() bool {
-					run.ctx.RefreshGameData()
-					obj, found := run.ctx.Data.Objects.FindByID(o.ID)
-					return !found || !obj.Selectable
-				})
-			}
-
-			if err != nil {
-				run.ctx.Logger.Debug("Failed interacting with object", "object", o.Name, "error", err)
-			} else {
-				// Wait for items to drop from chest/stash
-				action.WaitForItemsAfterContainerOpen(o.Position, o)
-			}
 		}
 
 		// Pick up items after clearing room (less frequent for speed)
@@ -270,96 +215,6 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 	return nil
 }
 
-
-// getTelekinesisRange returns the configured telekinesis range, defaulting to 18 if not set
-func (run LowerKurastChests) getTelekinesisRange() int {
-	ctx := run.ctx
-	if ctx.CharacterCfg.Character.TelekinesisRange > 0 {
-		return ctx.CharacterCfg.Character.TelekinesisRange
-	}
-	return 18 // Default: 18 tiles (~12 yards)
-}
-
-// canUseTelekinesisForObject checks if Telekinesis can be used for the given object
-// If ForceTelekinesis is enabled, ignores the global UseTelekinesis setting
-func (run LowerKurastChests) canUseTelekinesisForObject(obj data.Object) bool {
-	ctx := run.ctx
-	forceTK := ctx.CharacterCfg.Game.LowerKurastChest.ForceTelekinesis
-	
-	// If ForceTelekinesis is enabled, ignore global UseTelekinesis setting
-	// Otherwise, check global setting
-	if !forceTK && !ctx.CharacterCfg.Character.UseTelekinesis {
-		return false
-	}
-	
-	if ctx.Data.PlayerUnit.Skills[skill.Telekinesis].Level == 0 {
-		return false
-	}
-	if _, found := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis); !found {
-		return false
-	}
-	
-	// Object must be selectable to use Telekinesis
-	if !obj.Selectable {
-		return false
-	}
-	
-	// Telekinesis works on all interactable objects: chests, super chests, shrines, breakables, etc.
-	if obj.IsChest() || obj.IsSuperChest() || obj.IsShrine() {
-		return true
-	}
-	
-	// Include breakable objects (barrels, urns, caskets, logs, etc.)
-	breakableObjects := []object.Name{
-		object.Barrel, object.Urn2, object.Urn3, object.Casket,
-		object.Casket5, object.Casket6, object.LargeUrn1, object.LargeUrn4,
-		object.LargeUrn5, object.Crate, object.HollowLog, object.Sarcophagus,
-	}
-	for _, breakableName := range breakableObjects {
-		if obj.Name == breakableName {
-			return true
-		}
-	}
-	
-	// Include weapon racks and armor stands
-	if obj.Name == object.ArmorStandRight || obj.Name == object.ArmorStandLeft ||
-		obj.Name == object.WeaponRackRight || obj.Name == object.WeaponRackLeft {
-		return true
-	}
-	
-	// Include corpses, bodies, and other interactable containers
-	if !obj.IsDoor() {
-		desc := obj.Desc()
-		if desc.Name != "" {
-			name := strings.ToLower(desc.Name)
-			if strings.Contains(name, "chest") || strings.Contains(name, "casket") || strings.Contains(name, "urn") ||
-				strings.Contains(name, "barrel") || strings.Contains(name, "corpse") || strings.Contains(name, "body") ||
-				strings.Contains(name, "sarcophagus") || strings.Contains(name, "log") || strings.Contains(name, "crate") ||
-				strings.Contains(name, "wood") || strings.Contains(name, "rack") || strings.Contains(name, "stand") {
-				return true
-			}
-		}
-	}
-	
-	return false
-}
-
-// interactObjectWithForcedTK interacts with an object forcing Telekinesis usage
-// This temporarily enables UseTelekinesis to bypass the global setting
-func (run LowerKurastChests) interactObjectWithForcedTK(obj data.Object, isCompletedFn func() bool) error {
-	ctx := run.ctx
-	
-	// Temporarily enable UseTelekinesis to force TK usage
-	originalUseTK := ctx.CharacterCfg.Character.UseTelekinesis
-	ctx.CharacterCfg.Character.UseTelekinesis = true
-	defer func() {
-		// Restore original setting
-		ctx.CharacterCfg.Character.UseTelekinesis = originalUseTK
-	}()
-	
-	// Now InteractObject will use Telekinesis
-	return action.InteractObject(obj, isCompletedFn)
-}
 
 func isChestWithinBonfireRange(chest data.Object, bonfirePosition data.Position) bool {
 	distance := pather.DistanceFromPoint(chest.Position, bonfirePosition)

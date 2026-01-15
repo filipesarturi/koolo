@@ -576,3 +576,65 @@ func InteractObjectMouse(obj data.Object, isCompletedFn func() bool) error {
 
 	return nil
 }
+
+// InteractObjectFast clicks on an object and returns immediately without waiting for completion.
+// Used for batch container opening where we want to open multiple containers rapidly.
+// Does NOT wait for hover - clicks directly on object position for speed.
+// Returns true if the click was sent, false if object not found.
+func InteractObjectFast(obj data.Object) bool {
+	ctx := context.Get()
+	ctx.SetLastStep("InteractObjectFast")
+
+	// Refresh game data to get current object state
+	ctx.RefreshGameData()
+
+	// Find the object
+	var o data.Object
+	var found bool
+	if obj.ID != 0 {
+		o, found = ctx.Data.Objects.FindByID(obj.ID)
+	} else {
+		o, found = ctx.Data.Objects.FindOne(obj.Name)
+	}
+
+	if !found {
+		ctx.Logger.Debug("InteractObjectFast: object not found", "objName", obj.Name, "objID", obj.ID)
+		return false
+	}
+
+	if !o.Selectable {
+		ctx.Logger.Debug("InteractObjectFast: object not selectable", "objName", obj.Name, "objID", obj.ID)
+		return false
+	}
+
+	// Calculate screen position
+	objectX := o.Position.X - 2
+	objectY := o.Position.Y - 2
+	screenX, screenY := ui.GameCoordsToScreenCords(objectX, objectY)
+
+	// Check if Telekinesis can be used
+	useTK := canUseTelekinesis(obj)
+
+	ctx.Logger.Debug("InteractObjectFast: clicking object",
+		"objName", obj.Name,
+		"useTK", useTK,
+		"screenX", screenX,
+		"screenY", screenY,
+	)
+
+	if useTK {
+		tkKb, tkFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
+		if tkFound {
+			ctx.HID.PressKeyBinding(tkKb)
+			utils.Sleep(30)
+			ctx.HID.Click(game.RightButton, screenX, screenY)
+			utils.Sleep(50)
+			return true
+		}
+	}
+
+	// Fallback to left click
+	ctx.HID.Click(game.LeftButton, screenX, screenY)
+	utils.Sleep(50)
+	return true
+}

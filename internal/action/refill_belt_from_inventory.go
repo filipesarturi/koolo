@@ -84,11 +84,11 @@ func RefillBeltFromInventory() error {
 func putPotionInBelt(ctx *context.Status, potion data.Item) {
 	screenPos := ui.GetScreenCoordsForItem(potion)
 	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
-	utils.Sleep(150)
+	WaitForItemInBelt(potion.UnitID, 1000)
 }
 
 func putScrollTPInBelt(ctx *context.Status, scroll data.Item) {
 	screenPos := ui.GetScreenCoordsForItem(scroll)
 	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.ShiftKey)
-	utils.Sleep(150)
+	WaitForItemInBelt(scroll.UnitID, 1000)
 }

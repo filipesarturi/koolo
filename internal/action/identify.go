@@ -237,14 +237,29 @@ func HaveItemsToStashUnidentified() bool {
 
 func identifyItem(idTome data.Item, i data.Item) {
 	ctx := context.Get()
-	screenPos := ui.GetScreenCoordsForItem(idTome)
 
-	utils.PingSleep(utils.Medium, 500) // Medium operation: Prepare for right-click on tome
-	ctx.HID.Click(game.RightButton, screenPos.X, screenPos.Y)
-	utils.PingSleep(utils.Critical, 1000) // Critical operation: Wait for tome activation
+	maxAttempts := 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Click on tome to activate identify cursor
+		screenPos := ui.GetScreenCoordsForItem(idTome)
+		ctx.HID.Click(game.RightButton, screenPos.X, screenPos.Y)
 
-	screenPos = ui.GetScreenCoordsForItem(i)
+		// Wait for tome activation (cursor changes)
+		utils.Sleep(150)
 
-	ctx.HID.Click(game.LeftButton, screenPos.X, screenPos.Y)
-	utils.PingSleep(utils.Critical, 350) // Critical operation: Wait for item identification
+		// Click on item to identify
+		screenPos = ui.GetScreenCoordsForItem(i)
+		ctx.HID.Click(game.LeftButton, screenPos.X, screenPos.Y)
+
+		// Wait for item to be identified with polling
+		if WaitForItemIdentified(i.UnitID, 1500) {
+			return
+		}
+
+		if attempt < maxAttempts {
+			ctx.Logger.Debug("Identify attempt failed, retrying...", "item", i.Name, "attempt", attempt)
+		}
+	}
+
+	ctx.Logger.Debug("Failed to identify item after all attempts", "item", i.Name)
 }
