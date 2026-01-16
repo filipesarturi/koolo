@@ -36,6 +36,11 @@ type DefenseManager struct {
 	lastAttackTargetHP          int
 	lastAttackTime              time.Time
 	ineffectiveAttackStartTime  time.Time
+	
+	// Repositioning tracking
+	lastRepositionTime          time.Time
+	lastRepositionPosition      data.Position
+	repositionAttempts          int
 }
 
 // NewDefenseManager creates a new DefenseManager instance
@@ -222,6 +227,12 @@ func (dm *DefenseManager) isAttackingIneffectively(currentHP int) bool {
 // handleStationaryDamage handles the case when player is stationary and taking damage
 func (dm *DefenseManager) handleStationaryDamage(currentHP int) error {
 	cfgDefense := dm.data.CharacterCfg.Defense
+	const defensiveActionCooldown = 2 * time.Second
+
+	// Check cooldown to avoid spamming defensive actions
+	if !dm.lastRepositionTime.IsZero() && time.Since(dm.lastRepositionTime) < defensiveActionCooldown {
+		return nil
+	}
 
 	dm.logger.Warn("Player stationary and taking damage, taking defensive action")
 
@@ -235,6 +246,7 @@ func (dm *DefenseManager) handleStationaryDamage(currentHP int) error {
 			// Use pathFinder to move to safe position
 			if path, _, found := dm.pathFinder.GetPathIgnoreMonsters(safePos); found && len(path) > 0 {
 				dm.pathFinder.MoveThroughPath(path, 200*time.Millisecond)
+				dm.lastRepositionTime = time.Now()
 			}
 			return nil
 		}
@@ -243,6 +255,7 @@ func (dm *DefenseManager) handleStationaryDamage(currentHP int) error {
 	// If can't teleport or no safe position found, use escape movement
 	dm.logger.Info("Using escape movement")
 	dm.pathFinder.SmartEscapeMovement()
+	dm.lastRepositionTime = time.Now()
 
 	// Use rejuvenation potion if HP is low
 	if currentHP <= cfgDefense.LowHPThreshold {
@@ -257,6 +270,9 @@ func (dm *DefenseManager) handleStationaryDamage(currentHP int) error {
 // handleIneffectiveAttack handles the case when player is attacking but not dealing damage
 func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 	cfgDefense := dm.data.CharacterCfg.Defense
+	const repositionCooldown = 3 * time.Second
+	const maxRepositionAttempts = 2
+	const minMovementThreshold = 5.0
 
 	isLowHP := currentHP < cfgDefense.LowHPThreshold
 
@@ -272,6 +288,9 @@ func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 				if path, _, found := dm.pathFinder.GetPathIgnoreMonsters(safePos); found && len(path) > 0 {
 					dm.pathFinder.MoveThroughPath(path, 200*time.Millisecond)
 				}
+				// Reset reposition tracking after attempting movement
+				dm.lastRepositionTime = time.Now()
+				dm.lastRepositionPosition = dm.data.PlayerUnit.Position
 				return nil
 			}
 		}
@@ -284,11 +303,48 @@ func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 		}
 	} else {
 		// HP is normal, just reposition
-		dm.logger.Info("Player attacking ineffectively, repositioning")
+		currentPos := dm.data.PlayerUnit.Position
+		
+		// Check cooldown - don't reposition too frequently
+		if !dm.lastRepositionTime.IsZero() && time.Since(dm.lastRepositionTime) < repositionCooldown {
+			return nil
+		}
+		
+		// Check if previous reposition was successful (player moved)
+		if dm.lastRepositionPosition.X != 0 || dm.lastRepositionPosition.Y != 0 {
+			distanceMoved := utils.CalculateDistance(dm.lastRepositionPosition, currentPos)
+			if distanceMoved < minMovementThreshold {
+				// Previous reposition didn't work, increment attempts
+				dm.repositionAttempts++
+				if dm.repositionAttempts >= maxRepositionAttempts {
+					dm.logger.Warn("Repositioning failed multiple times, resetting tracking to avoid loop",
+						slog.Int("attempts", dm.repositionAttempts),
+					)
+					// Reset tracking to break the loop
+					dm.ineffectiveAttackStartTime = time.Time{}
+					dm.repositionAttempts = 0
+					dm.lastRepositionTime = time.Time{}
+					dm.lastRepositionPosition = data.Position{}
+					return nil
+				}
+			} else {
+				// Movement was successful, reset attempts
+				dm.repositionAttempts = 0
+				// Reset ineffective attack tracking since we successfully repositioned
+				dm.ineffectiveAttackStartTime = time.Time{}
+			}
+		}
+
+		dm.logger.Info("Player attacking ineffectively, repositioning",
+			slog.Int("attempt", dm.repositionAttempts+1),
+			slog.Int("maxAttempts", maxRepositionAttempts),
+		)
 
 		// Find closest enemy to reposition from
 		hasEnemy, closestMonster := dm.isAnyEnemyAroundPlayer(15)
 		if !hasEnemy {
+			// No enemy, reset tracking
+			dm.ineffectiveAttackStartTime = time.Time{}
 			return nil
 		}
 
@@ -299,8 +355,17 @@ func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 			// Use pathFinder to move to safe position
 			if path, _, found := dm.pathFinder.GetPathIgnoreMonsters(safePos); found && len(path) > 0 {
 				dm.pathFinder.MoveThroughPath(path, 200*time.Millisecond)
+				// Update reposition tracking
+				dm.lastRepositionTime = time.Now()
+				dm.lastRepositionPosition = currentPos
+			} else {
+				dm.logger.Debug("Could not find path to safe position")
 			}
 			return nil
+		} else {
+			dm.logger.Debug("Could not find safe position for repositioning")
+			// If we can't find a safe position, reset tracking to avoid loop
+			dm.ineffectiveAttackStartTime = time.Time{}
 		}
 	}
 
@@ -316,6 +381,16 @@ func (dm *DefenseManager) resetTrackingIfNormalized(currentPos data.Position, cu
 	if distance > minMovementThreshold {
 		dm.stationaryStartTime = time.Time{}
 		dm.damageStartTime = time.Time{}
+		
+		// If player moved significantly, reset reposition tracking
+		if dm.lastRepositionPosition.X != 0 || dm.lastRepositionPosition.Y != 0 {
+			repositionDistance := utils.CalculateDistance(dm.lastRepositionPosition, currentPos)
+			if repositionDistance > minMovementThreshold {
+				// Reposition was successful, reset attempts
+				dm.repositionAttempts = 0
+				dm.lastRepositionPosition = data.Position{}
+			}
+		}
 	}
 
 	// Update position tracking

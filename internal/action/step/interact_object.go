@@ -295,7 +295,31 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 			// to enable rapid batch opening. The batch opening will wait for items after all containers are opened.
 			// For portals and waypoints, we need to verify the interaction completed.
 			if !obj.IsPortal() && !obj.IsRedPortal() && !obj.IsWaypoint() {
-				// Minimal delay to allow click to register (reduced from 350ms for faster batch opening)
+				// Special handling for stash: verify it opened using state polling instead of fixed delay
+				if isStashObject(obj) {
+					// Wait for stash to open with timeout and polling
+					const stashOpenTimeout = 2000 // 2 seconds
+					deadline := time.Now().Add(time.Duration(stashOpenTimeout) * time.Millisecond)
+					ticker := time.NewTicker(50 * time.Millisecond)
+					defer ticker.Stop()
+
+					for time.Now().Before(deadline) {
+						<-ticker.C
+						ctx.RefreshGameData()
+						if ctx.Data.OpenMenus.Stash {
+							return nil
+						}
+					}
+					// Stash did not open within timeout, but continue to allow retry in outer loop
+					ctx.Logger.Debug("Stash did not open within timeout after TK click",
+						"object", obj.Name,
+						"timeout", stashOpenTimeout,
+					)
+					// Don't return error here, let the outer retry loop handle it
+					continue
+				}
+
+				// For other containers, minimal delay to allow click to register
 				utils.Sleep(100)
 				// Return immediately - batch opening will handle waiting for items
 				return nil

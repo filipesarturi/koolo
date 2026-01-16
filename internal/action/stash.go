@@ -699,13 +699,32 @@ func OpenStash() error {
 	if !found {
 		return errors.New("stash not found")
 	}
-	InteractObject(bank,
-		func() bool {
-			return ctx.Data.OpenMenus.Stash
-		},
-	)
 
-	return nil
+	const maxRetries = 5
+	const timeoutMs = 2000
+
+	// Try to open stash with retries
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			ctx.Logger.Debug("Stash did not open, retrying...", "attempt", attempt+1, "maxRetries", maxRetries)
+			// Small delay before retry to allow game state to settle
+			utils.Sleep(200)
+		}
+
+		// Attempt to interact with stash
+		InteractObject(bank,
+			func() bool {
+				return ctx.Data.OpenMenus.Stash
+			},
+		)
+
+		// Verify stash actually opened using state polling instead of fixed delay
+		if WaitForMenuOpen(MenuStash, timeoutMs) {
+			return nil
+		}
+	}
+
+	return errors.New("failed to open stash after retries")
 }
 
 func CloseStash() error {
