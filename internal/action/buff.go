@@ -305,6 +305,44 @@ func Buff() {
 		return
 	}
 
+	// Special case: Check Energy Shield immediately without cooldown
+	buffSkills := ctx.Char.BuffSkills()
+	needsEnergyShield := false
+	var energyShieldKb data.KeyBinding
+	energyShieldFound := false
+
+	for _, buff := range buffSkills {
+		if buff == skill.EnergyShield {
+			skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+			hasSkill := skillExists && skillData.Level > 0
+			if hasSkill && !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+				needsEnergyShield = true
+				if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff); found {
+					energyShieldKb = kb
+					energyShieldFound = true
+				}
+				break
+			}
+		}
+	}
+
+	// If Energy Shield is missing, apply it immediately (bypass cooldown)
+	if needsEnergyShield && energyShieldFound {
+		ctx.Logger.Info("Energy Shield expired, applying immediately")
+		if expectedState, canVerify := skillToState[skill.EnergyShield]; canVerify {
+			if castBuffWithVerify(ctx, energyShieldKb, skill.EnergyShield, expectedState, 3) {
+				ctx.Logger.Debug("Energy Shield applied immediately")
+				ctx.LastBuffAt = time.Now() // Update timestamp
+				return // Exit early, only applied Energy Shield
+			}
+		} else {
+			castBuff(ctx, energyShieldKb)
+			ctx.Logger.Debug("Energy Shield cast immediately (no verification)")
+			ctx.LastBuffAt = time.Now() // Update timestamp
+			return // Exit early, only applied Energy Shield
+		}
+	}
+
 	// Allow buffing in town if Memory is disabled (Memory handles buffing in town when enabled)
 	allowTownBuffing := ctx.CharacterCfg != nil && !ctx.CharacterCfg.Character.UseMemoryBuff
 	if (!allowTownBuffing && ctx.Data.PlayerUnit.Area.IsTown()) || time.Since(ctx.LastBuffAt) < time.Second*30 {
@@ -629,6 +667,19 @@ func Buff() {
 func IsRebuffRequired() bool {
 	ctx := context.Get()
 	ctx.SetLastAction("IsRebuffRequired")
+
+	// Special case: Energy Shield should be checked immediately without cooldown
+	buffSkills := ctx.Char.BuffSkills()
+	for _, buff := range buffSkills {
+		if buff == skill.EnergyShield {
+			skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+			hasSkill := skillExists && skillData.Level > 0
+			if hasSkill && !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+				ctx.Logger.Debug("Energy Shield expired, immediate rebuff required")
+				return true // Return immediately, bypassing cooldown
+			}
+		}
+	}
 
 	// Don't buff if we are in town, or we did it recently
 	// (prevents double buffing because of network lag).
