@@ -243,6 +243,26 @@ func getKeyCount() int {
 	return *ctx.CharacterCfg.Inventory.KeyCount
 }
 
+// getLockedKeysCount returns the count of keys in locked inventory slots
+func getLockedKeysCount() int {
+	ctx := context.Get()
+	lockedKeys := 0
+	lockConfig := ctx.CharacterCfg.Inventory.InventoryLock
+
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name == item.Key {
+			if isInLockedInventorySlot(itm, lockConfig) {
+				if qty, found := itm.FindStat(stat.Quantity, 0); found {
+					lockedKeys += qty.Value
+				} else {
+					lockedKeys++ // If no quantity stat, assume stack of 1
+				}
+			}
+		}
+	}
+	return lockedKeys
+}
+
 func ShouldBuyKeys() (int, bool) {
 	// Re-calculating total keys each time ShouldBuyKeys is called for accuracy
 	ctx := context.Get()
@@ -927,15 +947,20 @@ func ItemsToBeSold(lockConfig ...[][]int) (items []data.Item) {
 
 		// Handle keys: always sell/drop keys from unlocked slots
 		// Keys in locked slots are always kept
+		// Only discard keys from unlocked slots if there's at least 1 key in locked area
 		if itm.Name == item.Key {
 			// Check if this key is in a locked slot - if so, always keep it
 			if isInLockedInventorySlot(itm, currentLockConfig) {
 				continue
 			}
 
-			// Keys in unlocked slots should always be sold/dropped
-			// The locked area is where keys should be kept
-			items = append(items, itm)
+			// Only discard keys from unlocked slots if there's at least 1 key in locked area
+			lockedKeysCount := getLockedKeysCount()
+			if lockedKeysCount >= 1 {
+				// Keys in unlocked slots should be sold/dropped only if we have at least 1 in locked area
+				items = append(items, itm)
+			}
+			// If no keys in locked area, keep all keys (don't discard any)
 			continue
 		}
 

@@ -197,6 +197,13 @@ func (dm *DefenseManager) isAttackingIneffectively(currentHP int) bool {
 	// Same target, check if we're dealing damage
 	currentTargetHP := currentTarget.Stats[stat.Life]
 	
+	// If target is dead, reset tracking immediately
+	if currentTargetHP <= 0 {
+		dm.lastAttackTargetID = 0
+		dm.ineffectiveAttackStartTime = time.Time{}
+		return false
+	}
+	
 	// Only check if enough time has passed
 	if time.Since(dm.lastAttackTime) < 200*time.Millisecond {
 		return false
@@ -305,6 +312,19 @@ func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 		// HP is normal, just reposition
 		currentPos := dm.data.PlayerUnit.Position
 		
+		// First check if there are any enemies nearby - if not, reset tracking immediately
+		// This prevents the bot from getting stuck trying to reposition when there are no monsters
+		hasEnemy, closestMonster := dm.isAnyEnemyAroundPlayer(15)
+		if !hasEnemy {
+			// No enemy nearby, reset tracking immediately to avoid getting stuck
+			dm.logger.Debug("No enemies nearby, resetting ineffective attack tracking")
+			dm.ineffectiveAttackStartTime = time.Time{}
+			dm.repositionAttempts = 0
+			dm.lastRepositionTime = time.Time{}
+			dm.lastRepositionPosition = data.Position{}
+			return nil
+		}
+		
 		// Check cooldown - don't reposition too frequently
 		if !dm.lastRepositionTime.IsZero() && time.Since(dm.lastRepositionTime) < repositionCooldown {
 			return nil
@@ -340,14 +360,6 @@ func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 			slog.Int("maxAttempts", maxRepositionAttempts),
 		)
 
-		// Find closest enemy to reposition from
-		hasEnemy, closestMonster := dm.isAnyEnemyAroundPlayer(15)
-		if !hasEnemy {
-			// No enemy, reset tracking
-			dm.ineffectiveAttackStartTime = time.Time{}
-			return nil
-		}
-
 		// Find safe position for repositioning
 		safePos, found := dm.findSafePosition(closestMonster, 10, 15, 5, 20)
 		if found {
@@ -360,12 +372,16 @@ func (dm *DefenseManager) handleIneffectiveAttack(currentHP int) error {
 				dm.lastRepositionPosition = currentPos
 			} else {
 				dm.logger.Debug("Could not find path to safe position")
+				// If we can't find a path, reset tracking to avoid getting stuck
+				dm.ineffectiveAttackStartTime = time.Time{}
+				dm.repositionAttempts = 0
 			}
 			return nil
 		} else {
 			dm.logger.Debug("Could not find safe position for repositioning")
 			// If we can't find a safe position, reset tracking to avoid loop
 			dm.ineffectiveAttackStartTime = time.Time{}
+			dm.repositionAttempts = 0
 		}
 	}
 

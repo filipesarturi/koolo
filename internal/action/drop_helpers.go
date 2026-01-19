@@ -52,16 +52,22 @@ func IsDropProtected(i data.Item) bool {
 
 	// Protect keys based on KeyCount configuration
 	// Always protect keys in locked inventory slots
-	// Always drop keys in unlocked slots (they should not be in unlocked slots)
+	// Only drop keys in unlocked slots if there's at least 1 key in locked area
 	if i.Name == item.Key {
 		// Always protect keys that are in locked inventory slots
 		if IsInLockedInventorySlot(i) {
 			return true
 		}
 
-		// Keys in unlocked slots should always be dropped
-		// The locked area is where keys should be kept
-		return false
+		// Keys in unlocked slots should only be dropped if we have at least 1 key in locked area
+		// This ensures we always maintain at least 1 key in the locked area
+		lockedKeysCount := getLockedKeysCount()
+		if lockedKeysCount >= 1 {
+			// We have at least 1 key in locked area, safe to drop keys from unlocked slots
+			return false
+		}
+		// No keys in locked area, protect all keys (don't drop any)
+		return true
 	}
 
 	if selected {

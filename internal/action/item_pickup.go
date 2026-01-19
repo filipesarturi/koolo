@@ -287,10 +287,8 @@ outer:
 			return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
 		}
 
-		// Use timeout version to prevent infinite blocking in multi-bot scenarios
-		if !ctx.PauseIfNotPriorityWithTimeout(5 * time.Second) {
-			ctx.Logger.Debug("Priority wait timeout in ItemPickup, continuing...")
-		}
+		// Pause if not priority - the global timeout check above ensures we don't block indefinitely
+		ctx.PauseIfNotPriority()
 
 		// Refresh inventory once at the start of each outer loop iteration
 		ctx.RefreshInventory()
@@ -983,7 +981,7 @@ func shouldBePickedUp(i data.Item) bool {
 		}
 	}
 
-	// Pick up keys if we have less than the configured KeyCount (low priority pickup)
+	// Pick up keys if we have less than the configured KeyCount in locked area (low priority pickup)
 	if i.Name == item.Key {
 		keyCount := getKeyCount()
 		if keyCount <= 0 {
@@ -991,20 +989,11 @@ func shouldBePickedUp(i data.Item) bool {
 			return false
 		}
 
-		// Count current keys in inventory
-		totalKeys := 0
-		for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
-			if itm.Name == item.Key {
-				if qty, found := itm.FindStat(stat.Quantity, 0); found {
-					totalKeys += qty.Value
-				} else {
-					totalKeys++ // If no quantity stat, assume stack of 1
-				}
-			}
-		}
+		// Count only keys in locked inventory slots
+		lockedKeys := getLockedKeysCount()
 
-		// Only pick up keys if we have less than the configured amount
-		if totalKeys < keyCount {
+		// Only pick up keys if we have less than the configured amount in locked area
+		if lockedKeys < keyCount {
 			return true
 		}
 		return false

@@ -452,10 +452,14 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 								b.ctx.Logger.Info("Going back to town", "reason", reason)
 
 								if err = action.InRunReturnTownRoutine(); err != nil {
-									b.ctx.Logger.Warn("Failed returning town. Returning error to stop game.", "error", err)
-									// THIS IS THE KEY CHANGE: If InRunReturnTownRoutine() returns an error, we propagate it.
-									// This will cause the entire errgroup to cancel, and the bot.Run to return this error.
-									return err // <--- THIS IS THE ONLY CHANGE IN THIS FILE
+									// Only return error if it's a critical health error
+									// Non-critical errors (like pathfinding issues) should not stop the game
+									if b.isCriticalHealthError(err) {
+										b.ctx.Logger.Warn("Failed returning town with critical error. Stopping game.", "error", err)
+										return err
+									}
+									// Non-critical error: log and continue
+									b.ctx.Logger.Warn("Failed returning town with non-critical error. Continuing.", "error", err)
 								}
 							}
 						}

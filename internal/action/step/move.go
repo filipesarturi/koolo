@@ -203,15 +203,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 	const logThrottleInterval = 3 * time.Second
 
 	for {
-		ctx.PauseIfNotPriority()
-
-		// Check if a Drop request is pending and interrupt
-		// the current movement early so the Drop flow can take over
-
-		// Check absolute timeout first - this NEVER resets
-		if time.Since(movementStartTime) > absoluteMovementTimeout {
+		// Check absolute timeout FIRST - before any pause or blocking operations
+		// This ensures we detect timeout even if the bot is paused for a long time
+		elapsed := time.Since(movementStartTime)
+		if elapsed > absoluteMovementTimeout {
 			ctx.Logger.Error("Movement absolute timeout (30s) exceeded",
-				slog.Duration("elapsed", time.Since(movementStartTime)),
+				slog.Duration("elapsed", elapsed),
 				slog.Int("startX", startPos.X),
 				slog.Int("startY", startPos.Y),
 				slog.Int("destX", dest.X),
@@ -221,6 +218,12 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			)
 			return ErrPlayerStuck
 		}
+
+		// Pause if not priority - the timeout check above ensures we don't block indefinitely
+		ctx.PauseIfNotPriority()
+
+		// Check if a Drop request is pending and interrupt
+		// the current movement early so the Drop flow can take over
 
 		if err := interruptDropIfRequested(); err != nil {
 			return err

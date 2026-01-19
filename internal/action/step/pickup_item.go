@@ -267,10 +267,8 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 			return fmt.Errorf("telekinesis pickup timeout after %v", telekinesisTimeout)
 		}
 
-		// Use timeout version to prevent infinite blocking
-		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
-			ctx.Logger.Debug("Priority wait timeout in telekinesis pickup, continuing...")
-		}
+		// Pause if not priority - the timeout check above ensures we don't block indefinitely
+		ctx.PauseIfNotPriority()
 		ctx.RefreshGameData()
 
 		// Check if item still exists
@@ -441,10 +439,8 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 			return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
 		}
 
-		// Use timeout version to prevent infinite blocking (reduced timeout for faster pickup)
-		if !ctx.PauseIfNotPriorityWithTimeout(500 * time.Millisecond) {
-			ctx.Logger.Debug("Priority wait timeout in mouse pickup, continuing...")
-		}
+		// Pause if not priority - the timeout check above ensures we don't block indefinitely
+		ctx.PauseIfNotPriority()
 
 		// Adaptive delay: switch to fallback delay after threshold attempts
 		if spiralAttempt >= spiralDelayAdaptiveThreshold && currentSpiralDelay == 0 {

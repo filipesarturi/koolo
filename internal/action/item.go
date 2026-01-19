@@ -8,6 +8,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/nip"
 	"github.com/hectorgimenez/koolo/internal/action/step"
@@ -196,6 +197,25 @@ func getKeyCount() int {
 	}
 	// If explicitly set to 0, it's disabled
 	return *ctx.CharacterCfg.Inventory.KeyCount
+}
+
+// getLockedKeysCount returns the count of keys in locked inventory slots
+func getLockedKeysCount() int {
+	ctx := context.Get()
+	lockedKeys := 0
+
+	for _, itm := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name == item.Key {
+			if IsInLockedInventorySlot(itm) {
+				if qty, found := itm.FindStat(stat.Quantity, 0); found {
+					lockedKeys += qty.Value
+				} else {
+					lockedKeys++ // If no quantity stat, assume stack of 1
+				}
+			}
+		}
+	}
+	return lockedKeys
 }
 
 // WaitForItemsAfterContainerOpen waits for items to drop from opened containers
@@ -467,9 +487,9 @@ func OpenContainersInBatch(containers []data.Object) []data.Object {
 		"tkRange", telekinesisRange,
 	)
 
-	// Separate containers into two groups: within range (TK or close) and outside range
+	// Filter containers to only process those in range (TK or close enough to click)
+	// Containers outside range will be processed naturally when bot approaches during normal movement
 	var containersInRange []data.Object
-	var containersOutsideRange []data.Object
 
 	for _, obj := range containers {
 		distance := pather.DistanceFromPoint(playerPos, obj.Position)
@@ -478,62 +498,98 @@ func OpenContainersInBatch(containers []data.Object) []data.Object {
 		// In range if: can use TK and within TK range, OR close enough to click (15 tiles)
 		if (canUseTK && distance <= telekinesisRange) || distance <= 15 {
 			containersInRange = append(containersInRange, obj)
-		} else {
-			containersOutsideRange = append(containersOutsideRange, obj)
 		}
 	}
 
-	// Open containers in range rapidly using fast interaction
+	// Log containers that will be skipped (outside range) for debugging
+	containersOutsideRange := len(containers) - len(containersInRange)
+	if containersOutsideRange > 0 {
+		ctx.Logger.Debug("Skipping containers outside range - will process when bot approaches naturally",
+			"skippedCount", containersOutsideRange,
+			"totalContainers", len(containers),
+		)
+	}
+
+	// Open all containers in range rapidly using fast interaction
+	// No delays between openings - all opened as fast as possible
 	openStartTime := time.Now()
 	successCount := 0
 	failCount := 0
 	ctx.Logger.Debug("Starting rapid batch opening",
 		"containersInRange", len(containersInRange),
-		"containersOutsideRange", len(containersOutsideRange),
+		"containersSkipped", containersOutsideRange,
 	)
 
-	for _, obj := range containersInRange {
+	// Pre-select Telekinesis once if any container can use it (optimization)
+	// This avoids selecting TK for each container individually
+	tkSelected := false
+	tkKb, tkFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
+	if tkFound {
+		for _, obj := range containersInRange {
+			if canUseTelekinesisForObject(obj) {
+				ctx.HID.PressKeyBinding(tkKb)
+				utils.Sleep(20) // Small delay to ensure TK is selected
+				tkSelected = true
+				break
+			}
+		}
+	}
+
+	// Open all containers rapidly - no delays between each
+	for i, obj := range containersInRange {
 		ctx.PauseIfNotPriority()
 
-		if step.InteractObjectFast(obj) {
+		itemOpenStart := time.Now()
+		if step.InteractObjectFastInBatch(obj, tkSelected) {
 			successCount++
 			openedContainers = append(openedContainers, containerPosition{
 				pos: obj.Position,
 				obj: obj,
 			})
+			ctx.Logger.Debug("Container opened in batch",
+				"container", obj.Name,
+				"index", i+1,
+				"total", len(containersInRange),
+				"duration", time.Since(itemOpenStart),
+			)
 		} else {
 			failCount++
 			ctx.Logger.Debug("Failed to open container in batch",
 				"container", obj.Name,
+				"index", i+1,
+				"total", len(containersInRange),
 			)
 		}
 	}
 
 	if len(containersInRange) > 0 {
-		ctx.Logger.Debug("Opened containers in range rapidly",
+		ctx.Logger.Debug("Completed rapid batch opening",
 			"total", len(containersInRange),
 			"success", successCount,
 			"failed", failCount,
-			"duration", time.Since(openStartTime),
+			"totalDuration", time.Since(openStartTime),
+			"avgDurationPerContainer", time.Since(openStartTime)/time.Duration(len(containersInRange)),
 		)
 	}
 
-	// Handle containers outside range - need to move to them
-	for _, obj := range containersOutsideRange {
-		ctx.PauseIfNotPriority()
-		openContainerIndividuallyFast(obj, &openedContainers)
-	}
-
 	// If any containers were opened, wait for items from all of them
+	// This is the ONLY wait - after ALL containers have been opened rapidly
 	if len(openedContainers) > 0 {
 		waitStartTime := time.Now()
-		ctx.Logger.Debug("Opened containers in batch, waiting for items",
+		ctx.Logger.Debug("All containers opened rapidly, now waiting for items from all",
 			"containersCount", len(openedContainers),
+			"timeSinceFirstOpen", time.Since(openStartTime),
 		)
 		WaitForItemsAfterMultipleContainers(openedContainers)
 		ctx.Logger.Debug("Finished waiting for items from batch",
 			"containersCount", len(openedContainers),
 			"waitDuration", time.Since(waitStartTime),
+			"totalBatchDuration", time.Since(openStartTime),
+		)
+	} else {
+		ctx.Logger.Debug("No containers were opened in batch",
+			"totalContainers", len(containers),
+			"containersInRange", len(containersInRange),
 		)
 	}
 

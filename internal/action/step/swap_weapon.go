@@ -41,9 +41,8 @@ func SwapToSlot(targetSlot int) error {
 		}
 
 		// Pause the execution if the priority is not the same as the execution priority
-		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
-			ctx.Logger.Debug("Priority wait timeout in weapon swap, continuing...")
-		}
+		// The timeout check above ensures we don't block indefinitely
+		ctx.PauseIfNotPriority()
 
 		// Refresh game data to get current slot
 		ctx.RefreshGameData()
@@ -99,10 +98,8 @@ func swapWeapon(toCTA bool) error {
 		}
 
 		// Pause the execution if the priority is not the same as the execution priority
-		// Use timeout version to prevent infinite blocking
-		if !ctx.PauseIfNotPriorityWithTimeout(2 * time.Second) {
-			ctx.Logger.Debug("Priority wait timeout in weapon swap, continuing...")
-		}
+		// The timeout check above ensures we don't block indefinitely
+		ctx.PauseIfNotPriority()
 
 		// Refresh game data to get current skill state
 		ctx.RefreshGameData()

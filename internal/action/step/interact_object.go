@@ -149,6 +149,20 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 		}
 	}
 
+	// For shrines, override completion check to return immediately after clicking
+	// Shrines activate instantly, so no need to wait for selectable state change
+	if obj.IsShrine() {
+		originalIsCompletedFn := isCompletedFn
+		isCompletedFn = func() bool {
+			// If we've already clicked, consider it completed immediately
+			if waitingForInteraction {
+				return true
+			}
+			// Otherwise, use original completion check
+			return originalIsCompletedFn()
+		}
+	}
+
 	// For portals, determine expected area
 	expectedArea := area.ID(0)
 	if obj.IsRedPortal() {
@@ -218,7 +232,7 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 		// Check distance - Telekinesis has limited range
 		distance := ctx.PathFinder.DistanceFromMe(o.Position)
 		telekinesisMaxInteractionRange := getTelekinesisMaxInteractionRange()
-		
+
 		// If object is too far, fall back to mouse interaction
 		if distance > telekinesisMaxInteractionRange {
 			ctx.Logger.Debug("Object too far for Telekinesis, falling back to mouse",
@@ -229,7 +243,7 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 			)
 			return InteractObjectMouse(obj, isCompletedFn)
 		}
-		
+
 		// If object is very close to the range limit (within 2 tiles), reduce max attempts
 		// to avoid wasting time on spiral when hover detection is unreliable at range edge
 		effectiveMaxMouseOverAttempts := maxMouseOverAttempts
@@ -319,19 +333,20 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 					continue
 				}
 
-				// For other containers, minimal delay to allow click to register
-				utils.Sleep(100)
-				// Return immediately - batch opening will handle waiting for items
+				// For shrines and other containers, minimal delay to allow click to register
+				// Shrines activate immediately, so no need to wait for selectable state change
+				utils.Sleep(50)
+				// Return immediately - no need to wait for object state change
 				return nil
 			}
 
 			// For portals and waypoints, wait longer and verify interaction completed
 			// Wait for interaction to complete (animation starts)
 			utils.Sleep(350)
-			
+
 			// Refresh to check if object interaction completed
 			ctx.RefreshGameData()
-			
+
 			// Re-find object to check if interaction completed
 			var updatedObj data.Object
 			var found bool
@@ -340,11 +355,11 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 			} else {
 				updatedObj, found = ctx.Data.Objects.FindOne(obj.Name)
 			}
-			
+
 			if found && !updatedObj.Selectable {
 				return nil
 			}
-			
+
 			if isCompletedFn() {
 				return nil
 			}
@@ -606,28 +621,42 @@ func InteractObjectMouse(obj data.Object, isCompletedFn func() bool) error {
 // Does NOT wait for hover - clicks directly on object position for speed.
 // Returns true if the click was sent, false if object not found.
 func InteractObjectFast(obj data.Object) bool {
+	return InteractObjectFastInBatch(obj, false)
+}
+
+// InteractObjectFastInBatch clicks on an object rapidly for batch opening.
+// tkAlreadySelected indicates if Telekinesis is already selected (optimization to avoid reselecting for each container).
+// Returns true if the click was sent, false if object not found.
+func InteractObjectFastInBatch(obj data.Object, tkAlreadySelected bool) bool {
 	ctx := context.Get()
-	ctx.SetLastStep("InteractObjectFast")
+	ctx.SetLastStep("InteractObjectFastInBatch")
 
-	// Refresh game data to get current object state
-	ctx.RefreshGameData()
-
-	// Find the object
+	// Try to use the object directly if it has valid ID and is selectable (optimization for batch mode)
+	// Only refresh if we need to find the object or verify its state
 	var o data.Object
 	var found bool
-	if obj.ID != 0 {
-		o, found = ctx.Data.Objects.FindByID(obj.ID)
+
+	if obj.ID != 0 && obj.Selectable {
+		// Try to use object directly without refresh for speed
+		o = obj
+		found = true
 	} else {
-		o, found = ctx.Data.Objects.FindOne(obj.Name)
+		// Need to refresh and find object
+		ctx.RefreshGameData()
+		if obj.ID != 0 {
+			o, found = ctx.Data.Objects.FindByID(obj.ID)
+		} else {
+			o, found = ctx.Data.Objects.FindOne(obj.Name)
+		}
 	}
 
 	if !found {
-		ctx.Logger.Debug("InteractObjectFast: object not found", "objName", obj.Name, "objID", obj.ID)
+		ctx.Logger.Debug("InteractObjectFastInBatch: object not found", "objName", obj.Name, "objID", obj.ID)
 		return false
 	}
 
 	if !o.Selectable {
-		ctx.Logger.Debug("InteractObjectFast: object not selectable", "objName", obj.Name, "objID", obj.ID)
+		ctx.Logger.Debug("InteractObjectFastInBatch: object not selectable", "objName", obj.Name, "objID", obj.ID)
 		return false
 	}
 
@@ -639,26 +668,23 @@ func InteractObjectFast(obj data.Object) bool {
 	// Check if Telekinesis can be used
 	useTK := canUseTelekinesis(obj)
 
-	ctx.Logger.Debug("InteractObjectFast: clicking object",
-		"objName", obj.Name,
-		"useTK", useTK,
-		"screenX", screenX,
-		"screenY", screenY,
-	)
-
 	if useTK {
-		tkKb, tkFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
-		if tkFound {
-			ctx.HID.PressKeyBinding(tkKb)
-			utils.Sleep(30)
-			ctx.HID.Click(game.RightButton, screenX, screenY)
-			utils.Sleep(50)
-			return true
+		// Only select TK if not already selected (optimization for batch mode)
+		if !tkAlreadySelected {
+			tkKb, tkFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
+			if tkFound {
+				ctx.HID.PressKeyBinding(tkKb)
+				utils.Sleep(20) // Small delay to ensure TK is selected
+			}
 		}
+		// Click immediately - TK is already selected
+		ctx.HID.Click(game.RightButton, screenX, screenY)
+		utils.Sleep(10) // Minimal delay - just enough for click to register
+		return true
 	}
 
 	// Fallback to left click
 	ctx.HID.Click(game.LeftButton, screenX, screenY)
-	utils.Sleep(50)
+	utils.Sleep(10) // Minimal delay - just enough for click to register
 	return true
 }

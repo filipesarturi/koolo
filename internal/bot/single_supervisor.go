@@ -495,59 +495,86 @@ func (s *SinglePlayerSupervisor) Start() error {
 		firstRun = false
 
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				// We don't log the generic "Bot run finished with error" message if it was a planned timeout
-			} else {
-				s.bot.ctx.Logger.Info(fmt.Sprintf("Bot run finished with error: %s. Initiating game exit and cooldown.", err.Error()))
-			}
-
-			if exitErr := s.bot.ctx.Manager.ExitGame(); exitErr != nil {
-				s.bot.ctx.Logger.Error(fmt.Sprintf("Error trying to exit game: %s", exitErr.Error()))
-				return ErrUnrecoverableClientState
-			}
-
-			s.bot.ctx.Logger.Info("Waiting 5 seconds for game client to close completely...")
-			utils.Sleep(int(5 * time.Second / time.Millisecond))
-
-			timeout := time.After(15 * time.Second)
-			for s.bot.ctx.Manager.InGame() {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-timeout:
-					s.bot.ctx.Logger.Error("Timeout waiting for game to report 'not in game' after exit attempt. Forcing client kill.")
-					if killErr := s.KillClient(); killErr != nil {
-						s.bot.ctx.Logger.Error(fmt.Sprintf("Failed to kill client after timeout and InGame() check: %s", killErr.Error()))
-					}
-					return ErrUnrecoverableClientState
-				default:
-					s.bot.ctx.Logger.Debug("Still detected as in game, waiting for RefreshGameData to update...")
-					utils.Sleep(int(500 * time.Millisecond / time.Millisecond))
-					s.bot.ctx.RefreshGameData()
+			// Check if error is critical - only critical errors should exit the game
+			if s.isCriticalError(err) {
+				// Critical error: exit game as before
+				if errors.Is(err, context.DeadlineExceeded) {
+					// We don't log the generic "Bot run finished with error" message if it was a planned timeout
+				} else {
+					s.bot.ctx.Logger.Info(fmt.Sprintf("Bot run finished with critical error: %s. Initiating game exit and cooldown.", err.Error()))
 				}
-			}
-			s.bot.ctx.Logger.Info("Game client successfully detected as 'not in game'.")
-			timeSpentNotInGameStart = time.Now()
 
-			var gameFinishReason event.FinishReason
-			switch {
-			case errors.Is(err, health.ErrChicken):
-				gameFinishReason = event.FinishedChicken
-			case errors.Is(err, health.ErrMercChicken):
-				gameFinishReason = event.FinishedMercChicken
-			case errors.Is(err, health.ErrDied):
-				gameFinishReason = event.FinishedDied
-			default:
-				gameFinishReason = event.FinishedError
-			}
-			event.Send(event.GameFinished(event.WithScreenshot(s.name, err.Error(), s.bot.ctx.GameReader.Screenshot()), gameFinishReason))
+				if exitErr := s.bot.ctx.Manager.ExitGame(); exitErr != nil {
+					s.bot.ctx.Logger.Error(fmt.Sprintf("Error trying to exit game: %s", exitErr.Error()))
+					return ErrUnrecoverableClientState
+				}
 
-			s.bot.ctx.Logger.Warn(
-				fmt.Sprintf("Game finished with errors, reason: %s. Game total time: %0.2fs", err.Error(), time.Since(gameStart).Seconds()),
-				slog.String("supervisor", s.name),
-				slog.Uint64("mapSeed", uint64(s.bot.ctx.GameReader.MapSeed())),
-			)
-			continue
+				s.bot.ctx.Logger.Info("Waiting 5 seconds for game client to close completely...")
+				utils.Sleep(int(5 * time.Second / time.Millisecond))
+
+				timeout := time.After(15 * time.Second)
+				for s.bot.ctx.Manager.InGame() {
+					select {
+					case <-ctx.Done():
+						return nil
+					case <-timeout:
+						s.bot.ctx.Logger.Error("Timeout waiting for game to report 'not in game' after exit attempt. Forcing client kill.")
+						if killErr := s.KillClient(); killErr != nil {
+							s.bot.ctx.Logger.Error(fmt.Sprintf("Failed to kill client after timeout and InGame() check: %s", killErr.Error()))
+						}
+						return ErrUnrecoverableClientState
+					default:
+						s.bot.ctx.Logger.Debug("Still detected as in game, waiting for RefreshGameData to update...")
+						utils.Sleep(int(500 * time.Millisecond / time.Millisecond))
+						s.bot.ctx.RefreshGameData()
+					}
+				}
+				s.bot.ctx.Logger.Info("Game client successfully detected as 'not in game'.")
+				timeSpentNotInGameStart = time.Now()
+
+				var gameFinishReason event.FinishReason
+				switch {
+				case errors.Is(err, health.ErrChicken):
+					gameFinishReason = event.FinishedChicken
+				case errors.Is(err, health.ErrMercChicken):
+					gameFinishReason = event.FinishedMercChicken
+				case errors.Is(err, health.ErrDied):
+					gameFinishReason = event.FinishedDied
+				default:
+					gameFinishReason = event.FinishedError
+				}
+				event.Send(event.GameFinished(event.WithScreenshot(s.name, err.Error(), s.bot.ctx.GameReader.Screenshot()), gameFinishReason))
+
+				s.bot.ctx.Logger.Warn(
+					fmt.Sprintf("Game finished with critical error, reason: %s. Game total time: %0.2fs", err.Error(), time.Since(gameStart).Seconds()),
+					slog.String("supervisor", s.name),
+					slog.Uint64("mapSeed", uint64(s.bot.ctx.GameReader.MapSeed())),
+				)
+				continue
+			} else {
+				// Non-critical error: don't exit game, just continue to next iteration
+				s.bot.ctx.Logger.Warn(
+					fmt.Sprintf("Bot run finished with non-critical error: %s. Continuing to next game iteration.", err.Error()),
+					slog.String("supervisor", s.name),
+					slog.Uint64("mapSeed", uint64(s.bot.ctx.GameReader.MapSeed())),
+				)
+
+				// Check if we need to go to town before continuing
+				if s.bot.ctx.Manager.InGame() {
+					s.bot.ctx.RefreshGameData()
+					if s.bot.ctx.Data != nil && s.bot.ctx.Data.PlayerUnit.ID > 0 {
+						if !s.bot.ctx.Data.PlayerUnit.Area.IsTown() {
+							s.bot.ctx.Logger.Info("Non-critical error detected, attempting to return to town before next game")
+							if returnErr := action.ReturnTown(); returnErr != nil {
+								s.bot.ctx.Logger.Warn("Failed to return to town after non-critical error, continuing anyway", "error", returnErr.Error())
+							}
+						}
+					}
+				}
+
+				// Continue to next iteration (will create a new game)
+				continue
+			}
 		}
 
 		gameFinishReason := event.FinishedOK
@@ -569,6 +596,16 @@ func (s *SinglePlayerSupervisor) Start() error {
 		utils.Sleep(int(3 * time.Second / time.Millisecond))
 		timeSpentNotInGameStart = time.Now()
 	}
+}
+
+// isCriticalError checks if an error is a critical health error that should exit the game
+func (s *SinglePlayerSupervisor) isCriticalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, health.ErrChicken) ||
+		errors.Is(err, health.ErrMercChicken) ||
+		errors.Is(err, health.ErrDied)
 }
 
 // NEW HELPER FUNCTION that wraps a blocking operation with a timeout
