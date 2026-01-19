@@ -195,6 +195,10 @@ function createCharacterCard(key) {
                         <div class="stat-label">Errors</div>
                         <div class="stat-value errors">0</div>
                     </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Avg Game</div>
+                        <div class="stat-value avg-game-time">N/A</div>
+                    </div>
                 </div>
                 <div class="expanded-controls">
                     <button class="btn btn-outline" onclick="location.href='/debug?characterName=${key}'" title="Open Debug Page">
@@ -642,6 +646,12 @@ function updateStats(card, key, games, dropCount) {
   card.querySelector(".chickens").textContent = stats.totalChickens;
   card.querySelector(".deaths").textContent = stats.totalDeaths;
   card.querySelector(".errors").textContent = stats.totalErrors;
+
+  // Update average game time
+  const avgGameTimeEl = card.querySelector(".avg-game-time");
+  if (avgGameTimeEl) {
+    avgGameTimeEl.textContent = stats.avgGameTime > 0 ? formatDuration(stats.avgGameTime) : "N/A";
+  }
 
   // Update inline stats
   const gamesCountEl = card.querySelector(".games-count");
@@ -1103,11 +1113,6 @@ function calculateRunStats(games) {
           };
         }
 
-        // Check if this is the current run
-        if (run.Reason === "") {
-          runStats[run.Name].isCurrentRun = true;
-        }
-
         const runTime = new Date(run.FinishedAt) - new Date(run.StartedAt);
         if (run.FinishedAt !== "0001-01-01T00:00:00Z" && runTime > 0) {
           runStats[run.Name].runCount++;
@@ -1152,24 +1157,52 @@ function calculateRunStats(games) {
     }
   }
 
+  // Determine the actual current run - only the last run of the last game can be "current"
+  if (games.length > 0) {
+    const lastGame = games[games.length - 1];
+    if (lastGame.Runs && lastGame.Runs.length > 0) {
+      const lastRun = lastGame.Runs[lastGame.Runs.length - 1];
+      // Check if this run is still in progress (no reason and no finish time)
+      if (lastRun.Reason === "" && lastRun.FinishedAt === "0001-01-01T00:00:00Z") {
+        if (runStats[lastRun.Name]) {
+          runStats[lastRun.Name].isCurrentRun = true;
+        }
+      }
+    }
+  }
+
   return runStats;
 }
 
 function calculateStats(games) {
   if (!games || games.length === 0) {
-    return { totalGames: 0, totalChickens: 0, totalDeaths: 0, totalErrors: 0 };
+    return { totalGames: 0, totalChickens: 0, totalDeaths: 0, totalErrors: 0, avgGameTime: 0 };
   }
 
-  return games.reduce(
+  const result = games.reduce(
     (acc, game) => {
       acc.totalGames++;
       if (game.Reason === "chicken") acc.totalChickens++;
       else if (game.Reason === "death") acc.totalDeaths++;
       else if (game.Reason === "error") acc.totalErrors++;
+
+      // Calculate game duration for finished games
+      if (game.FinishedAt && game.FinishedAt !== "0001-01-01T00:00:00Z") {
+        const gameTime = new Date(game.FinishedAt) - new Date(game.StartedAt);
+        if (gameTime > 0) {
+          acc.totalGameTime += gameTime;
+          acc.finishedGames++;
+        }
+      }
       return acc;
     },
-    { totalGames: 0, totalChickens: 0, totalDeaths: 0, totalErrors: 0 }
+    { totalGames: 0, totalChickens: 0, totalDeaths: 0, totalErrors: 0, totalGameTime: 0, finishedGames: 0 }
   );
+
+  // Calculate average game time
+  result.avgGameTime = result.finishedGames > 0 ? result.totalGameTime / result.finishedGames : 0;
+
+  return result;
 }
 
 function formatDuration(ms) {
