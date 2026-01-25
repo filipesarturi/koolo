@@ -28,8 +28,8 @@ Important information:
 
 As written more detailed below you need to install:
 
-- Go (1.24, not 1.25!)
-- Garble (0.14.2, not 0.15.x)
+- Go (1.25+)
+- Garble (0.15.0+)
 
 Make sure the game is set to English to prevent any language-related bugs.
 
@@ -120,14 +120,14 @@ There are some considerations to take into account:
 Setting the development environment is pretty straightforward, but the following dependencies are **required** to build the project.
 
 ### Dependencies
-- [Download Go 1.24](https://go.dev/dl/) <ins>⚠️**not the version 1.25**⚠️</ins> 
+- [Download Go 1.25](https://go.dev/dl/)
 - [Install git](https://gitforwindows.org/)
 
 ### Building from source
 
 First, we open the terminal and install [Garble](https://github.com/burrowers/garble) using the following command:
 ```shell
-go install mvdan.cc/garble@v0.14.2
+go install mvdan.cc/garble@v0.15.0
 ```
 
 Next, run the following commands in project root directory:

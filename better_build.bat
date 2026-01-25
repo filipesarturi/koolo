@@ -424,8 +424,8 @@ goto :eof
 set GOGARBLE=!github.com/hectorgimenez/koolo/internal/server*,!github.com/hectorgimenez/koolo/internal/event*,!github.com/inkeliz/gowebview*
 
 :: Required versions
-set REQUIRED_GO_VERSION=1.24
-set REQUIRED_GARBLE_VERSION=0.14.2
+set REQUIRED_GO_VERSION=1.25
+set REQUIRED_GARBLE_VERSION=0.15.0
 
 :: Change to the script's directory
 cd /d "%~dp0"

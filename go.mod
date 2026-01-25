@@ -1,8 +1,6 @@
 module github.com/hectorgimenez/koolo
 
-go 1.24.0
-
-toolchain go1.24.9
+go 1.25.0
 
 require (
 	github.com/billgraziano/dpapi v0.5.0
