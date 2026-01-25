@@ -1,9 +1,9 @@
 package action
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
@@ -139,10 +139,83 @@ func ClearCurrentLevelEx(openChests bool, filter data.MonsterFilter, shouldInter
 func clearRoom(room data.Room, filter data.MonsterFilter) error {
 	ctx := context.Get()
 	ctx.SetLastAction("clearRoom")
+	roomStartTime := time.Now()
+	monstersKilled := 0
 
-	path, _, found := ctx.PathFinder.GetClosestWalkablePath(room.GetCenter())
+	roomCenter := room.GetCenter()
+	path, _, found := ctx.PathFinder.GetClosestWalkablePath(roomCenter)
+
+	// If center is not reachable, try alternative positions around the room
 	if !found {
-		return errors.New("failed to find a path to the room center")
+		// Try corners and edges of the room as fallback positions (more positions, larger radius)
+		alternativePositions := []data.Position{
+			// Close positions (radius 3-5)
+			{X: roomCenter.X + 5, Y: roomCenter.Y},
+			{X: roomCenter.X - 5, Y: roomCenter.Y},
+			{X: roomCenter.X, Y: roomCenter.Y + 5},
+			{X: roomCenter.X, Y: roomCenter.Y - 5},
+			{X: roomCenter.X + 3, Y: roomCenter.Y + 3},
+			{X: roomCenter.X - 3, Y: roomCenter.Y - 3},
+			{X: roomCenter.X + 3, Y: roomCenter.Y - 3},
+			{X: roomCenter.X - 3, Y: roomCenter.Y + 3},
+			// Medium positions (radius 7-10)
+			{X: roomCenter.X + 8, Y: roomCenter.Y},
+			{X: roomCenter.X - 8, Y: roomCenter.Y},
+			{X: roomCenter.X, Y: roomCenter.Y + 8},
+			{X: roomCenter.X, Y: roomCenter.Y - 8},
+			{X: roomCenter.X + 6, Y: roomCenter.Y + 6},
+			{X: roomCenter.X - 6, Y: roomCenter.Y - 6},
+			// Far positions (radius 10-12)
+			{X: roomCenter.X + 10, Y: roomCenter.Y + 5},
+			{X: roomCenter.X - 10, Y: roomCenter.Y - 5},
+		}
+
+		for _, altPos := range alternativePositions {
+			path, _, found = ctx.PathFinder.GetClosestWalkablePath(altPos)
+			if found {
+				ctx.Logger.Debug("Using alternative position for room clearing",
+					slog.Int("originalX", roomCenter.X),
+					slog.Int("originalY", roomCenter.Y),
+					slog.Int("altX", altPos.X),
+					slog.Int("altY", altPos.Y),
+				)
+				break
+			}
+		}
+
+		// Last resort: try to find path from current player position towards room center
+		if !found {
+			playerPos := ctx.Data.PlayerUnit.Position
+			// Try positions between player and room center
+			dx := (roomCenter.X - playerPos.X) / 3
+			dy := (roomCenter.Y - playerPos.Y) / 3
+			midPositions := []data.Position{
+				{X: playerPos.X + dx, Y: playerPos.Y + dy},
+				{X: playerPos.X + dx*2, Y: playerPos.Y + dy*2},
+			}
+			for _, midPos := range midPositions {
+				path, _, found = ctx.PathFinder.GetClosestWalkablePath(midPos)
+				if found {
+					ctx.Logger.Debug("Using midpoint position for room clearing",
+						slog.Int("playerX", playerPos.X),
+						slog.Int("playerY", playerPos.Y),
+						slog.Int("midX", midPos.X),
+						slog.Int("midY", midPos.Y),
+					)
+					break
+				}
+			}
+		}
+
+		if !found {
+			// Final fallback: skip this room and continue (don't block entire clear)
+			ctx.Logger.Warn("Skipping room - no path found to any position",
+				slog.Int("roomCenterX", roomCenter.X),
+				slog.Int("roomCenterY", roomCenter.Y),
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+			)
+			return nil // Return nil to continue with other rooms instead of blocking
+		}
 	}
 
 	to := data.Position{
@@ -163,6 +236,15 @@ func clearRoom(room data.Room, filter data.MonsterFilter) error {
 
 		monsters := getMonstersInRoom(room, filter)
 		if len(monsters) == 0 {
+			// Log slow room clears for performance analysis
+			roomDuration := time.Since(roomStartTime)
+			if roomDuration > 15*time.Second && monstersKilled > 0 {
+				ctx.Logger.Info("Slow room clear",
+					slog.Duration("duration", roomDuration),
+					slog.Int("monstersKilled", monstersKilled),
+					slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+				)
+			}
 			return nil
 		}
 
@@ -206,6 +288,7 @@ func clearRoom(room data.Room, filter data.MonsterFilter) error {
 				}
 				return 0, false
 			}, nil)
+			monstersKilled++
 		}
 	}
 }

@@ -312,6 +312,7 @@ func MoveToArea(dst area.ID) error {
 
 func MoveToCoords(to data.Position, options ...step.MoveOption) error {
 	ctx := context.Get()
+	ctx.SetLastAction(fmt.Sprintf("MoveToCoords_%d_%d", to.X, to.Y))
 
 	// Proactive death check at the start of the action
 	if err := checkPlayerDeath(ctx); err != nil {

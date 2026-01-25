@@ -12,6 +12,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/state"
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/game"
+	"github.com/hectorgimenez/koolo/internal/pather"
 	"github.com/hectorgimenez/koolo/internal/ui"
 	"github.com/hectorgimenez/koolo/internal/utils"
 )
@@ -120,7 +121,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 	ctx := context.Get()
 	isDragondin := strings.EqualFold(ctx.CharacterCfg.Character.Class, "dragondin")
-	ctx.SetLastStep("MoveTo")
+	ctx.SetLastStep(fmt.Sprintf("MoveTo_%d_%d", dest.X, dest.Y))
 
 	startPos := ctx.Data.PlayerUnit.Position
 	movementStartTime := time.Now()
@@ -161,7 +162,7 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			stuckThreshold = 3000 * time.Millisecond
 		}
 	}
-	maxStuckDuration := 15 * time.Second           // Maximum time to be stuck before aborting
+	maxStuckDuration := 15 * time.Second             // Maximum time to be stuck before aborting
 	const absoluteMovementTimeout = 30 * time.Second // Absolute timeout for any movement - NEVER reset
 	stuckCheckStartTime := time.Now()
 	escapeAttempts := 0
@@ -215,8 +216,23 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 				slog.Int("destY", dest.Y),
 				slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
 				slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
+				slog.Int("escapeAttempts", escapeAttempts),
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
 			)
 			return ErrPlayerStuck
+		}
+
+		// Update last step periodically with current movement state
+		currentDist := ctx.PathFinder.DistanceFromMe(dest)
+		ctx.SetLastStep(fmt.Sprintf("MoveTo_dist%d", currentDist))
+
+		// Log if we're about to pause (priority mismatch)
+		if ctx.Priority != ctx.ExecutionPriority {
+			ctx.Logger.Debug("Movement paused - priority mismatch",
+				slog.Int("priority", int(ctx.Priority)),
+				slog.Int("executionPriority", int(ctx.ExecutionPriority)),
+				slog.Duration("elapsed", elapsed),
+			)
 		}
 
 		// Pause if not priority - the timeout check above ensures we don't block indefinitely
@@ -266,14 +282,40 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		//We've reached the destination, stop movement
 		if currentDistanceToDest <= minDistanceToFinishMoving {
-			ctx.Logger.Debug("Movement completed - reached destination",
-				slog.Int("finalX", ctx.Data.PlayerUnit.Position.X),
-				slog.Int("finalY", ctx.Data.PlayerUnit.Position.Y),
-				slog.Int("destX", dest.X),
-				slog.Int("destY", dest.Y),
-				slog.Int("distance", currentDistanceToDest),
-				slog.Duration("duration", time.Since(movementStartTime)),
-			)
+			moveDuration := time.Since(movementStartTime)
+			// Calculate expected time based on method and distance
+			initialDistance := pather.DistanceFromPoint(startPos, dest)
+			expectedSeconds := float64(initialDistance) / 10.0 // ~10 tiles/second for teleport
+			if !canTeleport {
+				expectedSeconds = float64(initialDistance) / 5.0 // ~5 tiles/second for walk
+			}
+			expectedDuration := time.Duration(expectedSeconds * float64(time.Second))
+
+			// Log slow movements (>10s OR >3x expected time) for performance analysis
+			if moveDuration > 10*time.Second || (expectedDuration > 0 && moveDuration > expectedDuration*3) {
+				ctx.Logger.Info("Slow movement completed",
+					slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+					slog.Int("startX", startPos.X),
+					slog.Int("startY", startPos.Y),
+					slog.Int("destX", dest.X),
+					slog.Int("destY", dest.Y),
+					slog.Int("distance", initialDistance),
+					slog.Duration("duration", moveDuration),
+					slog.Duration("expected", expectedDuration),
+					slog.String("method", movementMethod),
+					slog.Int("escapeAttempts", escapeAttempts),
+					slog.Bool("wasBlocked", blocked),
+				)
+			} else {
+				ctx.Logger.Debug("Movement completed - reached destination",
+					slog.Int("finalX", ctx.Data.PlayerUnit.Position.X),
+					slog.Int("finalY", ctx.Data.PlayerUnit.Position.Y),
+					slog.Int("destX", dest.X),
+					slog.Int("destY", dest.Y),
+					slog.Int("distance", currentDistanceToDest),
+					slog.Duration("duration", moveDuration),
+				)
+			}
 			return nil
 		} else if blocked {
 			//Add tolerance to reach destination if blocked
@@ -426,19 +468,19 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 				)
 				return ErrPlayerRoundTrip
 			} else if timeInRoundtrip > roundTripThreshold/2.0 && !isMakingProgress {
-			// Only consider blocked if we're NOT making progress towards destination
-			blocked = true
-			if time.Since(lastLogTime) > logThrottleInterval {
-				ctx.Logger.Debug("Round trip detected (warning phase)",
-					slog.Duration("roundTripTime", timeInRoundtrip),
-					slog.Int("roundTripRadius", roundTripMaxRadius),
-					slog.Float64("currentDistance", roundTripDistance),
-					slog.Float64("distanceToDest", currentDistanceToDestFloat),
-					slog.Bool("isMakingProgress", isMakingProgress),
-				)
-				lastLogTime = time.Now()
+				// Only consider blocked if we're NOT making progress towards destination
+				blocked = true
+				if time.Since(lastLogTime) > logThrottleInterval {
+					ctx.Logger.Debug("Round trip detected (warning phase)",
+						slog.Duration("roundTripTime", timeInRoundtrip),
+						slog.Int("roundTripRadius", roundTripMaxRadius),
+						slog.Float64("currentDistance", roundTripDistance),
+						slog.Float64("distanceToDest", currentDistanceToDestFloat),
+						slog.Bool("isMakingProgress", isMakingProgress),
+					)
+					lastLogTime = time.Now()
+				}
 			}
-		}
 		} else {
 			//Player moved significantly, reset Round Trip detection
 			roundTripReferencePosition = currentPosition
@@ -604,18 +646,37 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		// Throttled debug log with pathfinding info
 		if time.Since(lastLogTime) > logThrottleInterval {
-			ctx.Logger.Debug("Pathfinding update",
-				slog.Int("pathLength", len(path)),
-				slog.Int("pathDistance", pathDistance),
-				slog.Int("currentDistance", currentDistanceToDest),
-				slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
-				slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
-				slog.Int("destX", currentDest.X),
-				slog.Int("destY", currentDest.Y),
-				slog.String("movementMethod", movementMethod),
-				slog.Bool("blocked", blocked),
-				slog.Duration("elapsed", time.Since(movementStartTime)),
-			)
+			elapsedTime := time.Since(movementStartTime)
+			// Use INFO level if movement is taking too long (>10s)
+			if elapsedTime > 10*time.Second {
+				ctx.Logger.Info("Movement taking long time",
+					slog.Int("pathLength", len(path)),
+					slog.Int("pathDistance", pathDistance),
+					slog.Int("currentDistance", currentDistanceToDest),
+					slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
+					slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
+					slog.Int("destX", currentDest.X),
+					slog.Int("destY", currentDest.Y),
+					slog.String("movementMethod", movementMethod),
+					slog.Bool("blocked", blocked),
+					slog.Duration("elapsed", elapsedTime),
+					slog.Int("escapeAttempts", escapeAttempts),
+					slog.String("playerMode", string(ctx.Data.PlayerUnit.Mode)),
+				)
+			} else {
+				ctx.Logger.Debug("Pathfinding update",
+					slog.Int("pathLength", len(path)),
+					slog.Int("pathDistance", pathDistance),
+					slog.Int("currentDistance", currentDistanceToDest),
+					slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
+					slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
+					slog.Int("destX", currentDest.X),
+					slog.Int("destY", currentDest.Y),
+					slog.String("movementMethod", movementMethod),
+					slog.Bool("blocked", blocked),
+					slog.Duration("elapsed", elapsedTime),
+				)
+			}
 			lastLogTime = time.Now()
 		}
 

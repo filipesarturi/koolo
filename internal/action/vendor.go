@@ -3,6 +3,7 @@ package action
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
@@ -40,6 +41,7 @@ func getTownAreaByAct(act int) area.ID {
 func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err error) {
 	ctx := botCtx.Get()
 	ctx.SetLastAction("VendorRefill")
+	vendorStartTime := time.Now()
 
 	// Check if we should drop items instead of selling
 	var lockConfig [][]int
@@ -74,12 +76,23 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 		mercDead := ctx.CharacterCfg.Character.UseMerc && ctx.Data.MercHPPercent() <= 0
 		needGoldForMerc := mercDead && !CanAffordMercRevive(ctx)
 
+		// OPTIMIZATION: Check if there are items to drop BEFORE doing waypoint
+		// This prevents unnecessary waypoint trips when inventory has nothing to drop
+		var itemsToCheck []data.Item
+		if len(lockConfig) > 0 {
+			itemsToCheck = town.ItemsToBeSold(lockConfig)
+		} else {
+			itemsToCheck = town.ItemsToBeSold()
+		}
+		hasItemsToDrop := len(itemsToCheck) > 0
+
 		// Force sale if mercenary is dead and we need gold to revive
 		if needGoldForMerc {
 			shouldDrop = false
 			ctx.Logger.Info(fmt.Sprintf("Mercenary is dead and insufficient gold to revive (available: %d) - forcing sale instead of drop", availableGold))
-		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && availableGold >= minGoldToDrop {
+		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && minGoldToDrop > 0 && availableGold >= minGoldToDrop && hasItemsToDrop {
 			// Need to drop in the configured act - move there if not already there
+			// Only waypoint if we have items to drop
 			shouldDrop = true
 			if !ctx.Data.PlayerUnit.Area.IsTown() || currentAct != alwaysDropAct {
 				needsToMoveToAct = true
@@ -95,25 +108,12 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 					ctx.RefreshGameData()
 				}
 			}
-		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && currentAct == alwaysDropAct {
+		} else if alwaysDropAct > 0 && alwaysDropAct <= 5 && currentAct == alwaysDropAct && hasItemsToDrop {
 			// Already in the configured act, drop near stash
 			shouldDrop = ctx.Data.PlayerUnit.Area.IsTown()
-		} else if minGoldToDrop > 0 && availableGold >= minGoldToDrop {
+		} else if minGoldToDrop > 0 && availableGold >= minGoldToDrop && hasItemsToDrop {
 			// Only minGoldToDrop threshold is met (AlwaysDropAct not configured or not in that act)
 			shouldDrop = ctx.Data.PlayerUnit.Area.IsTown()
-		}
-		
-		// Check if there are items to process
-		if shouldDrop {
-			var itemsToCheck []data.Item
-			if len(lockConfig) > 0 {
-				itemsToCheck = town.ItemsToBeSold(lockConfig)
-			} else {
-				itemsToCheck = town.ItemsToBeSold()
-			}
-			if len(itemsToCheck) == 0 {
-				shouldDrop = false
-			}
 		}
 	}
 
@@ -236,6 +236,16 @@ func VendorRefill(forceRefill bool, sellJunk bool, tempLock ...[][]int) (err err
 	SwitchVendorTab(4)
 	ctx.RefreshGameData()
 	town.BuyConsumables(forceRefill)
+
+	// Log vendor routine duration for performance analysis
+	vendorDuration := time.Since(vendorStartTime)
+	if vendorDuration > 10*time.Second {
+		ctx.Logger.Info("Slow vendor routine",
+			slog.Duration("duration", vendorDuration),
+			slog.Bool("forceRefill", forceRefill),
+			slog.Bool("sellJunk", sellJunk),
+		)
+	}
 
 	return step.CloseAllMenus()
 }

@@ -19,10 +19,11 @@ import (
 
 const (
 	clickDelay                   = 25 * time.Millisecond
-	spiralDelayFallback          = 15 * time.Millisecond  // Fallback delay if zero delay doesn't work
-	spiralDelayAdaptiveThreshold = 5                      // Number of attempts before switching to fallback delay (reduced from 8 based on logs)
-	hoverCheckDelay              = 8 * time.Millisecond   // Small delay after moving mouse before checking hover
-	pickupClickDelay             = 100 * time.Millisecond // Delay after clicking item to check if pickup succeeded
+	spiralDelayFallback          = 15 * time.Millisecond  // Fallback delay if initial delay doesn't work
+	spiralDelayAdaptiveThreshold = 3                      // Number of attempts before switching to fallback delay
+	spiralDelayInitial           = 8 * time.Millisecond   // Initial delay for better hover detection
+	hoverCheckDelay              = 15 * time.Millisecond  // Increased for more reliable hover detection
+	pickupClickDelay             = 70 * time.Millisecond  // Reduced for faster pickup confirmation
 	pickupTimeout                = 3 * time.Second
 	telekinesisPickupMaxAttempts = 3
 )
@@ -133,7 +134,7 @@ func validatePickupPreconditions(it data.Item, maxDistance int, checkMonsters bo
 
 func PickupItem(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
-	ctx.SetLastStep("PickupItem")
+	ctx.SetLastStep(fmt.Sprintf("PickupItem_%s", it.Name))
 
 	distance := ctx.PathFinder.DistanceFromMe(it.Position)
 	hasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position)
@@ -203,11 +204,12 @@ func canUseTelekinesisForItem(it data.Item) bool {
 
 // PickupItemTelekinesis uses Telekinesis skill via HID to pick up items from distance
 // This method uses mouse simulation instead of packets for safety
+// Optimized for speed: reduced delays while maintaining reliability
 func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
 	ctx.SetLastStep("PickupItemTelekinesis")
 
-	const telekinesisTimeout = 10 * time.Second // Maximum time for this function
+	const telekinesisTimeout = 6 * time.Second // Reduced from 10s for faster fallback
 	startTime := time.Now()
 
 	// Wait for the character to finish casting or moving
@@ -252,88 +254,96 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		return PickupItemMouse(it, itemPickupAttempt)
 	}
 
-	// Select Telekinesis as right skill via HID
-	ctx.HID.PressKeyBinding(tkKb)
-	utils.Sleep(80)
-
 	targetItem := it
 	spiralAttempts := 0
-	const maxSpiralAttempts = 20
+	const maxSpiralAttempts = 10 // Reduced from 15 for faster fallback
 	currentMouseCoords := data.Position{}
+
+	// Pre-calculate exact item screen position for first attempt (no offset)
+	exactScreenX, exactScreenY := ctx.PathFinder.GameCoordsToScreenCords(targetItem.Position.X, targetItem.Position.Y)
+	// Also calculate offset base position for spiral pattern
+	baseScreenX, baseScreenY := ctx.PathFinder.GameCoordsToScreenCords(targetItem.Position.X-1, targetItem.Position.Y-1)
 
 	for attempt := 0; attempt < telekinesisPickupMaxAttempts; attempt++ {
 		// Check timeout
 		if time.Since(startTime) > telekinesisTimeout {
+			ctx.Logger.Info("Telekinesis pickup timeout",
+				slog.String("item", string(it.Desc().Name)),
+				slog.Duration("elapsed", time.Since(startTime)),
+				slog.Int("spiralAttempts", spiralAttempts),
+				slog.Int("tkAttempt", attempt),
+			)
 			return fmt.Errorf("telekinesis pickup timeout after %v", telekinesisTimeout)
 		}
+
+		// Update last step with current attempt info
+		ctx.SetLastStep(fmt.Sprintf("PickupItemTK_attempt%d_spiral%d", attempt+1, spiralAttempts))
+
+		// Select/re-select Telekinesis at start of each attempt to ensure it's active
+		ctx.HID.PressKeyBinding(tkKb)
+		utils.Sleep(60) // Slightly longer delay to ensure skill is selected
 
 		// Pause if not priority - the timeout check above ensures we don't block indefinitely
 		ctx.PauseIfNotPriority()
 		ctx.RefreshGameData()
 
-		// Check if item still exists
+		// Check if item still exists (early exit)
 		_, exists := findItemOnGround(targetItem.UnitID)
 		if !exists {
-			if spiralAttempts > 0 {
-				ctx.Logger.Debug("Item picked up via Telekinesis after spiral attempts",
-					slog.String("itemName", string(targetItem.Desc().Name)),
-					slog.Int("spiralAttempts", spiralAttempts),
-					slog.Int("unitID", int(targetItem.UnitID)),
-				)
-			}
 			ctx.Logger.Info("Picked up item via Telekinesis",
-				slog.String("itemName", string(targetItem.Desc().Name)),
-				slog.String("itemQuality", targetItem.Quality.ToString()),
-				slog.Int("unitID", int(targetItem.UnitID)),
-				slog.Int("attempt", attempt+1),
+				slog.String("item", string(targetItem.Desc().Name)),
+				slog.String("quality", targetItem.Quality.ToString()),
+				slog.Int("distance", distance),
+				slog.Int("spiralAttempts", spiralAttempts),
+				slog.Int("tkAttempt", attempt+1),
 				slog.Duration("duration", time.Since(startTime)),
 			)
 			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
 			return nil
 		}
 
-		// Use spiral pattern for better accuracy (similar to container interaction)
-		itemX := targetItem.Position.X - 2
-		itemY := targetItem.Position.Y - 2
-		baseScreenX, baseScreenY := ctx.PathFinder.GameCoordsToScreenCords(itemX, itemY)
-
-		// Use spiral pattern like container interaction for better accuracy
-		x, y := utils.Spiral(spiralAttempts)
-		currentMouseCoords = data.Position{X: baseScreenX + x, Y: baseScreenY + y}
-		currentDistance := ctx.PathFinder.DistanceFromMe(targetItem.Position)
-
-		if spiralAttempts > 0 {
-			ctx.Logger.Debug("Telekinesis pickup using spiral pattern",
-				slog.String("itemName", string(targetItem.Desc().Name)),
-				slog.Int("spiralAttempt", spiralAttempts+1),
-				slog.String("offset", fmt.Sprintf("(%d, %d)", x, y)),
-				slog.Int("distance", currentDistance),
-				slog.Int("tkRange", telekinesisPickupMaxRange),
-				slog.Int("attempt", attempt+1),
-			)
-		} else {
+		// First attempt: use exact item position, then use spiral pattern
+		if spiralAttempts == 0 {
+			currentMouseCoords = data.Position{X: exactScreenX, Y: exactScreenY}
 			ctx.Logger.Debug("Using Telekinesis to pick up item via HID",
 				slog.String("itemName", string(targetItem.Desc().Name)),
 				slog.Int("unitID", int(targetItem.UnitID)),
-				slog.Int("distance", currentDistance),
+				slog.Int("distance", distance),
 				slog.Int("tkRange", telekinesisPickupMaxRange),
 				slog.Int("attempt", attempt+1),
 				slog.Int("screenX", currentMouseCoords.X),
 				slog.Int("screenY", currentMouseCoords.Y),
 			)
+		} else {
+			// Use spiral pattern for subsequent attempts
+			x, y := utils.Spiral(spiralAttempts - 1)
+			currentMouseCoords = data.Position{X: baseScreenX + x, Y: baseScreenY + y}
+			ctx.Logger.Debug("Telekinesis pickup using spiral pattern",
+				slog.String("itemName", string(targetItem.Desc().Name)),
+				slog.Int("spiralAttempt", spiralAttempts),
+				slog.String("offset", fmt.Sprintf("(%d, %d)", x, y)),
+				slog.Int("distance", distance),
+				slog.Int("attempt", attempt+1),
+			)
 		}
 
 		// Move mouse to item position (with spiral offset) and right-click (Telekinesis)
 		ctx.HID.MovePointer(currentMouseCoords.X, currentMouseCoords.Y)
-		utils.Sleep(50)
+		utils.Sleep(25) // Small delay before click for mouse to settle
 		ctx.HID.Click(game.RightButton, currentMouseCoords.X, currentMouseCoords.Y)
 
 		spiralAttempts++
 
-		// Wait for pickup to complete
-		utils.Sleep(350)
+		// Wait for TK cast animation and item pickup
+		// TK cast animation is ~6-8 frames at 25fps = ~240-320ms
+		// Using 200ms base + distance factor for reliability
+		pickupDelay := 200
+		if distance > 10 {
+			pickupDelay = 250
+		}
+		utils.Sleep(pickupDelay)
 
-		// Check if item was picked up
+		// Check if item was picked up (early exit after click)
 		ctx.RefreshGameData()
 		_, stillExists := findItemOnGround(targetItem.UnitID)
 		if !stillExists {
@@ -345,14 +355,31 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 				)
 			}
 			ctx.Logger.Info("Picked up item via Telekinesis",
-				slog.String("itemName", string(targetItem.Desc().Name)),
-				slog.String("itemQuality", targetItem.Quality.ToString()),
-				slog.Int("unitID", int(targetItem.UnitID)),
-				slog.Int("attempt", attempt+1),
+				slog.String("item", string(targetItem.Desc().Name)),
+				slog.String("quality", targetItem.Quality.ToString()),
+				slog.Int("distance", ctx.PathFinder.DistanceFromMe(targetItem.Position)),
+				slog.Int("spiralAttempts", spiralAttempts),
+				slog.Int("tkAttempt", attempt+1),
 				slog.Duration("duration", time.Since(startTime)),
 			)
 			ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
 			return nil
+		}
+
+		// Log why TK attempt failed (item still exists)
+		if spiralAttempts > 0 && spiralAttempts%3 == 0 {
+			// Check current hover data to understand why TK missed
+			hoverID := ctx.Data.HoverData.UnitID
+			hoverType := ctx.Data.HoverData.UnitType
+			ctx.Logger.Debug("TK attempt missed, item still on ground",
+				slog.String("item", string(targetItem.Desc().Name)),
+				slog.Int("spiralAttempt", spiralAttempts),
+				slog.Int("tkAttempt", attempt+1),
+				slog.Int("hoverUnitID", int(hoverID)),
+				slog.Int("hoverType", int(hoverType)),
+				slog.Int("screenX", currentMouseCoords.X),
+				slog.Int("screenY", currentMouseCoords.Y),
+			)
 		}
 
 		// If we've tried many spiral attempts, reset and try next pickup attempt
@@ -362,14 +389,17 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 	}
 
 	// Telekinesis failed, fallback to normal pickup
+	ctx.SetLastStep("PickupItemTK_fallback")
 	finalDistance := ctx.PathFinder.DistanceFromMe(it.Position)
-	ctx.Logger.Debug("Telekinesis pickup failed after max attempts, falling back to normal pickup",
-		slog.String("itemName", string(it.Desc().Name)),
-		slog.Int("unitID", int(it.UnitID)),
-		slog.Int("maxAttempts", telekinesisPickupMaxAttempts),
-		slog.Int("finalDistance", finalDistance),
-		slog.Int("tkRange", telekinesisPickupMaxRange),
-		slog.Bool("hasLoS", ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position)),
+	finalHasLoS := ctx.PathFinder.LineOfSight(ctx.Data.PlayerUnit.Position, it.Position)
+	ctx.Logger.Info("TK pickup failed, falling back to mouse",
+		slog.String("item", string(it.Desc().Name)),
+		slog.Int("distance", finalDistance),
+		slog.Int("tkAttempts", telekinesisPickupMaxAttempts),
+		slog.Bool("hasLoS", finalHasLoS),
+		slog.Duration("elapsed", time.Since(startTime)),
+		slog.Int("playerX", ctx.Data.PlayerUnit.Position.X),
+		slog.Int("playerY", ctx.Data.PlayerUnit.Position.Y),
 	)
 	if ctx.CharacterCfg.PacketCasting.UseForItemPickup {
 		return PickupItemPacket(it, itemPickupAttempt)
@@ -379,7 +409,7 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 
 func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	ctx := context.Get()
-	ctx.SetLastStep("PickupItemMouse")
+	ctx.SetLastStep(fmt.Sprintf("PickupMouse_%s", it.Name))
 
 	const mousePickupTimeout = 15 * time.Second // Maximum time for this function
 	funcStartTime := time.Now()
@@ -417,7 +447,8 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	spiralOffsets := getSpiralOffsets(maxInteractions)
 
 	// Validate preconditions (monsters, LOS, distance)
-	if err := validatePickupPreconditions(it, 7, true); err != nil {
+	// Allow up to 10 tiles for mouse pickup (increased from 7 to handle edge cases)
+	if err := validatePickupPreconditions(it, 10, true); err != nil {
 		return err
 	}
 
@@ -429,21 +460,31 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 	targetItem := it
 	lastMonsterCheck := time.Now()
 	const monsterCheckInterval = 150 * time.Millisecond
-	currentSpiralDelay := time.Duration(0) // Start with zero delay (adaptive)
+	currentSpiralDelay := spiralDelayInitial // Start with small initial delay for better hover detection
 
 	startTime := time.Now()
 
 	for {
 		// Check global function timeout
 		if time.Since(funcStartTime) > mousePickupTimeout {
+			ctx.Logger.Info("Mouse pickup timeout reached",
+				slog.String("item", string(it.Desc().Name)),
+				slog.Duration("elapsed", time.Since(funcStartTime)),
+				slog.Int("spiralAttempt", spiralAttempt),
+			)
 			return fmt.Errorf("mouse pickup timeout after %v", mousePickupTimeout)
+		}
+
+		// Update last step with current spiral attempt
+		if spiralAttempt%5 == 0 {
+			ctx.SetLastStep(fmt.Sprintf("PickupItemMouse_spiral%d", spiralAttempt))
 		}
 
 		// Pause if not priority - the timeout check above ensures we don't block indefinitely
 		ctx.PauseIfNotPriority()
 
 		// Adaptive delay: switch to fallback delay after threshold attempts
-		if spiralAttempt >= spiralDelayAdaptiveThreshold && currentSpiralDelay == 0 {
+		if spiralAttempt >= spiralDelayAdaptiveThreshold && currentSpiralDelay == spiralDelayInitial {
 			currentSpiralDelay = spiralDelayFallback
 			ctx.Logger.Debug("Switching to fallback spiral delay after threshold attempts",
 				slog.Int("attempt", spiralAttempt),
@@ -468,11 +509,10 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		currentItem, exists := findItemOnGround(targetItem.UnitID)
 		if !exists {
 			ctx.Logger.Info("Picked up item via mouse",
-				slog.String("itemName", string(targetItem.Desc().Name)),
-				slog.String("itemQuality", targetItem.Quality.ToString()),
-				slog.Int("unitID", int(targetItem.UnitID)),
-				slog.Int("itemPickupAttempt", itemPickupAttempt),
-				slog.Int("spiralAttempt", spiralAttempt),
+				slog.String("item", string(targetItem.Desc().Name)),
+				slog.String("quality", targetItem.Quality.ToString()),
+				slog.Int("spiralAttempts", spiralAttempt),
+				slog.Int("pickupAttempt", itemPickupAttempt),
 				slog.Duration("duration", time.Since(startTime)),
 			)
 
@@ -518,12 +558,7 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		ctx.HID.MovePointer(cursorX, cursorY)
 
 		// Small delay to allow game to update hover state
-		if currentSpiralDelay > 0 {
-			time.Sleep(currentSpiralDelay)
-		} else {
-			// Even with zero delay, give a tiny delay for hover detection
-			time.Sleep(hoverCheckDelay)
-		}
+		time.Sleep(currentSpiralDelay)
 
 		// Refresh after moving mouse to get accurate HoverData
 		ctx.RefreshGameData()
@@ -544,6 +579,27 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		if isChestorShrineHovered() {
 			ctx.HID.Click(game.LeftButton, cursorX, cursorY)
 			time.Sleep(50 * time.Millisecond)
+		}
+
+		// Optimization: After several failed hover detections, try clicking anyway
+		// Sometimes the game doesn't update hover state correctly but clicking works
+		if spiralAttempt > 0 && spiralAttempt%5 == 0 {
+			ctx.HID.Click(game.LeftButton, cursorX, cursorY)
+			utils.PingSleep(utils.Light, int(pickupClickDelay.Milliseconds()))
+			// Check if item was picked up after blind click
+			ctx.RefreshGameData()
+			_, stillExists := findItemOnGround(targetItem.UnitID)
+			if !stillExists {
+				ctx.Logger.Info("Picked up item via mouse",
+					slog.String("item", string(targetItem.Desc().Name)),
+					slog.String("quality", targetItem.Quality.ToString()),
+					slog.Int("spiralAttempts", spiralAttempt),
+					slog.Int("pickupAttempt", itemPickupAttempt),
+					slog.Duration("duration", time.Since(startTime)),
+				)
+				ctx.CurrentGame.PickedUpItems[int(targetItem.UnitID)] = int(ctx.Data.PlayerUnit.Area.Area().ID)
+				return nil
+			}
 		}
 
 		spiralAttempt++
@@ -569,7 +625,15 @@ func hasHostileMonstersNearby(pos data.Position) bool {
 			continue
 		}
 
-		if pather.DistanceFromPoint(pos, monster.Position) <= 4 {
+		dist := pather.DistanceFromPoint(pos, monster.Position)
+		if dist <= 4 {
+			ctx.Logger.Debug("Hostile monster detected near item position",
+				slog.Int("monsterNameID", int(monster.Name)),
+				slog.Int("monsterID", int(monster.UnitID)),
+				slog.Int("distance", dist),
+				slog.Int("monsterHP", monster.Stats[stat.Life]),
+				slog.String("monsterType", string(monster.Type)),
+			)
 			return true
 		}
 	}

@@ -117,12 +117,16 @@ func castBuffWithVerify(ctx *context.Status, kb data.KeyBinding, buffSkill skill
 		}
 	}
 
-	// All retries exhausted
+	// All retries exhausted - log current player state for debugging
+	hasBC := ctx.Data.PlayerUnit.States.HasState(state.Battlecommand)
+	hasBO := ctx.Data.PlayerUnit.States.HasState(state.Battleorders)
 	ctx.Logger.Warn("Failed to apply buff after retries",
 		slog.String("skill", skillName),
 		slog.Int("skillID", int(buffSkill)),
 		slog.String("expectedState", string(expectedState)),
 		slog.Int("attempts", maxRetries),
+		slog.Bool("hasBattleCommand", hasBC),
+		slog.Bool("hasBattleOrders", hasBO),
 	)
 	return false
 }
@@ -143,9 +147,10 @@ func castBuff(ctx *context.Status, kb data.KeyBinding) {
 // - if in town, tries to use Memory staff for Energy Shield and Armor buffs
 func BuffIfRequired() {
 	ctx := context.Get()
+	ctx.SetLastAction("BuffIfRequired_check")
 
 	// Don't buff if we're currently picking items to avoid interference
-	if ctx.CurrentGame.IsPickingItems {
+	if ctx.IsPickingItems() {
 		ctx.Logger.Debug("Skipping buff check - item pickup in progress")
 		return
 	}
@@ -298,9 +303,10 @@ func BuffIfRequired() {
 func Buff() {
 	ctx := context.Get()
 	ctx.SetLastAction("Buff")
+	buffStartTime := time.Now()
 
 	// Don't buff if we're currently picking items to avoid interference
-	if ctx.CurrentGame.IsPickingItems {
+	if ctx.IsPickingItems() {
 		ctx.Logger.Debug("Skipping buff - item pickup in progress")
 		return
 	}
@@ -427,9 +433,14 @@ func Buff() {
 					armorHasSkill := armorSkillExists && armorSkillData.Level > 0
 
 					if armorKb, armorFound := ctx.Data.KeyBindings.KeyBindingForSkill(armorSkill); armorFound && armorHasSkill {
-						ctx.Logger.Info("Armor skill not available, using fallback",
-							slog.String("preferred", buff.Desc().Name),
-							slog.String("fallback", armorSkill.Desc().Name))
+						// Only log if we have valid skill names (avoid empty string spam)
+						preferredName := buff.Desc().Name
+						fallbackName := armorSkill.Desc().Name
+						if preferredName != "" && fallbackName != "" {
+							ctx.Logger.Info("Armor skill not available, using fallback",
+								slog.String("preferred", preferredName),
+								slog.String("fallback", fallbackName))
+						}
 						postBuffs = append(postBuffs, buffEntry{skill: armorSkill, kb: armorKb})
 						armorSkillAdded = true
 						fallbackFound = true
@@ -437,7 +448,11 @@ func Buff() {
 					}
 				}
 				if !fallbackFound {
-					ctx.Logger.Warn("No armor skill available as fallback", slog.String("preferred", buff.Desc().Name))
+					// Only log warning if skill name is available (suppress spam when config is empty)
+					preferredName := buff.Desc().Name
+					if preferredName != "" {
+						ctx.Logger.Warn("No armor skill available as fallback", slog.String("preferred", preferredName))
+					}
 				}
 			} else {
 				if !hasSkill {
@@ -652,13 +667,21 @@ func Buff() {
 	// Even if buffs failed, we wait before trying again
 	ctx.LastBuffAt = time.Now()
 
+	buffDuration := time.Since(buffStartTime)
 	if !ctaBuffsApplied || !ctaBuffsDetected {
 		ctx.Logger.Debug("Buff cycle completed with issues",
 			"ctaBuffsApplied", ctaBuffsApplied,
 			"ctaBuffsDetected", ctaBuffsDetected,
 		)
-	} else {
-		ctx.Logger.Debug("Buff cycle completed successfully")
+	}
+
+	// Log slow buff cycles for performance analysis (>8s is unusually long)
+	if buffDuration > 8*time.Second {
+		ctx.Logger.Info("Slow buff cycle",
+			slog.Duration("duration", buffDuration),
+			slog.Bool("ctaApplied", ctaBuffsApplied),
+			slog.Bool("ctaDetected", ctaBuffsDetected),
+		)
 	}
 }
 
@@ -764,11 +787,14 @@ func IsRebuffRequired() bool {
 // Returns true if CTA buffs were successfully applied, false otherwise.
 func buffCTA(shouldSwapBack bool) bool {
 	ctx := context.Get()
-	ctx.SetLastAction("buffCTA")
+	ctx.SetLastAction("buffCTA_start")
 
 	// Don't buff if we're currently picking items to avoid interference
-	if ctx.CurrentGame.IsPickingItems {
-		ctx.Logger.Debug("Skipping CTA buff - item pickup in progress")
+	isPickingItems, pickingDuration := ctx.GetPickingItemsInfo()
+	if isPickingItems {
+		ctx.Logger.Info("Skipping CTA buff - item pickup in progress",
+			slog.Duration("pickingFor", pickingDuration),
+		)
 		return false
 	}
 
@@ -802,6 +828,11 @@ func buffCTA(shouldSwapBack bool) bool {
 	// Swap weapon only in case we don't have the CTA already equipped
 	// (for example chicken previous game during buff stage).
 	if _, found := ctx.Data.PlayerUnit.Skills[skill.BattleCommand]; !found {
+		// Double-check we're not picking items before swapping
+		if ctx.IsPickingItems() {
+			ctx.Logger.Debug("Aborting CTA swap - item pickup started")
+			return false
+		}
 		if err := step.SwapToCTA(); err != nil {
 			ctx.Logger.Warn("Failed to swap to CTA, skipping CTA buffs", "error", err)
 			recordSwapFailure(ctx.Name)
@@ -837,11 +868,18 @@ func buffCTA(shouldSwapBack bool) bool {
 
 	// Only swap back to main weapon if requested
 	if shouldSwapBack {
+		// Double-check we're not picking items before swapping back
+		if ctx.IsPickingItems() {
+			ctx.Logger.Debug("Aborting main weapon swap - item pickup started")
+			return false
+		}
 		if err := step.SwapToMainWeapon(); err != nil {
 			ctx.Logger.Warn("Failed to swap back to main weapon", "error", err)
 			recordSwapFailure(ctx.Name)
 			return false
 		}
+		// Update lastStep to indicate swap completed successfully
+		ctx.SetLastStep("SwapToMainWeapon_completed")
 	}
 
 	// Clear failure count on success
@@ -849,6 +887,7 @@ func buffCTA(shouldSwapBack bool) bool {
 	weaponSwapFailures[ctx.Name] = 0
 	weaponSwapFailuresMu.Unlock()
 
+	ctx.SetLastAction("buffCTA_completed")
 	return true
 }
 
@@ -1110,8 +1149,12 @@ func buffWithMemory() error {
 	if preferredArmorSkill != 0 {
 		// Check if preferred skill has keybinding available
 		kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(preferredArmorSkill)
+		skillName := preferredArmorSkill.Desc().Name
+		if skillName == "" {
+			skillName = fmt.Sprintf("SkillID(%d)", preferredArmorSkill)
+		}
 		if found {
-			ctx.Logger.Info("Using preferred armor skill", slog.String("skill", preferredArmorSkill.Desc().Name))
+			ctx.Logger.Info("Using preferred armor skill", slog.String("skill", skillName))
 			if expectedState, canVerify := skillToState[preferredArmorSkill]; canVerify {
 				if castBuffWithVerify(ctx, kb, preferredArmorSkill, expectedState, 3) {
 					armorApplied = true
@@ -1123,7 +1166,7 @@ func buffWithMemory() error {
 				appliedArmorSkill = preferredArmorSkill
 			}
 		} else {
-			ctx.Logger.Debug("Preferred armor skill not available, will try first available", slog.String("skill", preferredArmorSkill.Desc().Name))
+			ctx.Logger.Debug("Preferred armor skill not available, will try first available", slog.String("skill", skillName))
 		}
 	}
 
@@ -1237,7 +1280,11 @@ func buffWithMemory() error {
 	// Step 9: Restore original weapon(s) if they exist
 	// SHIFT + Click on the original weapon in stash will automatically replace Memory
 	if originalLeftArm.UnitID != 0 {
-		ctx.Logger.Info("Restoring original weapon to slot 1", slog.String("weapon", originalLeftArm.IdentifiedName))
+		weaponName := originalLeftArm.IdentifiedName
+		if weaponName == "" {
+			weaponName = string(originalLeftArm.Name)
+		}
+		ctx.Logger.Info("Restoring original weapon to slot 1", slog.String("weapon", weaponName))
 
 		// Find the original weapon in stash
 		var originalWeapon data.Item

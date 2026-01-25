@@ -155,7 +155,7 @@ type CharacterCfg struct {
 	} `yaml:"packetCasting"`
 
 	Scheduler Scheduler `yaml:"scheduler"`
-	Health    struct {
+	Health struct {
 		HealingPotionAt     int `yaml:"healingPotionAt"`
 		ManaPotionAt        int `yaml:"manaPotionAt"`
 		RejuvPotionAtLife   int `yaml:"rejuvPotionAtLife"`
@@ -165,6 +165,13 @@ type CharacterCfg struct {
 		ChickenAt           int `yaml:"chickenAt"`
 		TownChickenAt       int `yaml:"townChickenAt"`
 		MercChickenAt       int `yaml:"mercChickenAt"`
+		// Emergency Exit Settings
+		EmergencyExitEnabled  bool   `yaml:"emergencyExitEnabled"`
+		EmergencyExitAt       int    `yaml:"emergencyExitAt"`       // HP% to trigger emergency exit (e.g., 35)
+		EmergencyExitMethod   string `yaml:"emergencyExitMethod"`   // "kill", "close", "esc_save"
+		DamageSpikeEnabled    bool   `yaml:"damageSpikeEnabled"`
+		DamageSpikeThreshold  int    `yaml:"damageSpikeThreshold"`  // % HP lost to trigger (e.g., 40)
+		DamageSpikeDurationMs int    `yaml:"damageSpikeDurationMs"` // Time window in ms (e.g., 1000)
 	} `yaml:"health"`
 	Defense struct {
 		Enabled                           bool `yaml:"enabled"`

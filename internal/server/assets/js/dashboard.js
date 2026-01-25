@@ -439,15 +439,15 @@ function updateStartedTime(statusDetails, startedAt, games) {
   }
 
   // Find the current game (last game without FinishedAt)
-  const currentGame = games && games.length > 0 
-    ? games[games.length - 1] 
+  const currentGame = games && games.length > 0
+    ? games[games.length - 1]
     : null;
 
   if (currentGame && currentGame.StartedAt) {
     const gameStartTime = new Date(currentGame.StartedAt);
     const finishedAtStr = currentGame.FinishedAt || "";
     const isGameFinished = finishedAtStr !== "" && finishedAtStr !== "0001-01-01T00:00:00Z";
-    
+
     // Only show if game is still running (not finished)
     if (!isGameFinished) {
       if (gameStartTime.getFullYear() === 1) {
@@ -959,7 +959,7 @@ function updateCharacterOverview(card, ui, status) {
   }
   if (resEl)
     resEl.innerHTML = `<span class="res-fr">FR: ${fr}</span> | <span class="res-cr">CR: ${cr}</span> | <span class="res-lr">LR: ${lr}</span> | <span class="res-pr">PR: ${pr}</span>`;
-  
+
   // Update active buffs with levels
   if (buffsListEl && buffsLineEl) {
     const activeBuffs = ui.ActiveBuffs || {};
@@ -1558,11 +1558,11 @@ function updateGameFPS() {
     // Get FPS from the first active character's game data
     const cards = document.querySelectorAll(".character-card");
     let foundFPS = false;
-    
+
     for (const card of cards) {
       const status = card.querySelector(".status-badge .status-value")?.textContent;
       const isActive = status === "In game" || status === "Paused" || status === "Starting";
-      
+
       if (isActive) {
         // Try to get FPS from the character overview data
         // The FPS is sent in the UI payload from the backend
@@ -1571,7 +1571,7 @@ function updateGameFPS() {
         break;
       }
     }
-    
+
     if (!foundFPS) {
       fpsValueEl.textContent = "--";
     } else if (currentGameFPS > 0) {

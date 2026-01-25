@@ -54,6 +54,7 @@ type Context struct {
 	BeltManager            *health.BeltManager
 	HealthManager          *health.Manager
 	DefenseManager         *health.DefenseManager
+	EmergencyExitManager   *health.EmergencyExitManager
 	Char                   Character
 	LastBuffAt             time.Time
 	ContextDebug           map[Priority]*Debug
@@ -232,6 +233,23 @@ func (ctx *Context) SetPickingItems(value bool) {
 	ctx.CurrentGame.mutex.Unlock()
 }
 
+// IsPickingItems returns if item pickup is in progress (thread-safe)
+func (ctx *Context) IsPickingItems() bool {
+	ctx.CurrentGame.mutex.Lock()
+	defer ctx.CurrentGame.mutex.Unlock()
+	return ctx.CurrentGame.IsPickingItems
+}
+
+// GetPickingItemsInfo returns if pickup is in progress and for how long (thread-safe)
+func (ctx *Context) GetPickingItemsInfo() (bool, time.Duration) {
+	ctx.CurrentGame.mutex.Lock()
+	defer ctx.CurrentGame.mutex.Unlock()
+	if ctx.CurrentGame.IsPickingItems {
+		return true, time.Since(ctx.CurrentGame.IsPickingItemsSetAt)
+	}
+	return false, 0
+}
+
 // SetCheckItemsAfterDeathCallback sets a callback function to check items after monster death
 // This allows step package to trigger item checks without importing action package
 func (ctx *Context) SetCheckItemsAfterDeathCallback(fn func()) {
@@ -254,9 +272,39 @@ func (s *Status) PauseIfNotPriority() {
 		time.Sleep(time.Millisecond * 5)
 	}
 
+	if s.Priority == s.ExecutionPriority {
+		return // Fast path: no pause needed
+	}
+
+	// Track how long we've been waiting
+	pauseStart := time.Now()
+	const maxPauseWait = 30 * time.Second
+	loggedOnce := false
+
 	for s.Priority != s.ExecutionPriority {
 		if s.ExecutionPriority == PriorityStop {
 			panic("Bot is stopped")
+		}
+
+		// Log warning if paused for too long
+		pauseDuration := time.Since(pauseStart)
+		if pauseDuration > 5*time.Second && !loggedOnce {
+			s.Logger.Warn("PauseIfNotPriority blocking for extended time",
+				slog.Duration("duration", pauseDuration),
+				slog.Int("priority", int(s.Priority)),
+				slog.Int("executionPriority", int(s.ExecutionPriority)),
+			)
+			loggedOnce = true
+		}
+
+		// Safety timeout to prevent infinite blocking
+		if pauseDuration > maxPauseWait {
+			s.Logger.Error("PauseIfNotPriority timeout - forcing continue",
+				slog.Duration("duration", pauseDuration),
+				slog.Int("priority", int(s.Priority)),
+				slog.Int("executionPriority", int(s.ExecutionPriority)),
+			)
+			return // Force continue instead of blocking forever
 		}
 
 		time.Sleep(time.Millisecond * 10)

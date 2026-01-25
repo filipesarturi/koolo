@@ -77,9 +77,9 @@ func swapWeapon(toCTA bool) error {
 
 	// Set appropriate last step for debugging
 	if toCTA {
-		ctx.SetLastStep("SwapToCTA")
+		ctx.SetLastStep("SwapToCTA_start")
 	} else {
-		ctx.SetLastStep("SwapToMainWeapon")
+		ctx.SetLastStep("SwapToMain_start")
 	}
 
 	// Timeout after 5 seconds to prevent infinite loop
@@ -107,7 +107,19 @@ func swapWeapon(toCTA bool) error {
 		// Check if we already have the desired weapon set
 		_, found := ctx.Data.PlayerUnit.Skills[skill.BattleOrders]
 		if (toCTA && found) || (!toCTA && !found) {
+			if toCTA {
+				ctx.SetLastStep("SwapToCTA_done")
+			} else {
+				ctx.SetLastStep("SwapToMain_done")
+			}
 			return nil
+		}
+
+		// Update step with attempt count
+		if toCTA {
+			ctx.SetLastStep(fmt.Sprintf("SwapToCTA_attempt%d", attempts+1))
+		} else {
+			ctx.SetLastStep(fmt.Sprintf("SwapToMain_attempt%d", attempts+1))
 		}
 
 		// Press swap key

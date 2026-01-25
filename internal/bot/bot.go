@@ -145,6 +145,16 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 					continue
 				}
 
+				// Check emergency exit BEFORE normal health handling (faster response)
+				if b.ctx.EmergencyExitManager != nil {
+					if triggered, exitErr := b.ctx.EmergencyExitManager.CheckEmergencyExit(); triggered {
+						b.ctx.Logger.Info("EmergencyExitManager: Emergency exit triggered, stopping bot.", "error", exitErr.Error())
+						cancel()
+						b.Stop()
+						return exitErr
+					}
+				}
+
 				err = b.ctx.HealthManager.HandleHealthAndMana()
 				if err != nil {
 					b.ctx.Logger.Info("HealthManager: Detected critical error (chicken/death), stopping bot.", "error", err.Error())
@@ -304,13 +314,16 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				}
 
 				// Check for stuck item pickup flag and reset if necessary (20 second timeout)
-				if b.ctx.CurrentGame.IsPickingItems {
+				if b.ctx.IsPickingItems() {
 					if b.ctx.ResetStuckItemPickup(20 * time.Second) {
 						b.ctx.Logger.Warn("Recovered from stuck item pickup - flag was reset after timeout")
 					}
 				}
 
-				action.BuffIfRequired()
+				// Only buff if not picking items
+				if !b.ctx.IsPickingItems() {
+					action.BuffIfRequired()
+				}
 
 				// Defense check
 				if b.ctx.DefenseManager != nil {
@@ -542,6 +555,8 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 						runFinishReason = event.FinishedMercChicken
 					case errors.Is(err, health.ErrDied):
 						runFinishReason = event.FinishedDied
+					case errors.Is(err, health.ErrEmergencyExit):
+						runFinishReason = event.FinishedEmergencyExit
 					case errors.Is(err, errors.New("player idle for too long, quitting game")): // Match the specific error
 						runFinishReason = event.FinishedError
 					case errors.Is(err, errors.New("bot globally idle for too long (no movement), quitting game")): // Match the specific error for movement-based idle
@@ -607,7 +622,8 @@ func (b *Bot) isCriticalHealthError(err error) bool {
 	}
 	return errors.Is(err, health.ErrChicken) ||
 		errors.Is(err, health.ErrMercChicken) ||
-		errors.Is(err, health.ErrDied)
+		errors.Is(err, health.ErrDied) ||
+		errors.Is(err, health.ErrEmergencyExit)
 }
 
 func (b *Bot) Stop() {

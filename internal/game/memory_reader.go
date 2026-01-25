@@ -29,6 +29,7 @@ type MemoryReader struct {
 	GameAreaSizeY  int
 	supervisorName string
 	cachedMapData  map[area.ID]AreaData
+	mapDataMu      sync.RWMutex // Protects cachedMapData from concurrent access
 	logger         *slog.Logger
 }
 
@@ -55,7 +56,18 @@ func (gd *MemoryReader) MapSeed() uint {
 	return gd.mapSeed
 }
 
+// ClearMapData releases cached map data to free memory when not in game
+func (gd *MemoryReader) ClearMapData() {
+	gd.mapDataMu.Lock()
+	defer gd.mapDataMu.Unlock()
+	gd.cachedMapData = nil
+}
+
 func (gd *MemoryReader) FetchMapData() error {
+	// Clear old map data before fetching new data to allow GC to reclaim memory
+	gd.mapDataMu.Lock()
+	gd.cachedMapData = nil
+	gd.mapDataMu.Unlock()
 	d := gd.GameReader.GetData()
 	gd.mapSeed, _ = gd.getMapSeed(d.PlayerUnit.Address)
 	t := time.Now()
@@ -90,10 +102,11 @@ func (gd *MemoryReader) FetchMapData() error {
 
 			npcs, exits, objects, rooms := lvl.NPCsExitsAndObjects()
 			areaID := area.ID(lvl.ID)
-			grid := NewGrid(resultGrid, lvl.Offset.X, lvl.Offset.Y, false)
+			// Process teleportable tiles on 2D array before flattening
 			if !areaID.IsTown() {
-				gd.TeleportPostProcess(&grid.CollisionGrid, lvl.Size.Width, lvl.Size.Height)
+				gd.TeleportPostProcess(&resultGrid, lvl.Size.Width, lvl.Size.Height)
 			}
+			grid := NewGrid(resultGrid, lvl.Offset.X, lvl.Offset.Y, false)
 
 			// Apply collision thickening to all non-town areas
 			if !areaID.IsTown() {
@@ -123,7 +136,9 @@ func (gd *MemoryReader) FetchMapData() error {
 
 	_ = g.Wait()
 
+	gd.mapDataMu.Lock()
 	gd.cachedMapData = areas
+	gd.mapDataMu.Unlock()
 	gd.logger.Debug("Fetch completed", slog.Int64("ms", time.Since(t).Milliseconds()))
 
 	return nil
@@ -231,7 +246,13 @@ func (gd *MemoryReader) updateWindowPositionData() {
 
 func (gd *MemoryReader) GetData() Data {
 	d := gd.GameReader.GetData()
-	currentArea, ok := gd.cachedMapData[d.PlayerUnit.Area]
+
+	// Take a snapshot of cachedMapData under lock to avoid race with ClearMapData
+	gd.mapDataMu.RLock()
+	cachedData := gd.cachedMapData
+	gd.mapDataMu.RUnlock()
+
+	currentArea, ok := cachedData[d.PlayerUnit.Area]
 	if ok {
 		// This hacky thing is because sometimes if the objects are far away we can not fetch them, basically WP.
 		memObjects := gd.Objects(d.PlayerUnit.Position, d.HoverData)
@@ -262,20 +283,22 @@ func (gd *MemoryReader) GetData() Data {
 	}
 
 	return Data{
+		Areas:        cachedData,
+		AreaData:     currentArea,
 		Data:         d,
 		CharacterCfg: cfgCopy,
-		AreaData:     currentArea,
-		Areas:        gd.cachedMapData,
 	}
 }
 
 func (gd *MemoryReader) getMapSeed(playerUnit uintptr) (uint, error) {
 	actPtr := uintptr(gd.Process.ReadUInt(playerUnit+0x20, memory.Uint64))
-	actMiscPtr := uintptr(gd.Process.ReadUInt(actPtr+0x78, memory.Uint64))
+	//actMiscPtr := uintptr(gd.Process.ReadUInt(actPtr+0x78, memory.Uint64))
+	actMiscPtr := uintptr(gd.Process.ReadUInt(actPtr+0x70, memory.Uint64))
 
 	dwInitSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x840, memory.Uint32)
 	//dwInitSeedHash2 := uintptr(gd.Process.ReadUInt(actMiscPtr+0x844, memory.Uint32))
-	dwEndSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x868, memory.Uint32)
+	//dwEndSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x868, memory.Uint32)
+	dwEndSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x860, memory.Uint32)
 
 	mapSeed, found := utils.GetMapSeed(dwInitSeedHash1, dwEndSeedHash1)
 	if !found {

@@ -1523,6 +1523,42 @@ func (s *HttpServer) updateConfigFromForm(values url.Values, cfg *config.Charact
 		} else if cfg.Defense.LowHPThreshold == 0 {
 			cfg.Defense.LowHPThreshold = 50 // default
 		}
+
+		// Emergency Exit settings
+		cfg.Health.EmergencyExitEnabled = values.Has("emergencyExitEnabled")
+		if v := values.Get("emergencyExitAt"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 0 && val <= 99 {
+				cfg.Health.EmergencyExitAt = val
+			} else if cfg.Health.EmergencyExitAt == 0 {
+				cfg.Health.EmergencyExitAt = 35 // default
+			}
+		} else if cfg.Health.EmergencyExitAt == 0 {
+			cfg.Health.EmergencyExitAt = 35 // default
+		}
+		if v := values.Get("emergencyExitMethod"); v != "" {
+			cfg.Health.EmergencyExitMethod = v
+		} else if cfg.Health.EmergencyExitMethod == "" {
+			cfg.Health.EmergencyExitMethod = "close" // default
+		}
+		cfg.Health.DamageSpikeEnabled = values.Has("damageSpikeEnabled")
+		if v := values.Get("damageSpikeThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 10 && val <= 90 {
+				cfg.Health.DamageSpikeThreshold = val
+			} else if cfg.Health.DamageSpikeThreshold == 0 {
+				cfg.Health.DamageSpikeThreshold = 40 // default
+			}
+		} else if cfg.Health.DamageSpikeThreshold == 0 {
+			cfg.Health.DamageSpikeThreshold = 40 // default
+		}
+		if v := values.Get("damageSpikeDurationMs"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 100 && val <= 5000 {
+				cfg.Health.DamageSpikeDurationMs = val
+			} else if cfg.Health.DamageSpikeDurationMs == 0 {
+				cfg.Health.DamageSpikeDurationMs = 1000 // default
+			}
+		} else if cfg.Health.DamageSpikeDurationMs == 0 {
+			cfg.Health.DamageSpikeDurationMs = 1000 // default
+		}
 	}
 
 	// General (Character & Game)
@@ -2176,6 +2212,43 @@ func (s *HttpServer) characterSettings(w http.ResponseWriter, r *http.Request) {
 		} else if cfg.Defense.LowHPThreshold == 0 {
 			cfg.Defense.LowHPThreshold = 50
 		}
+
+		// Emergency Exit settings
+		cfg.Health.EmergencyExitEnabled = r.Form.Has("emergencyExitEnabled")
+		if v := r.Form.Get("emergencyExitAt"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 0 && val <= 99 {
+				cfg.Health.EmergencyExitAt = val
+			} else if cfg.Health.EmergencyExitAt == 0 {
+				cfg.Health.EmergencyExitAt = 35
+			}
+		} else if cfg.Health.EmergencyExitAt == 0 {
+			cfg.Health.EmergencyExitAt = 35
+		}
+		if v := r.Form.Get("emergencyExitMethod"); v != "" {
+			cfg.Health.EmergencyExitMethod = v
+		} else if cfg.Health.EmergencyExitMethod == "" {
+			cfg.Health.EmergencyExitMethod = "close"
+		}
+		cfg.Health.DamageSpikeEnabled = r.Form.Has("damageSpikeEnabled")
+		if v := r.Form.Get("damageSpikeThreshold"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 10 && val <= 90 {
+				cfg.Health.DamageSpikeThreshold = val
+			} else if cfg.Health.DamageSpikeThreshold == 0 {
+				cfg.Health.DamageSpikeThreshold = 40
+			}
+		} else if cfg.Health.DamageSpikeThreshold == 0 {
+			cfg.Health.DamageSpikeThreshold = 40
+		}
+		if v := r.Form.Get("damageSpikeDurationMs"); v != "" {
+			if val, err := strconv.Atoi(v); err == nil && val >= 100 && val <= 5000 {
+				cfg.Health.DamageSpikeDurationMs = val
+			} else if cfg.Health.DamageSpikeDurationMs == 0 {
+				cfg.Health.DamageSpikeDurationMs = 1000
+			}
+		} else if cfg.Health.DamageSpikeDurationMs == 0 {
+			cfg.Health.DamageSpikeDurationMs = 1000
+		}
+
 		cfg.Health.ChickenAt, _ = strconv.Atoi(r.Form.Get("chickenAt"))
 		cfg.Character.UseMerc = r.Form.Has("useMerc")
 		cfg.Health.MercHealingPotionAt, _ = strconv.Atoi(r.Form.Get("mercHealingPotionAt"))

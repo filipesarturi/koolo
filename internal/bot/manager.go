@@ -232,6 +232,8 @@ func (mng *SupervisorManager) GetSupervisor(supervisor string) Supervisor {
 }
 
 func (mng *SupervisorManager) buildSupervisor(supervisorName string, logger *slog.Logger, attach bool, optionalPID uint32, optionalHWND win.HWND) (Supervisor, *game.CrashDetector, error) {
+	logger.Info("Building supervisor", slog.String("name", supervisorName))
+
 	cfg, found := config.GetCharacter(supervisorName)
 	if !found {
 		return nil, nil, fmt.Errorf("character %s not found", supervisorName)
@@ -244,26 +246,36 @@ func (mng *SupervisorManager) buildSupervisor(supervisorName string, logger *slo
 		if optionalPID != 0 && optionalHWND != 0 {
 			pid = optionalPID
 			hwnd = optionalHWND
+			logger.Info("Attaching to existing game", slog.Uint64("pid", uint64(pid)), slog.Uint64("hwnd", uint64(hwnd)))
 		} else {
 			return nil, nil, fmt.Errorf("pid and hwnd are required when attaching to an existing game")
 		}
 	} else {
+		logger.Info("Starting new game process...")
 		var err error
 		pid, hwnd, err = game.StartGame(cfg.Username, cfg.Password, cfg.AuthMethod, cfg.AuthToken, cfg.Realm, cfg.CommandLineArgs, config.Koolo.UseCustomSettings, cfg.AutoPartyInvite)
 		if err != nil {
+			logger.Error("Failed to start game", slog.Any("error", err))
 			return nil, nil, fmt.Errorf("error starting game: %w", err)
 		}
+		logger.Info("Game process started", slog.Uint64("pid", uint64(pid)), slog.Uint64("hwnd", uint64(hwnd)))
 	}
 
+	logger.Info("Creating game reader...")
 	gr, err := game.NewGameReader(cfg, supervisorName, pid, hwnd, logger)
 	if err != nil {
+		logger.Error("Failed to create game reader", slog.Any("error", err))
 		return nil, nil, fmt.Errorf("error creating game reader: %w", err)
 	}
+	logger.Info("Game reader created successfully")
 
+	logger.Info("Initializing memory injector...")
 	gi, err := game.InjectorInit(logger, gr.GetPID())
 	if err != nil {
+		logger.Error("Failed to initialize memory injector", slog.Any("error", err))
 		return nil, nil, fmt.Errorf("error creating game injector: %w", err)
 	}
+	logger.Info("Memory injector initialized successfully")
 
 	ctx := context.NewContext(supervisorName)
 
@@ -287,6 +299,17 @@ func (mng *SupervisorManager) buildSupervisor(supervisorName string, logger *slo
 	ctx.BeltManager = bm
 	ctx.HealthManager = hm
 	ctx.DefenseManager = dm
+
+	// Initialize EmergencyExitManager with current config
+	em := health.NewEmergencyExitManager(
+		ctx.Data,
+		cfg,
+		logger,
+		gr.HWND,
+		uint32(gr.Process.GetPID()),
+		ctx.Manager.ExitGame,
+	)
+	ctx.EmergencyExitManager = em
 	char, err := character.BuildCharacter(ctx.Context)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating character: %w", err)

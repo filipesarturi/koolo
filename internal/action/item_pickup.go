@@ -118,6 +118,33 @@ func getTelekinesisItemPickupRange() int {
 	return 18 // Default: 18 tiles (~12 yards)
 }
 
+// hasMonstersNearPosition checks if there are hostile monsters within the specified radius of a position
+// This is used to determine if area clearing is necessary before item pickup
+func hasMonstersNearPosition(pos data.Position, radius int) bool {
+	ctx := context.Get()
+
+	for _, monster := range ctx.Data.Monsters.Enemies() {
+		// Skip dead monsters
+		if monster.Stats[stat.Life] <= 0 {
+			continue
+		}
+
+		// Skip pets, mercenaries, and friendly NPCs
+		if monster.IsPet() || monster.IsMerc() || monster.IsGoodNPC() || monster.IsSkip() {
+			continue
+		}
+
+		// Check distance from position
+		dx := monster.Position.X - pos.X
+		dy := monster.Position.Y - pos.Y
+		distance := dx*dx + dy*dy // Using squared distance for efficiency
+		if distance <= radius*radius {
+			return true
+		}
+	}
+	return false
+}
+
 func itemFitsInventory(i data.Item) bool {
 	invMatrix := context.Get().Data.Inventory.Matrix()
 
@@ -247,7 +274,7 @@ func IsInventoryFull() bool {
 
 func ItemPickup(maxDistance int) error {
 	ctx := context.Get()
-	ctx.SetLastAction("ItemPickup")
+	ctx.SetLastAction("ItemPickup_start")
 
 	const maxRetries = 5                                        // Base retries for various issues
 	const maxItemTooFarAttempts = 5                             // Additional retries specifically for "item too far"
@@ -256,7 +283,7 @@ func ItemPickup(maxDistance int) error {
 	const globalPickupTimeout = 60 * time.Second                // Global timeout to prevent infinite loops
 
 	// If we're already picking items, skip it
-	if ctx.CurrentGame.IsPickingItems {
+	if ctx.IsPickingItems() {
 		return nil
 	}
 
@@ -268,6 +295,10 @@ func ItemPickup(maxDistance int) error {
 
 	// Global timeout to prevent the function from running forever
 	globalStartTime := time.Now()
+
+	// Performance tracking
+	var itemsPickedCount int
+	var totalPickupTime time.Duration
 
 	// Track how many times we tried to "clean inventory in town" for a specific ground UnitID
 	// to avoid infinite town-loops when an item will never fit due to charm layout, etc.
@@ -293,8 +324,23 @@ outer:
 		// Refresh inventory once at the start of each outer loop iteration
 		ctx.RefreshInventory()
 
+		ctx.SetLastAction("ItemPickup_scanning")
+		ctx.SetLastStep("ItemPickup_loop")
 		itemsToPickup := GetItemsToPickup(maxDistance)
 		if len(itemsToPickup) == 0 {
+			// Log pickup cycle summary if we picked up anything
+			if itemsPickedCount > 0 {
+				cycleDuration := time.Since(globalStartTime)
+				avgPickupTime := totalPickupTime / time.Duration(itemsPickedCount)
+				// Log INFO only if cycle took significant time (>5s) for performance analysis
+				if cycleDuration > 5*time.Second {
+					ctx.Logger.Info("Pickup cycle completed",
+						slog.Int("itemsPicked", itemsPickedCount),
+						slog.Duration("totalTime", cycleDuration),
+						slog.Duration("avgPickupTime", avgPickupTime),
+					)
+				}
+			}
 			return nil
 		}
 
@@ -461,28 +507,53 @@ outer:
 
 			pickupStartTime := time.Now()
 
-			// For high priority items, skip area clearing on first attempt for speed
-			// Only clear if monsters are detected or on retry attempts
-			if !isHighPriority || attempt > 1 {
+			// Only clear area if monsters are actually nearby (optimization)
+			// Skip clearing on first attempt for high priority items for speed
+			// Also skip clearing if using Telekinesis for items (TK works through monsters)
+			canUseTK := canUseTelekinesisForItemPickup(itemToPickup)
+			monstersNearPlayer := hasMonstersNearPosition(ctx.Data.PlayerUnit.Position, 6)
+			monstersNearItem := hasMonstersNearPosition(itemToPickup.Position, 5)
+			needsClearing := (monstersNearPlayer || monstersNearItem) && !canUseTK
+
+			if needsClearing && (!isHighPriority || attempt > 1) {
 				if debugPickit {
 					ctx.Logger.Debug("Item Pickup: Clearing area around item",
 						slog.Int("attempt", attempt),
 						slog.String("itemName", string(itemToPickup.Name)),
+						slog.Bool("monstersNearPlayer", monstersNearPlayer),
+						slog.Bool("monstersNearItem", monstersNearItem),
 					)
 				}
 				clearStartTime := time.Now()
-				ClearAreaAroundPlayer(4, data.MonsterAnyFilter())
-				ClearAreaAroundPosition(itemToPickup.Position, 4, data.MonsterAnyFilter())
-				if debugPickit {
+				if monstersNearPlayer {
+					ClearAreaAroundPlayer(4, data.MonsterAnyFilter())
+				}
+				if monstersNearItem {
+					ClearAreaAroundPosition(itemToPickup.Position, 4, data.MonsterAnyFilter())
+				}
+				clearDuration := time.Since(clearStartTime)
+				// Log INFO if clearing took too long (>2s indicates potential bottleneck)
+				if clearDuration > 2*time.Second {
+					ctx.Logger.Info("Slow area clearing during pickup",
+						slog.String("item", string(itemToPickup.Name)),
+						slog.Duration("clearDuration", clearDuration),
+						slog.Int("attempt", attempt),
+					)
+				} else if debugPickit {
 					ctx.Logger.Debug("Item Pickup: Area cleared",
 						slog.Int("attempt", attempt),
-						slog.Duration("clearDuration", time.Since(clearStartTime)),
+						slog.Duration("clearDuration", clearDuration),
 					)
 				}
+			} else if debugPickit && (!isHighPriority || attempt > 1) {
+				ctx.Logger.Debug("Item Pickup: Skipping area clearing (no monsters nearby or using TK)",
+					slog.Int("attempt", attempt),
+					slog.String("itemName", string(itemToPickup.Name)),
+					slog.Bool("canUseTK", canUseTK),
+				)
 			}
 
-			// Check if Telekinesis can be used for this item
-			canUseTK := canUseTelekinesisForItemPickup(itemToPickup)
+			// Check distance for movement decision (canUseTK already determined above)
 			distance := ctx.PathFinder.DistanceFromMe(itemToPickup.Position)
 			telekinesisItemPickupRange := getTelekinesisItemPickupRange()
 
@@ -559,10 +630,19 @@ outer:
 						}
 						continue
 					}
-					if debugPickit {
+					moveDuration := time.Since(moveStartTime)
+					// Log INFO if movement took too long (>3s indicates potential stuck or pathing issue)
+					if moveDuration > 3*time.Second {
+						ctx.Logger.Info("Slow movement during pickup",
+							slog.String("item", string(itemToPickup.Name)),
+							slog.Int("distance", distance),
+							slog.Duration("moveDuration", moveDuration),
+							slog.Int("attempt", attempt),
+						)
+					} else if debugPickit {
 						ctx.Logger.Debug("Item Pickup: Move completed",
 							slog.Int("attempt", attempt),
-							slog.Duration("moveDuration", time.Since(moveStartTime)),
+							slog.Duration("moveDuration", moveDuration),
 							slog.Duration("totalElapsed", time.Since(pickupStartTime)),
 						)
 					}
@@ -570,6 +650,7 @@ outer:
 			}
 
 			// Try to pick up the item
+			ctx.SetLastAction(fmt.Sprintf("ItemPickup_%s_attempt%d", itemToPickup.Name, attempt))
 			pickupActionStartTime := time.Now()
 			if debugPickit {
 				ctx.Logger.Debug("Item Pickup: Initiating PickupItem action",
@@ -586,12 +667,23 @@ outer:
 				lastError = nil
 				// Item successfully picked up, remove from tracking
 				delete(itemsInProcess, itemToPickup.UnitID)
-				if debugPickit {
-					ctx.Logger.Info("Successfully picked up item",
+				pickupDuration := time.Since(pickupActionStartTime)
+				itemsPickedCount++
+				totalPickupTime += pickupDuration
+				// Log slow pickups (>2s) for performance analysis
+				if pickupDuration > 2*time.Second {
+					ctx.Logger.Info("Slow item pickup",
+						slog.String("item", string(itemToPickup.Name)),
+						slog.String("quality", itemToPickup.Quality.ToString()),
+						slog.Duration("pickupDuration", pickupDuration),
+						slog.Int("attempts", totalAttemptCounter),
+					)
+				} else if debugPickit {
+					ctx.Logger.Debug("Successfully picked up item",
 						slog.String("itemName", string(itemToPickup.Name)),
 						slog.String("itemQuality", itemToPickup.Quality.ToString()),
 						slog.Int("unitID", int(itemToPickup.UnitID)),
-						slog.Duration("pickupDuration", time.Since(pickupActionStartTime)),
+						slog.Duration("pickupDuration", pickupDuration),
 						slog.Duration("totalDuration", time.Since(globalStartTime)),
 						slog.Int("totalAttempts", totalAttemptCounter),
 					)
@@ -722,10 +814,12 @@ outer:
 
 			ctx.Logger.Warn(
 				"Failed picking up item after all attempts, blacklisting it",
-				slog.String("itemName", string(itemToPickup.Desc().Name)),
-				slog.Int("unitID", int(itemToPickup.UnitID)),
-				slog.String("lastError", lastError.Error()),
-				slog.Int("totalAttempts", totalAttemptCounter),
+				slog.String("item", string(itemToPickup.Desc().Name)),
+				slog.String("quality", itemToPickup.Quality.ToString()),
+				slog.Int("distance", ctx.PathFinder.DistanceFromMe(itemToPickup.Position)),
+				slog.String("error", lastError.Error()),
+				slog.Int("attempts", totalAttemptCounter),
+				slog.Duration("elapsed", time.Since(globalStartTime)),
 			)
 		}
 	}
@@ -741,6 +835,7 @@ func HasItemsToPickup(maxDistance int) bool {
 func GetItemsToPickup(maxDistance int) []data.Item {
 	ctx := context.Get()
 	ctx.SetLastAction("GetItemsToPickup")
+	ctx.SetLastStep("GetItems_scanning")
 
 	missingHealingPotions := ctx.BeltManager.GetMissingCount(data.HealingPotion) + ctx.Data.MissingPotionCountInInventory(data.HealingPotion)
 	missingManaPotions := ctx.BeltManager.GetMissingCount(data.ManaPotion) + ctx.Data.MissingPotionCountInInventory(data.ManaPotion)
@@ -934,7 +1029,7 @@ func sortItemsByPriority(items []data.Item) {
 
 func shouldBePickedUp(i data.Item) bool {
 	ctx := context.Get()
-	ctx.SetLastAction("shouldBePickedUp")
+	// Note: Don't set LastAction here as this is a helper function called frequently
 
 	// Always pick up runewords and Wirt's Leg (check multiple name variations)
 	if i.IsRuneword {

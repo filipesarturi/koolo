@@ -5,11 +5,12 @@ import (
 )
 
 const (
-	FinishedOK          FinishReason = "ok"
-	FinishedDied        FinishReason = "death"
-	FinishedChicken     FinishReason = "chicken"
-	FinishedMercChicken FinishReason = "merc chicken"
-	FinishedError       FinishReason = "error"
+	FinishedOK            FinishReason = "ok"
+	FinishedDied          FinishReason = "death"
+	FinishedChicken       FinishReason = "chicken"
+	FinishedMercChicken   FinishReason = "merc chicken"
+	FinishedEmergencyExit FinishReason = "emergency exit"
+	FinishedError         FinishReason = "error"
 
 	InteractionTypeEntrance InteractionType = "entrance"
 	InteractionTypeNPC      InteractionType = "npc"

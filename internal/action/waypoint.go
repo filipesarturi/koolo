@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -15,6 +16,8 @@ import (
 func WayPoint(dest area.ID) error {
 	ctx := context.Get()
 	ctx.SetLastAction("WayPoint")
+	wpStartTime := time.Now()
+	sourceArea := ctx.Data.PlayerUnit.Area
 
 	if !ctx.Data.PlayerUnit.Area.IsTown() {
 		if err := ReturnTown(); err != nil {
@@ -72,6 +75,16 @@ func WayPoint(dest area.ID) error {
 	if ctx.CharacterCfg.Character.BuffAfterWP && !dest.IsTown() {
 		utils.PingSleep(utils.Light, 250)
 		Buff()
+	}
+
+	// Log slow waypoint transitions for performance analysis
+	wpDuration := time.Since(wpStartTime)
+	if wpDuration > 8*time.Second {
+		ctx.Logger.Info("Slow waypoint transition",
+			slog.String("from", sourceArea.Area().Name),
+			slog.String("to", dest.Area().Name),
+			slog.Duration("duration", wpDuration),
+		)
 	}
 
 	return nil

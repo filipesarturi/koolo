@@ -3,6 +3,7 @@ package action
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -222,6 +223,7 @@ func cleanupCowRunItems() {
 
 func InRunReturnTownRoutine() error {
 	ctx := context.Get()
+	townStartTime := time.Now()
 
 	ctx.PauseIfNotPriority()
 
@@ -320,6 +322,14 @@ func InRunReturnTownRoutine() error {
 		UsePortalInTown()
 		utils.Sleep(500)
 		return OpenTPIfLeader()
+	}
+
+	// Log slow town routines for performance analysis
+	townDuration := time.Since(townStartTime)
+	if townDuration > 30*time.Second {
+		ctx.Logger.Info("Slow town routine",
+			slog.Duration("duration", townDuration),
+		)
 	}
 
 	return UsePortalInTown()

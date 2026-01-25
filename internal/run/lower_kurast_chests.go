@@ -3,6 +3,7 @@ package run
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
@@ -42,7 +43,10 @@ func (run LowerKurastChests) CheckConditions(parameters *RunParameters) Sequence
 }
 
 func (run LowerKurastChests) Run(parameters *RunParameters) error {
-	run.ctx.Logger.Debug("Running a Lower Kurast Chest run")
+	run.ctx.Logger.Info("Starting Lower Kurast Chest run",
+		"openAllChests", run.ctx.CharacterCfg.Game.LowerKurastChest.OpenAllChests,
+		"openRacks", run.ctx.CharacterCfg.Game.LowerKurastChest.OpenRacks,
+	)
 
 	// Use Waypoint to Lower Kurast
 	err := action.WayPoint(area.LowerKurast)
@@ -50,18 +54,31 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 		return err
 	}
 
+	// If OpenAllChests is enabled, clear the entire map using room-by-room approach
+	if run.ctx.CharacterCfg.Game.LowerKurastChest.OpenAllChests {
+		run.ctx.Logger.Info("Using OpenAllChests mode (room-by-room)")
+		return run.clearAllInteractableObjects()
+	}
+
+	// Use bonfire-based approach for super chests (faster, targeted)
+	run.ctx.Logger.Info("Using bonfire-based mode for super chests")
+
 	// Get bonfires from cached map data
 	var bonFirePositions []data.Position
 	if areaData, ok := run.ctx.GameReader.GetData().Areas[area.LowerKurast]; ok {
 		for _, obj := range areaData.Objects {
 			if obj.Name == object.Name(160) { // SmallFire
-				run.ctx.Logger.Debug("Found bonfire at:", "position", obj.Position)
 				bonFirePositions = append(bonFirePositions, obj.Position)
 			}
 		}
 	}
 
-	run.ctx.Logger.Debug("Total bonfires found", "count", len(bonFirePositions))
+	run.ctx.Logger.Info("Bonfires found in Lower Kurast", "count", len(bonFirePositions))
+
+	if len(bonFirePositions) == 0 {
+		run.ctx.Logger.Warn("No bonfires found, falling back to OpenAllChests mode")
+		return run.clearAllInteractableObjects()
+	}
 
 	// Define objects to interact with : chests + weapon racks/armor stands (if enabled)
 	interactableObjects := []object.Name{object.JungleMediumChestLeft, object.JungleChest}
@@ -75,40 +92,49 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 		)
 	}
 
-	// If OpenAllChests is enabled, clear the entire map
-	if run.ctx.CharacterCfg.Game.LowerKurastChest.OpenAllChests {
-		return run.clearAllInteractableObjects()
-	}
-
 	// Otherwise, use the bonfire-based approach for superchests
 	// Move to each of the bonfires one by one
-	for _, bonfirePos := range bonFirePositions {
+	for bonfireIdx, bonfirePos := range bonFirePositions {
 		// Move to the bonfire
 		err = action.MoveToCoords(bonfirePos)
 		if err != nil {
 			return err
 		}
 
+		// Refresh game data to get updated object states
+		run.ctx.RefreshGameData()
+
 		// Find the interactable objects
 		var objects []data.Object
+		var totalObjectsNearBonfire int
 		for _, o := range run.ctx.Data.Objects {
 			// Check if object is within bonfire range
 			if !isChestWithinBonfireRange(o, bonfirePos) {
 				continue
 			}
+			totalObjectsNearBonfire++
 
-			// Only include specific interactable objects
-			if slices.Contains(interactableObjects, o.Name) {
+			// Only include specific interactable objects that are still selectable
+			if slices.Contains(interactableObjects, o.Name) && o.Selectable {
 				objects = append(objects, o)
 			}
 		}
 
 		// Open all objects in batch (handles waiting for items internally)
 		if len(objects) > 0 {
-			run.ctx.Logger.Debug("Opening objects in batch near bonfire",
-				"objectsCount", len(objects),
+			run.ctx.Logger.Info("Opening super chests near bonfire",
+				"bonfireIndex", bonfireIdx+1,
+				"totalBonfires", len(bonFirePositions),
+				"chestsFound", len(objects),
+				"totalObjectsNearBonfire", totalObjectsNearBonfire,
 			)
 			_ = action.OpenContainersInBatch(objects)
+		} else {
+			run.ctx.Logger.Info("No chests found near bonfire",
+				"bonfireIndex", bonfireIdx+1,
+				"totalBonfires", len(bonFirePositions),
+				"totalObjectsNearBonfire", totalObjectsNearBonfire,
+			)
 		}
 	}
 
@@ -134,21 +160,28 @@ func (run LowerKurastChests) Run(parameters *RunParameters) error {
 }
 
 // clearAllInteractableObjects clears all interactable objects from the entire map
-// Optimized version based on ClearCurrentLevel but without monster clearing for maximum speed
+// Optimized room traversal: collects ALL visible containers at each position and processes them in batches
 func (run LowerKurastChests) clearAllInteractableObjects() error {
-	run.ctx.Logger.Debug("Clearing all interactable objects from the entire map (optimized)")
-
 	const (
-		pickupRadius = 20
+		pickupRadius  = 20
+		nearbyRadius  = 40 // Increased radius to collect more containers per stop
 	)
+
+	startTime := time.Now()
+	totalContainersOpened := 0
+	processedContainerIDs := make(map[uint]bool) // Track already opened containers
 
 	// Use optimized room traversal
 	rooms := run.ctx.PathFinder.OptimizeRoomsTraverseOrder()
-	
-	for _, r := range rooms {
+
+	run.ctx.Logger.Info("Starting OpenAllChests traversal",
+		"totalRooms", len(rooms),
+	)
+
+	for roomIdx, r := range rooms {
 		run.ctx.PauseIfNotPriority()
 
-		// Move to room center quickly (no monster clearing for speed)
+		// Move to room center
 		path, _, found := run.ctx.PathFinder.GetClosestWalkablePath(r.GetCenter())
 		if !found {
 			continue
@@ -158,44 +191,58 @@ func (run LowerKurastChests) clearAllInteractableObjects() error {
 			X: path.To().X + run.ctx.Data.AreaOrigin.X,
 			Y: path.To().Y + run.ctx.Data.AreaOrigin.Y,
 		}
-		
-		// Quick movement without monster filter for speed
+
 		err := action.MoveToCoords(to)
 		if err != nil {
 			continue
 		}
 
-		// Refresh game data
+		// Refresh to see containers in this area
 		run.ctx.RefreshGameData()
+		playerPos := run.ctx.Data.PlayerUnit.Position
 
-		// Collect all interactable objects in this room
-		var objectsInRoom []data.Object
+		// Collect ALL visible containers within nearbyRadius that haven't been processed
+		var containersToOpen []data.Object
 		for _, o := range run.ctx.Data.Objects {
-			if !r.IsInside(o.Position) {
-				continue
+			if processedContainerIDs[uint(o.ID)] {
+				continue // Already processed
 			}
 
 			if !isInteractableObject(o) || !o.Selectable {
 				continue
 			}
 
-			objectsInRoom = append(objectsInRoom, o)
+			// Include any container within nearbyRadius of player
+			dist := pather.DistanceFromPoint(playerPos, o.Position)
+			if dist <= nearbyRadius {
+				containersToOpen = append(containersToOpen, o)
+				processedContainerIDs[uint(o.ID)] = true // Mark as will be processed
+			}
 		}
 
-		// Open all objects in batch (handles waiting for items internally)
-		if len(objectsInRoom) > 0 {
-			run.ctx.Logger.Debug("Opening objects in batch in room",
-				"objectsCount", len(objectsInRoom),
+		// Process all found containers in batch
+		if len(containersToOpen) > 0 {
+			run.ctx.Logger.Debug("Processing containers in area",
+				"roomIndex", roomIdx+1,
+				"containersFound", len(containersToOpen),
 			)
-			_ = action.OpenContainersInBatch(objectsInRoom)
-		}
 
-		// Pick up items after clearing room (less frequent for speed)
-		err = action.ItemPickup(pickupRadius)
-		if err != nil {
-			run.ctx.Logger.Debug("Failed to pickup items", "error", err)
+			opened := action.OpenContainersInBatch(containersToOpen)
+			totalContainersOpened += len(opened)
+
+			// Pick up items after opening containers
+			err = action.ItemPickup(pickupRadius)
+			if err != nil {
+				run.ctx.Logger.Debug("Failed to pickup items", "error", err)
+			}
 		}
 	}
+
+	run.ctx.Logger.Info("OpenAllChests mode completed",
+		"totalContainersOpened", totalContainersOpened,
+		"roomsTraversed", len(rooms),
+		"duration", time.Since(startTime),
+	)
 
 	// Return to town
 	if err := action.ReturnTown(); err != nil {

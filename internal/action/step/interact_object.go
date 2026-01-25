@@ -134,7 +134,7 @@ func isStashObject(obj data.Object) bool {
 // This method uses mouse simulation instead of packets for safety
 func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error {
 	ctx := context.Get()
-	ctx.SetLastStep("InteractObjectTelekinesis")
+	ctx.SetLastStep(fmt.Sprintf("InteractTK_%s", obj.Name))
 
 	startingArea := ctx.Data.PlayerUnit.Area
 	interactionAttempts := 0
@@ -630,6 +630,7 @@ func InteractObjectFast(obj data.Object) bool {
 func InteractObjectFastInBatch(obj data.Object, tkAlreadySelected bool) bool {
 	ctx := context.Get()
 	ctx.SetLastStep("InteractObjectFastInBatch")
+	startTime := time.Now()
 
 	// Try to use the object directly if it has valid ID and is selectable (optimization for batch mode)
 	// Only refresh if we need to find the object or verify its state
@@ -651,12 +652,18 @@ func InteractObjectFastInBatch(obj data.Object, tkAlreadySelected bool) bool {
 	}
 
 	if !found {
-		ctx.Logger.Debug("InteractObjectFastInBatch: object not found", "objName", obj.Name, "objID", obj.ID)
+		ctx.Logger.Info("Batch interact: object not found",
+			slog.String("objName", string(obj.Name)),
+			slog.Int("objID", int(obj.ID)),
+		)
 		return false
 	}
 
 	if !o.Selectable {
-		ctx.Logger.Debug("InteractObjectFastInBatch: object not selectable", "objName", obj.Name, "objID", obj.ID)
+		ctx.Logger.Info("Batch interact: object not selectable (already opened?)",
+			slog.String("objName", string(obj.Name)),
+			slog.Int("objID", int(obj.ID)),
+		)
 		return false
 	}
 
@@ -667,6 +674,7 @@ func InteractObjectFastInBatch(obj data.Object, tkAlreadySelected bool) bool {
 
 	// Check if Telekinesis can be used
 	useTK := canUseTelekinesis(obj)
+	distance := ctx.PathFinder.DistanceFromMe(o.Position)
 
 	if useTK {
 		// Only select TK if not already selected (optimization for batch mode)
@@ -674,17 +682,37 @@ func InteractObjectFastInBatch(obj data.Object, tkAlreadySelected bool) bool {
 			tkKb, tkFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
 			if tkFound {
 				ctx.HID.PressKeyBinding(tkKb)
-				utils.Sleep(20) // Small delay to ensure TK is selected
+				utils.Sleep(15) // Small delay to ensure TK is selected
 			}
 		}
 		// Click immediately - TK is already selected
 		ctx.HID.Click(game.RightButton, screenX, screenY)
-		utils.Sleep(10) // Minimal delay - just enough for click to register
+		utils.Sleep(8) // Minimal delay - just enough for click to register
+
+		// Log if interaction took longer than expected
+		if time.Since(startTime) > 100*time.Millisecond {
+			ctx.Logger.Debug("Batch interact slow",
+				slog.String("objName", string(obj.Name)),
+				slog.Int("distance", distance),
+				slog.Duration("duration", time.Since(startTime)),
+				slog.Bool("usedTK", true),
+			)
+		}
 		return true
 	}
 
 	// Fallback to left click
 	ctx.HID.Click(game.LeftButton, screenX, screenY)
-	utils.Sleep(10) // Minimal delay - just enough for click to register
+	utils.Sleep(8) // Minimal delay - just enough for click to register
+
+	// Log if interaction took longer than expected
+	if time.Since(startTime) > 100*time.Millisecond {
+		ctx.Logger.Debug("Batch interact slow",
+			slog.String("objName", string(obj.Name)),
+			slog.Int("distance", distance),
+			slog.Duration("duration", time.Since(startTime)),
+			slog.Bool("usedTK", false),
+		)
+	}
 	return true
 }

@@ -919,6 +919,41 @@
                     <input type="number" name="defenseLowHPThreshold" min="0" max="99" placeholder="50" value="{{ if .Config.Defense.LowHPThreshold }}{{ .Config.Defense.LowHPThreshold }}{{ else }}50{{ end }}"/>
                 </label>
             </fieldset>
+            <h3 style="margin:0">Emergency Exit Settings</h3>
+            <br>
+            <label>Emergency exit provides faster game termination when HP drops critically low. Set threshold HIGHER than Chicken to trigger first.</label>
+            <fieldset class="grid">
+                <label>
+                    <input type="checkbox" name="emergencyExitEnabled" {{ if .Config.Health.EmergencyExitEnabled }}checked{{ end }}/>
+                    Enable Emergency Exit
+                </label>
+                <label>
+                    Exit at HP (%)
+                    <input type="number" name="emergencyExitAt" min="0" max="99" placeholder="35" value="{{ if .Config.Health.EmergencyExitAt }}{{ .Config.Health.EmergencyExitAt }}{{ else }}35{{ end }}"/>
+                </label>
+                <label>
+                    Exit Method
+                    <select name="emergencyExitMethod">
+                        <option value="kill" {{ if eq .Config.Health.EmergencyExitMethod "kill" }}selected{{ end }}>Kill Process (Fastest - risk of save loss)</option>
+                        <option value="close" {{ if or (eq .Config.Health.EmergencyExitMethod "close") (eq .Config.Health.EmergencyExitMethod "") }}selected{{ end }}>Close Window (Fast - game saves)</option>
+                        <option value="esc_save" {{ if eq .Config.Health.EmergencyExitMethod "esc_save" }}selected{{ end }}>ESC + Save (Safest - slower)</option>
+                    </select>
+                </label>
+            </fieldset>
+            <fieldset class="grid">
+                <label>
+                    <input type="checkbox" name="damageSpikeEnabled" {{ if .Config.Health.DamageSpikeEnabled }}checked{{ end }}/>
+                    Enable Damage Spike Detection
+                </label>
+                <label>
+                    Spike Threshold (% HP lost)
+                    <input type="number" name="damageSpikeThreshold" min="10" max="90" placeholder="40" value="{{ if .Config.Health.DamageSpikeThreshold }}{{ .Config.Health.DamageSpikeThreshold }}{{ else }}40{{ end }}"/>
+                </label>
+                <label>
+                    Spike Duration (ms)
+                    <input type="number" name="damageSpikeDurationMs" min="100" max="5000" placeholder="1000" value="{{ if .Config.Health.DamageSpikeDurationMs }}{{ .Config.Health.DamageSpikeDurationMs }}{{ else }}1000{{ end }}"/>
+                </label>
+            </fieldset>
             <h4>Belt Layout</h4><br>
             <fieldset class="grid">
                 {{ range $index, $potionType := .Config.Inventory.BeltColumns }}

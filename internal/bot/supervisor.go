@@ -126,10 +126,37 @@ func (s *baseSupervisor) logGameStart(runs []run.Run) {
 func (s *baseSupervisor) waitUntilCharacterSelectionScreen() error {
 	s.bot.ctx.Logger.Info("Waiting for character selection screen...")
 
-	for !s.bot.ctx.GameReader.IsInCharacterSelectionScreen() {
-		// Spam left click to skip to the char select screen
-		s.bot.ctx.HID.Click(game.LeftButton, 100, 100)
-		time.Sleep(250 * time.Millisecond)
+	// Add timeout to prevent infinite loop if game state can't be read
+	timeout := time.After(2 * time.Minute)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			s.bot.ctx.Logger.Error("Timeout waiting for character selection screen - game may have updated or memory offsets changed")
+			return fmt.Errorf("timeout waiting for character selection screen after 2 minutes")
+		case <-ticker.C:
+			// Try to read game state with recovery from potential panic
+			isCharScreen := func() (result bool) {
+				defer func() {
+					if r := recover(); r != nil {
+						s.bot.ctx.Logger.Error("Panic while reading game state", slog.Any("error", r))
+						result = false
+					}
+				}()
+				return s.bot.ctx.GameReader.IsInCharacterSelectionScreen()
+			}()
+
+			if isCharScreen {
+				break
+			}
+
+			// Spam left click to skip to the char select screen
+			s.bot.ctx.HID.Click(game.LeftButton, 100, 100)
+			continue
+		}
+		break
 	}
 
 	s.bot.ctx.Logger.Info("Character selection screen found")

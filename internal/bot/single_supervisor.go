@@ -22,6 +22,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/health"
 	"github.com/hectorgimenez/koolo/internal/run"
 	"github.com/hectorgimenez/koolo/internal/utils"
+	"github.com/lxn/win"
 )
 
 // Define a constant for the timeout on menu operations
@@ -30,7 +31,7 @@ const menuActionTimeout = 30 * time.Second
 // Define constants for the in-game activity monitor
 const (
 	activityCheckInterval = 15 * time.Second
-	maxStuckDuration      = 3 * time.Minute
+	maxStuckDuration      = 2 * time.Minute // Reduced from 3 minutes for faster recovery
 )
 
 type SinglePlayerSupervisor struct {
@@ -126,13 +127,18 @@ func (s *SinglePlayerSupervisor) changeDifficulty(d difficulty.Difficulty) {
 
 // Start will return error if it can be started, otherwise will always return nil
 func (s *SinglePlayerSupervisor) Start() error {
+	s.bot.ctx.Logger.Info("SinglePlayerSupervisor.Start() called")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelFn = cancel
 
+	s.bot.ctx.Logger.Info("Preparing game process...")
 	err := s.ensureProcessIsRunningAndPrepare()
 	if err != nil {
+		s.bot.ctx.Logger.Error("Failed to prepare game process", slog.Any("error", err))
 		return fmt.Errorf("error preparing game: %w", err)
 	}
+	s.bot.ctx.Logger.Info("Game process prepared successfully")
 
 	// MANUAL MODE: Early exit - handle before normal game loop
 	if s.bot.ctx.ManualModeActive {
@@ -361,7 +367,7 @@ func (s *SinglePlayerSupervisor) Start() error {
 			var stuckSince time.Time
 			var stuckStartPosition data.Position // Position when stuck was first detected
 			var droppedMouseItem bool            // Track if we've already tried dropping mouse item
-			const minProgressDistance = 15.0     // Minimum distance to consider real progress
+			const minProgressDistance = 8.0      // Minimum distance to consider real progress (reduced from 15)
 
 			// Initial position check
 			if s.bot.ctx.GameReader.InGame() && s.bot.ctx.Data.PlayerUnit.ID > 0 {
@@ -388,6 +394,15 @@ func (s *SinglePlayerSupervisor) Start() error {
 					}
 
 					currentPos := s.bot.ctx.Data.PlayerUnit.Position
+
+					// Get debug info for logging
+					lastAction := ""
+					lastStep := ""
+					if debug, ok := s.bot.ctx.ContextDebug[s.bot.ctx.ExecutionPriority]; ok && debug != nil {
+						lastAction = debug.LastAction
+						lastStep = debug.LastStep
+					}
+
 					if currentPos.X == lastPosition.X && currentPos.Y == lastPosition.Y {
 						if stuckSince.IsZero() {
 							stuckSince = time.Now()
@@ -395,64 +410,191 @@ func (s *SinglePlayerSupervisor) Start() error {
 							droppedMouseItem = false        // Reset flag when first detecting stuck
 							s.bot.ctx.CurrentGame.IsStuck = true
 							s.bot.ctx.CurrentGame.StuckSince = time.Now()
+
+							// Log when stuck state is first detected with full context
+							s.bot.ctx.Logger.Info("Stuck state detected - player not moving",
+								slog.Int("posX", currentPos.X),
+								slog.Int("posY", currentPos.Y),
+								slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+								slog.String("lastAction", lastAction),
+								slog.String("lastStep", lastStep),
+								slog.Bool("canTeleport", s.bot.ctx.Data.CanTeleport()),
+								slog.Int("life", s.bot.ctx.Data.PlayerUnit.HPPercent()),
+								slog.Int("mana", s.bot.ctx.Data.PlayerUnit.MPPercent()),
+								slog.String("playerMode", string(s.bot.ctx.Data.PlayerUnit.Mode)),
+								slog.Bool("inventoryOpen", s.bot.ctx.Data.OpenMenus.Inventory),
+								slog.Bool("stashOpen", s.bot.ctx.Data.OpenMenus.Stash),
+							)
 						}
 
 						stuckDuration := time.Since(stuckSince)
 
 						// After 15 seconds stuck, try aggressive recovery actions
-						if stuckDuration > 15*time.Second && stuckDuration <= 90*time.Second {
+						if stuckDuration > 15*time.Second && stuckDuration <= 60*time.Second {
 							// Try teleport if available
 							if s.bot.ctx.Data.CanTeleport() && !s.bot.ctx.Data.PlayerUnit.Area.IsTown() {
-								s.bot.ctx.Logger.Warn("Player stuck for 15 seconds. Attempting teleport escape...")
-								// Try to teleport to a nearby position
+								s.bot.ctx.Logger.Warn("Player stuck for 15 seconds. Attempting teleport escape...",
+									slog.Duration("stuckDuration", stuckDuration),
+									slog.Int("posX", currentPos.X),
+									slog.Int("posY", currentPos.Y),
+									slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+									slog.String("lastAction", lastAction),
+									slog.String("lastStep", lastStep),
+								)
 								s.bot.ctx.PathFinder.SmartEscapeMovement()
 								time.Sleep(200 * time.Millisecond)
 								s.bot.ctx.RefreshGameData()
-								// Check if we moved after teleport attempt
 								newPos := s.bot.ctx.Data.PlayerUnit.Position
-								if newPos.X != currentPos.X || newPos.Y != currentPos.Y {
-									// Successfully moved, reset stuck state
+								// Only reset if we made REAL progress (not just micro-movement)
+								distFromStuckStart := math.Sqrt(
+									math.Pow(float64(newPos.X-stuckStartPosition.X), 2) +
+										math.Pow(float64(newPos.Y-stuckStartPosition.Y), 2))
+
+								s.bot.ctx.Logger.Info("Escape attempt result",
+									slog.Float64("distanceMoved", distFromStuckStart),
+									slog.Float64("minRequired", minProgressDistance),
+									slog.Int("newX", newPos.X),
+									slog.Int("newY", newPos.Y),
+									slog.Bool("success", distFromStuckStart >= minProgressDistance),
+								)
+
+								if distFromStuckStart >= minProgressDistance {
+									s.bot.ctx.Logger.Info("Escape successful, made real progress",
+										slog.Float64("distance", distFromStuckStart))
 									stuckSince = time.Time{}
+									stuckStartPosition = data.Position{}
 									s.bot.ctx.CurrentGame.IsStuck = false
 									s.bot.ctx.CurrentGame.StuckSince = time.Time{}
 									lastPosition = newPos
 									continue
 								}
+								// Update lastPosition but keep stuck timer running
+								lastPosition = newPos
 							} else {
 								// Try SmartEscapeMovement if teleport not available
-								s.bot.ctx.Logger.Warn("Player stuck for 15 seconds. Attempting escape movement...")
+								s.bot.ctx.Logger.Warn("Player stuck for 15 seconds. Attempting escape movement (no teleport)...",
+									slog.Duration("stuckDuration", stuckDuration),
+									slog.Int("posX", currentPos.X),
+									slog.Int("posY", currentPos.Y),
+									slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+									slog.Bool("canTeleport", s.bot.ctx.Data.CanTeleport()),
+									slog.Bool("isTown", s.bot.ctx.Data.PlayerUnit.Area.IsTown()),
+								)
 								s.bot.ctx.PathFinder.SmartEscapeMovement()
 								time.Sleep(200 * time.Millisecond)
 								s.bot.ctx.RefreshGameData()
-								// Check if we moved after escape attempt
 								newPos := s.bot.ctx.Data.PlayerUnit.Position
-								if newPos.X != currentPos.X || newPos.Y != currentPos.Y {
-									// Successfully moved, reset stuck state
+								// Only reset if we made REAL progress (not just micro-movement)
+								distFromStuckStart := math.Sqrt(
+									math.Pow(float64(newPos.X-stuckStartPosition.X), 2) +
+										math.Pow(float64(newPos.Y-stuckStartPosition.Y), 2))
+
+								s.bot.ctx.Logger.Info("Escape attempt result",
+									slog.Float64("distanceMoved", distFromStuckStart),
+									slog.Float64("minRequired", minProgressDistance),
+									slog.Int("newX", newPos.X),
+									slog.Int("newY", newPos.Y),
+									slog.Bool("success", distFromStuckStart >= minProgressDistance),
+								)
+
+								if distFromStuckStart >= minProgressDistance {
+									s.bot.ctx.Logger.Info("Escape successful, made real progress",
+										slog.Float64("distance", distFromStuckStart))
 									stuckSince = time.Time{}
+									stuckStartPosition = data.Position{}
 									s.bot.ctx.CurrentGame.IsStuck = false
 									s.bot.ctx.CurrentGame.StuckSince = time.Time{}
 									lastPosition = newPos
 									continue
 								}
+								// Update lastPosition but keep stuck timer running
+								lastPosition = newPos
 							}
 						}
 
-						// After 90 seconds stuck, try dropping mouse item
-						if stuckDuration > 90*time.Second && !droppedMouseItem {
-							s.bot.ctx.Logger.Warn("Player stuck for 90 seconds. Attempting to drop any item on cursor...")
-							// Click to drop any item that might be stuck on cursor
-							s.bot.ctx.HID.Click(game.LeftButton, 500, 500)
-							droppedMouseItem = true
-							s.bot.ctx.Logger.Info("Clicked to drop mouse item (if any). Continuing to monitor for movement...")
+						// After 60 seconds stuck, try more aggressive actions (random teleport direction)
+						if stuckDuration > 60*time.Second && stuckDuration <= 90*time.Second {
+							s.bot.ctx.Logger.Warn("Player stuck for 60 seconds. Attempting aggressive random teleport...",
+								slog.Duration("stuckDuration", stuckDuration),
+								slog.Int("posX", currentPos.X),
+								slog.Int("posY", currentPos.Y),
+								slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+								slog.String("lastAction", lastAction),
+							)
+							s.bot.ctx.PathFinder.RandomMovement()
+							time.Sleep(300 * time.Millisecond)
+							s.bot.ctx.RefreshGameData()
+							newPos := s.bot.ctx.Data.PlayerUnit.Position
+							// Only reset if we made REAL progress
+							distFromStuckStart := math.Sqrt(
+								math.Pow(float64(newPos.X-stuckStartPosition.X), 2) +
+									math.Pow(float64(newPos.Y-stuckStartPosition.Y), 2))
+
+							s.bot.ctx.Logger.Info("Aggressive escape attempt result",
+								slog.Float64("distanceMoved", distFromStuckStart),
+								slog.Float64("minRequired", minProgressDistance),
+								slog.Int("newX", newPos.X),
+								slog.Int("newY", newPos.Y),
+								slog.Bool("success", distFromStuckStart >= minProgressDistance),
+							)
+
+							if distFromStuckStart >= minProgressDistance {
+								s.bot.ctx.Logger.Info("Random teleport escape successful",
+									slog.Float64("distance", distFromStuckStart))
+								stuckSince = time.Time{}
+								stuckStartPosition = data.Position{}
+								s.bot.ctx.CurrentGame.IsStuck = false
+								s.bot.ctx.CurrentGame.StuckSince = time.Time{}
+								lastPosition = newPos
+								continue
+							}
+							lastPosition = newPos
 						}
 
-						// After 3 minutes stuck, force restart
+						// After 90 seconds stuck, try dropping mouse item and closing menus
+						if stuckDuration > 90*time.Second && !droppedMouseItem {
+							// Log detailed state before trying menu/item actions
+							s.bot.ctx.Logger.Warn("Player stuck for 90 seconds. Attempting to drop cursor item and close menus...",
+								slog.Duration("stuckDuration", stuckDuration),
+								slog.Int("stuckX", stuckStartPosition.X),
+								slog.Int("stuckY", stuckStartPosition.Y),
+								slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+								slog.Bool("inventoryOpen", s.bot.ctx.Data.OpenMenus.Inventory),
+								slog.Bool("stashOpen", s.bot.ctx.Data.OpenMenus.Stash),
+								slog.Bool("characterOpen", s.bot.ctx.Data.OpenMenus.Character),
+								slog.Bool("skillTreeOpen", s.bot.ctx.Data.OpenMenus.SkillTree),
+								slog.Bool("questLogOpen", s.bot.ctx.Data.OpenMenus.QuestLog),
+								slog.Bool("waypointOpen", s.bot.ctx.Data.OpenMenus.Waypoint),
+								slog.String("lastAction", lastAction),
+								slog.String("lastStep", lastStep),
+							)
+							// Press ESC to close any open menus
+							s.bot.ctx.HID.PressKey(win.VK_ESCAPE)
+							time.Sleep(100 * time.Millisecond)
+							// Click to drop any item that might be stuck on cursor
+							s.bot.ctx.HID.Click(game.LeftButton, 500, 500)
+							time.Sleep(100 * time.Millisecond)
+							// Try one more escape attempt
+							s.bot.ctx.PathFinder.RandomMovement()
+							droppedMouseItem = true
+						}
+
+						// After max stuck duration, force restart
 						if stuckDuration > maxStuckDuration {
-							s.bot.ctx.Logger.Error(fmt.Sprintf("In-game activity monitor: Player has been stuck for over %s. Forcing client restart.", maxStuckDuration))
+							s.bot.ctx.Logger.Error("Player stuck timeout reached, forcing restart",
+								slog.Duration("stuckDuration", stuckDuration),
+								slog.Int("stuckX", stuckStartPosition.X),
+								slog.Int("stuckY", stuckStartPosition.Y),
+								slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+								slog.String("lastAction", lastAction),
+								slog.String("lastStep", lastStep),
+								slog.Int("life", s.bot.ctx.Data.PlayerUnit.HPPercent()),
+								slog.Int("mana", s.bot.ctx.Data.PlayerUnit.MPPercent()),
+							)
 							if err := s.KillClient(); err != nil {
 								s.bot.ctx.Logger.Error(fmt.Sprintf("Activity monitor failed to kill client: %v", err))
 							}
-							runCancel() // Also cancel the context to stop bot.Run gracefully
+							runCancel()
 							return
 						}
 					} else {
@@ -464,8 +606,12 @@ func (s *SinglePlayerSupervisor) Start() error {
 
 							if distFromStart >= minProgressDistance {
 								// Real progress - reset stuck detection
-								s.bot.ctx.Logger.Debug("Real progress detected, clearing stuck state",
-									slog.Float64("distanceFromStart", distFromStart))
+								s.bot.ctx.Logger.Info("Real progress detected, clearing stuck state",
+									slog.Float64("distanceFromStart", distFromStart),
+									slog.Int("newX", currentPos.X),
+									slog.Int("newY", currentPos.Y),
+									slog.String("area", s.bot.ctx.Data.PlayerUnit.Area.Area().Name),
+								)
 								stuckSince = time.Time{}
 								stuckStartPosition = data.Position{}
 								droppedMouseItem = false
@@ -475,7 +621,10 @@ func (s *SinglePlayerSupervisor) Start() error {
 								// Micro-movement from escape - don't reset timer, just update lastPosition
 								s.bot.ctx.Logger.Debug("Micro-movement detected, keeping stuck timer",
 									slog.Float64("distanceFromStart", distFromStart),
-									slog.Duration("stuckDuration", time.Since(stuckSince)))
+									slog.Duration("stuckDuration", time.Since(stuckSince)),
+									slog.Int("curX", currentPos.X),
+									slog.Int("curY", currentPos.Y),
+								)
 							}
 						} else {
 							// Normal movement (not in stuck state), reset
@@ -540,6 +689,8 @@ func (s *SinglePlayerSupervisor) Start() error {
 					gameFinishReason = event.FinishedMercChicken
 				case errors.Is(err, health.ErrDied):
 					gameFinishReason = event.FinishedDied
+				case errors.Is(err, health.ErrEmergencyExit):
+					gameFinishReason = event.FinishedEmergencyExit
 				default:
 					gameFinishReason = event.FinishedError
 				}
@@ -605,7 +756,8 @@ func (s *SinglePlayerSupervisor) isCriticalError(err error) bool {
 	}
 	return errors.Is(err, health.ErrChicken) ||
 		errors.Is(err, health.ErrMercChicken) ||
-		errors.Is(err, health.ErrDied)
+		errors.Is(err, health.ErrDied) ||
+		errors.Is(err, health.ErrEmergencyExit)
 }
 
 // NEW HELPER FUNCTION that wraps a blocking operation with a timeout
@@ -829,6 +981,13 @@ func (s *SinglePlayerSupervisor) isGameExistsError(text string) bool {
 		strings.Contains(lowerText, "game exists")
 }
 
+// isCharacterInGameError checks if the error indicates the character is already in a game on the server
+func (s *SinglePlayerSupervisor) isCharacterInGameError(text string) bool {
+	lowerText := strings.ToLower(text)
+	return strings.Contains(lowerText, "character is already in a game") ||
+		strings.Contains(lowerText, "already in a game on the server")
+}
+
 func (s *SinglePlayerSupervisor) createLobbyGame() error {
 	s.bot.ctx.Logger.Debug("[Menu Flow]: Trying to create lobby game ...")
 
@@ -912,6 +1071,18 @@ func (s *SinglePlayerSupervisor) createLobbyGame() error {
 					utils.Sleep(1000)
 				}
 			}
+		}
+
+		// Check if character is already in a game on the server (e.g., after disconnect)
+		if isDismissableModalPresent && s.isCharacterInGameError(modalText) {
+			s.bot.ctx.Logger.Warn("[Menu Flow]: Character is already in a game on the server. Waiting 30s and retrying...")
+			dismissModal()
+			// Exit lobby to character selection screen
+			s.bot.ctx.HID.PressKey(0x1B) // ESC key
+			utils.Sleep(2000)
+			// Wait 30 seconds for the server to release the character
+			utils.Sleep(30000)
+			return errors.New("loading screen") // This causes the main loop to retry
 		}
 
 		// If game exists, try next name/counter

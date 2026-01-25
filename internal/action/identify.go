@@ -2,6 +2,7 @@ package action
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -21,6 +22,7 @@ import (
 func IdentifyAll(skipIdentify bool) error {
 	ctx := context.Get()
 	ctx.SetLastAction("IdentifyAll")
+	identifyStartTime := time.Now()
 
 	items := itemsToIdentify()
 
@@ -29,6 +31,7 @@ func IdentifyAll(skipIdentify bool) error {
 		ctx.Logger.Debug("No items to identify...")
 		return nil
 	}
+	itemCount := len(items)
 
 	shouldUseCain := ctx.CharacterCfg.Game.UseCainIdentify
 
@@ -68,6 +71,14 @@ func IdentifyAll(skipIdentify bool) error {
 			ctx.RefreshGameData()
 			remaining := itemsToIdentify()
 			if len(remaining) == 0 {
+				// Log slow identify operations for performance analysis
+				identifyDuration := time.Since(identifyStartTime)
+				if identifyDuration > 10*time.Second {
+					ctx.Logger.Info("Slow identify operation (Cain)",
+						slog.Int("itemsIdentified", itemCount),
+						slog.Duration("duration", identifyDuration),
+					)
+				}
 				ctx.Logger.Debug("All items successfully identified with Cain")
 				return nil
 			}

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
@@ -35,6 +36,7 @@ const (
 func Stash(forceStash bool) error {
 	ctx := context.Get()
 	ctx.SetLastAction("Stash")
+	stashStartTime := time.Now()
 
 	ctx.Logger.Debug("Checking for items to stash...")
 	if !isStashingRequired(forceStash) {
@@ -63,6 +65,14 @@ func Stash(forceStash bool) error {
 	// Add call to dropExcessItems after stashing
 	dropExcessItems()
 	step.CloseAllMenus()
+
+	// Log slow stash operations for performance analysis
+	stashDuration := time.Since(stashStartTime)
+	if stashDuration > 15*time.Second {
+		ctx.Logger.Info("Slow stash operation",
+			slog.Duration("duration", stashDuration),
+		)
+	}
 
 	return nil
 }
@@ -590,27 +600,85 @@ func DropItem(i data.Item) {
 			return
 		}
 	}
-	utils.PingSleep(utils.Medium, 170) // Medium operation: Prepare for drop
-	step.CloseAllMenus()
-	utils.PingSleep(utils.Medium, 170) // Medium operation: Wait for menus to close
-	ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
-	utils.PingSleep(utils.Medium, 170) // Medium operation: Wait for inventory to open
-	screenPos := ui.GetScreenCoordsForItem(i)
-	ctx.HID.MovePointer(screenPos.X, screenPos.Y)
-	utils.PingSleep(utils.Medium, 170) // Medium operation: Position pointer on item
-	ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
-	utils.PingSleep(utils.Medium, 500) // Medium operation: Wait for item to drop
-	step.CloseAllMenus()
-	utils.PingSleep(utils.Medium, 170) // Medium operation: Clean up UI
-	ctx.RefreshGameData()
-	for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
-		if it.UnitID == i.UnitID {
-			ctx.Logger.Warn(fmt.Sprintf("Failed to drop item %s (UnitID: %d), still in inventory. Inventory might be full or area restricted.", i.Name, i.UnitID))
+	// Retry drop up to 3 times with increasing delays
+	for dropAttempt := 0; dropAttempt < 3; dropAttempt++ {
+		utils.PingSleep(utils.Medium, 150)
+		step.CloseAllMenus()
+		utils.PingSleep(utils.Medium, 150)
+
+		// Open inventory
+		ctx.HID.PressKeyBinding(ctx.Data.KeyBindings.Inventory)
+		utils.PingSleep(utils.Medium, 250) // Increased delay for inventory to open
+
+		// Refresh to get current item position
+		ctx.RefreshGameData()
+		currentItem, found := ctx.Data.Inventory.FindByID(i.UnitID)
+		if !found {
+			// Item already gone (dropped or moved)
+			ctx.Logger.Debug(fmt.Sprintf("Item %s no longer in inventory (already dropped?)", i.Name))
+			step.CloseAllMenus()
 			return
 		}
-	}
-	ctx.Logger.Debug(fmt.Sprintf("Successfully dropped item %s (UnitID: %d).", i.Name, i.UnitID))
 
+		// Check if inventory is actually open
+		if !ctx.Data.OpenMenus.Inventory {
+			ctx.Logger.Debug("Inventory not open, retrying",
+				slog.String("item", string(i.Name)),
+				slog.Int("attempt", dropAttempt+1),
+			)
+			continue
+		}
+
+		screenPos := ui.GetScreenCoordsForItem(currentItem)
+
+		// Log screen position for debugging
+		ctx.Logger.Debug("Attempting to drop item",
+			slog.String("item", string(i.Name)),
+			slog.Int("attempt", dropAttempt+1),
+			slog.Int("screenX", screenPos.X),
+			slog.Int("screenY", screenPos.Y),
+			slog.Int("invX", currentItem.Position.X),
+			slog.Int("invY", currentItem.Position.Y),
+		)
+
+		ctx.HID.MovePointer(screenPos.X, screenPos.Y)
+		utils.PingSleep(utils.Medium, 150) // Increased delay for mouse to settle
+
+		// Verify we're hovering the right item before clicking
+		ctx.RefreshGameData()
+		if ctx.Data.HoverData.UnitID != i.UnitID && ctx.Data.HoverData.UnitID != 0 {
+			ctx.Logger.Debug("Hovering wrong item, adjusting",
+				slog.String("targetItem", string(i.Name)),
+				slog.Int("targetID", int(i.UnitID)),
+				slog.Int("hoverID", int(ctx.Data.HoverData.UnitID)),
+			)
+		}
+
+		ctx.HID.ClickWithModifier(game.LeftButton, screenPos.X, screenPos.Y, game.CtrlKey)
+		utils.PingSleep(utils.Medium, 500) // Increased delay for drop animation
+
+		step.CloseAllMenus()
+		utils.PingSleep(utils.Medium, 200)
+		ctx.RefreshGameData()
+
+		// Check if item was dropped
+		stillInInventory := false
+		for _, it := range ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if it.UnitID == i.UnitID {
+				stillInInventory = true
+				break
+			}
+		}
+
+		if !stillInInventory {
+			ctx.Logger.Debug(fmt.Sprintf("Successfully dropped item %s (UnitID: %d) on attempt %d.", i.Name, i.UnitID, dropAttempt+1))
+			return
+		}
+
+		ctx.Logger.Debug(fmt.Sprintf("Drop attempt %d failed for %s, item still in inventory", dropAttempt+1, i.Name))
+	}
+
+	ctx.Logger.Warn(fmt.Sprintf("Failed to drop item %s (UnitID: %d) after 3 attempts, still in inventory", i.Name, i.UnitID))
 	step.CloseAllMenus()
 }
 

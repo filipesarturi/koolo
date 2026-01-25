@@ -2,6 +2,7 @@ package action
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -220,37 +221,39 @@ func getLockedKeysCount() int {
 
 // WaitForItemsAfterContainerOpen waits for items to drop from opened containers
 // It checks periodically if NEW items appeared on the ground near the container position
-// Returns as soon as new items are detected or timeout is reached
+// Returns as soon as new items are detected, container is no longer selectable, or timeout is reached
 // Different container types have different maximum wait times based on their animation duration
 func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object) {
 	ctx := context.Get()
 	ctx.SetLastAction("WaitForItemsAfterContainerOpen")
 
 	const (
-		checkInterval   = 50 * time.Millisecond  // Check interval - small for quick detection
-		itemCheckRadius = 5                      // Radius to check for items (tiles) - increased from 3
-		initialDelay    = 50 * time.Millisecond  // Initial delay before first check
+		checkInterval   = 40 * time.Millisecond  // Check interval - small for quick detection
+		itemCheckRadius = 5                      // Radius to check for items (tiles)
+		initialDelay    = 30 * time.Millisecond  // Initial delay before first check
 	)
 
 	// Capture initial items BEFORE waiting - these existed before container was opened
 	initialItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
 
 	// Determine maximum wait time based on container type
+	// Balanced timeouts - fast for breakables, longer for chests with animations
 	var maxWaitTime time.Duration
 	isStash := obj.Name == object.Bank
-	
+
 	if isStash {
 		// Stashes have longer animations
-		maxWaitTime = 3000 * time.Millisecond
-	} else if obj.IsSuperChest() {
-		// Super chests may have longer animations
 		maxWaitTime = 2000 * time.Millisecond
+	} else if obj.IsSuperChest() {
+		// Super chests have longer animations, need more time
+		maxWaitTime = 1200 * time.Millisecond
 	} else if obj.IsChest() {
 		// Regular chests
-		maxWaitTime = 1500 * time.Millisecond
+		maxWaitTime = 600 * time.Millisecond
 	} else {
-		// Other containers (barrels, urns, corpses, etc.)
-		maxWaitTime = 2000 * time.Millisecond
+		// Other containers (barrels, urns, corpses, etc.) - short timeout
+		// Most breakables either drop immediately or don't drop at all
+		maxWaitTime = 350 * time.Millisecond
 	}
 
 	// Small initial delay to allow animation to start
@@ -258,9 +261,24 @@ func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object)
 
 	startTime := time.Now()
 
-	// Check periodically for NEW items (items that weren't there before)
+	// Check periodically for NEW items or container state change
 	for time.Since(startTime) < maxWaitTime {
 		ctx.RefreshGameData()
+
+		// Quick exit: if container is no longer selectable, it was opened successfully
+		// No need to wait for items - they either dropped or the container was empty
+		if updatedObj, found := ctx.Data.Objects.FindByID(obj.ID); found && !updatedObj.Selectable {
+			// Container opened - check for items one more time
+			currentItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
+			if hasNewItems(initialItems, currentItems) {
+				ctx.Logger.Debug("Items detected after container opened",
+					"container", obj.Name,
+					"newItemsCount", countNewItems(initialItems, currentItems),
+					"waitTime", time.Since(startTime),
+				)
+			}
+			return // Container opened, no need to wait more
+		}
 
 		// Get current items and check if any are NEW
 		currentItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
@@ -279,17 +297,6 @@ func WaitForItemsAfterContainerOpen(containerPos data.Position, obj data.Object)
 		// Wait before next check
 		time.Sleep(checkInterval)
 	}
-
-	// Timeout reached - log if in debug mode
-	currentItems := getItemIDsNearPosition(containerPos, itemCheckRadius)
-	newCount := countNewItems(initialItems, currentItems)
-	ctx.Logger.Debug("Timeout reached waiting for items after container open",
-		"container", obj.Name,
-		"maxWaitTime", maxWaitTime,
-		"newItemsFound", newCount,
-		"totalItemsNearby", len(currentItems),
-		"containerPos", fmt.Sprintf("(%d, %d)", containerPos.X, containerPos.Y),
-	)
 }
 
 // getItemsNearPosition returns items on the ground near a position within the specified radius
@@ -347,15 +354,17 @@ func countNewItems(initial, current map[data.UnitID]bool) int {
 // getMaxWaitTimeForContainer returns the maximum wait time for a container type
 func getMaxWaitTimeForContainer(obj data.Object) time.Duration {
 	isStash := obj.Name == object.Bank
-	
+
 	if isStash {
-		return 3000 * time.Millisecond
+		return 2000 * time.Millisecond
 	} else if obj.IsSuperChest() {
-		return 2000 * time.Millisecond
+		// Super chests have longer animations, need more time
+		return 1200 * time.Millisecond
 	} else if obj.IsChest() {
-		return 1500 * time.Millisecond
+		return 600 * time.Millisecond
 	} else {
-		return 2000 * time.Millisecond
+		// Breakables (barrels, urns, etc.) - short timeout
+		return 350 * time.Millisecond
 	}
 }
 
@@ -367,6 +376,7 @@ type containerPosition struct {
 
 // WaitForItemsAfterMultipleContainers waits for items to drop from multiple opened containers
 // Each container has its own timeout based on type. Returns when ALL containers have either:
+// - Container is no longer selectable (opened successfully), OR
 // - Dropped items (detected new items nearby), OR
 // - Reached their individual timeout
 func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
@@ -378,16 +388,16 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 	}
 
 	const (
-		checkInterval   = 50 * time.Millisecond
+		checkInterval   = 40 * time.Millisecond
 		itemCheckRadius = 5
-		initialDelay    = 50 * time.Millisecond
+		initialDelay    = 30 * time.Millisecond
 	)
 
 	// Capture initial items and timeout for each container
 	type containerState struct {
 		initialItems map[data.UnitID]bool
 		timeout      time.Duration
-		completed    bool // true if items detected OR timeout reached
+		completed    bool // true if items detected OR timeout reached OR container opened
 		droppedItems bool // true if items were detected
 	}
 
@@ -417,13 +427,20 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 				continue
 			}
 
+			// Quick check: if container is no longer selectable, it's opened
+			if updatedObj, found := ctx.Data.Objects.FindByID(c.obj.ID); found && !updatedObj.Selectable {
+				states[i].completed = true
+				// Check if items dropped
+				currentItems := getItemIDsNearPosition(c.pos, itemCheckRadius)
+				if hasNewItems(states[i].initialItems, currentItems) {
+					states[i].droppedItems = true
+				}
+				continue
+			}
+
 			// Check if this container's timeout has been reached
 			if elapsed >= states[i].timeout {
 				states[i].completed = true
-				ctx.Logger.Debug("Container timeout reached without items",
-					"container", c.obj.Name,
-					"timeout", states[i].timeout,
-				)
 				continue
 			}
 
@@ -432,12 +449,6 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 			if hasNewItems(states[i].initialItems, currentItems) {
 				states[i].completed = true
 				states[i].droppedItems = true
-				newCount := countNewItems(states[i].initialItems, currentItems)
-				ctx.Logger.Debug("New items detected after batch container open",
-					"container", c.obj.Name,
-					"newItemsCount", newCount,
-					"waitTime", elapsed,
-				)
 				continue
 			}
 
@@ -445,22 +456,6 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 		}
 
 		if allCompleted {
-			// Count results
-			droppedCount := 0
-			timeoutCount := 0
-			for _, s := range states {
-				if s.droppedItems {
-					droppedCount++
-				} else {
-					timeoutCount++
-				}
-			}
-			ctx.Logger.Debug("All containers completed",
-				"total", len(containers),
-				"droppedItems", droppedCount,
-				"timedOut", timeoutCount,
-				"totalWaitTime", time.Since(startTime),
-			)
 			return
 		}
 
@@ -470,9 +465,11 @@ func WaitForItemsAfterMultipleContainers(containers []containerPosition) {
 
 // OpenContainersInBatch opens multiple containers in batch, works with or without Telekinesis
 // Opens all containers rapidly without waiting between each, then waits once for items from all
+// Containers out of range will be approached and opened individually
 func OpenContainersInBatch(containers []data.Object) []data.Object {
 	ctx := context.Get()
-	ctx.SetLastAction("OpenContainersInBatch")
+	ctx.SetLastAction(fmt.Sprintf("OpenContainers_batch%d", len(containers)))
+	batchStartTime := time.Now()
 
 	if len(containers) == 0 {
 		return nil
@@ -482,14 +479,15 @@ func OpenContainersInBatch(containers []data.Object) []data.Object {
 	playerPos := ctx.Data.PlayerUnit.Position
 	openedContainers := make([]containerPosition, 0)
 
-	ctx.Logger.Debug("Starting batch container opening",
-		"totalContainers", len(containers),
-		"tkRange", telekinesisRange,
+	ctx.Logger.Info("Batch container opening started",
+		slog.Int("totalContainers", len(containers)),
+		slog.Int("tkRange", telekinesisRange),
+		slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
 	)
 
-	// Filter containers to only process those in range (TK or close enough to click)
-	// Containers outside range will be processed naturally when bot approaches during normal movement
+	// Separate containers into in-range and out-of-range
 	var containersInRange []data.Object
+	var containersOutOfRange []data.Object
 
 	for _, obj := range containers {
 		distance := pather.DistanceFromPoint(playerPos, obj.Position)
@@ -498,98 +496,214 @@ func OpenContainersInBatch(containers []data.Object) []data.Object {
 		// In range if: can use TK and within TK range, OR close enough to click (15 tiles)
 		if (canUseTK && distance <= telekinesisRange) || distance <= 15 {
 			containersInRange = append(containersInRange, obj)
+		} else {
+			containersOutOfRange = append(containersOutOfRange, obj)
 		}
 	}
 
-	// Log containers that will be skipped (outside range) for debugging
-	containersOutsideRange := len(containers) - len(containersInRange)
-	if containersOutsideRange > 0 {
-		ctx.Logger.Debug("Skipping containers outside range - will process when bot approaches naturally",
-			"skippedCount", containersOutsideRange,
-			"totalContainers", len(containers),
-		)
-	}
-
 	// Open all containers in range rapidly using fast interaction
-	// No delays between openings - all opened as fast as possible
-	openStartTime := time.Now()
 	successCount := 0
 	failCount := 0
-	ctx.Logger.Debug("Starting rapid batch opening",
-		"containersInRange", len(containersInRange),
-		"containersSkipped", containersOutsideRange,
-	)
 
 	// Pre-select Telekinesis once if any container can use it (optimization)
-	// This avoids selecting TK for each container individually
 	tkSelected := false
 	tkKb, tkFound := ctx.Data.KeyBindings.KeyBindingForSkill(skill.Telekinesis)
-	if tkFound {
+	if tkFound && len(containersInRange) > 0 {
 		for _, obj := range containersInRange {
 			if canUseTelekinesisForObject(obj) {
 				ctx.HID.PressKeyBinding(tkKb)
-				utils.Sleep(20) // Small delay to ensure TK is selected
+				utils.Sleep(15)
 				tkSelected = true
 				break
 			}
 		}
 	}
 
-	// Open all containers rapidly - no delays between each
-	for i, obj := range containersInRange {
+	// Open all in-range containers rapidly - no delays between each
+	for _, obj := range containersInRange {
 		ctx.PauseIfNotPriority()
 
-		itemOpenStart := time.Now()
 		if step.InteractObjectFastInBatch(obj, tkSelected) {
 			successCount++
 			openedContainers = append(openedContainers, containerPosition{
 				pos: obj.Position,
 				obj: obj,
 			})
-			ctx.Logger.Debug("Container opened in batch",
-				"container", obj.Name,
-				"index", i+1,
-				"total", len(containersInRange),
-				"duration", time.Since(itemOpenStart),
-			)
 		} else {
 			failCount++
-			ctx.Logger.Debug("Failed to open container in batch",
-				"container", obj.Name,
-				"index", i+1,
-				"total", len(containersInRange),
-			)
 		}
 	}
 
-	if len(containersInRange) > 0 {
-		ctx.Logger.Debug("Completed rapid batch opening",
-			"total", len(containersInRange),
-			"success", successCount,
-			"failed", failCount,
-			"totalDuration", time.Since(openStartTime),
-			"avgDurationPerContainer", time.Since(openStartTime)/time.Duration(len(containersInRange)),
-		)
+	// Wait for items from in-range containers before moving to out-of-range ones
+	if len(openedContainers) > 0 {
+		WaitForItemsAfterMultipleContainers(openedContainers)
 	}
 
-	// If any containers were opened, wait for items from all of them
-	// This is the ONLY wait - after ALL containers have been opened rapidly
+	// Now process out-of-range containers by moving to each one
+	// Use reliable interaction (with verification) instead of fast batch for better success rate
+	if len(containersOutOfRange) > 0 {
+		ctx.Logger.Info("Processing containers outside initial range",
+			slog.Int("outOfRangeCount", len(containersOutOfRange)),
+		)
+
+		processedIDs := make(map[data.UnitID]bool)
+
+		for _, obj := range containersOutOfRange {
+			if processedIDs[obj.ID] {
+				continue // Already opened in a previous sub-batch
+			}
+
+			ctx.PauseIfNotPriority()
+			ctx.RefreshGameData()
+
+			// Check if container still exists and is selectable
+			currentObj, found := ctx.Data.Objects.FindByID(obj.ID)
+			if !found {
+				ctx.Logger.Debug("Container not found, skipping",
+					slog.Int("objID", int(obj.ID)),
+				)
+				processedIDs[obj.ID] = true
+				continue
+			}
+			if !currentObj.Selectable {
+				ctx.Logger.Debug("Container not selectable (already opened?)",
+					slog.String("container", string(obj.Name)),
+					slog.Int("objID", int(obj.ID)),
+				)
+				processedIDs[obj.ID] = true
+				continue
+			}
+
+			// Move closer to container
+			moveErr := MoveToCoords(currentObj.Position)
+			if moveErr != nil {
+				ctx.Logger.Info("Failed to move to container",
+					slog.String("container", string(obj.Name)),
+					slog.Int("objID", int(obj.ID)),
+					slog.Any("error", moveErr),
+				)
+				processedIDs[obj.ID] = true
+				continue
+			}
+
+			// After moving, try to open the TARGET container first (we just moved to it)
+			ctx.RefreshGameData()
+			var subBatchContainers []containerPosition
+
+			// Check distance after moving
+			newPlayerPos := ctx.Data.PlayerUnit.Position
+			distAfterMove := pather.DistanceFromPoint(newPlayerPos, currentObj.Position)
+
+			// Try to open the target container we moved to
+			targetObj, targetFound := ctx.Data.Objects.FindByID(obj.ID)
+			if targetFound && targetObj.Selectable {
+				ctx.Logger.Debug("Attempting to interact with container",
+					slog.String("container", string(targetObj.Name)),
+					slog.Int("distanceAfterMove", distAfterMove),
+				)
+
+				err := step.InteractObject(targetObj, func() bool {
+					o, f := ctx.Data.Objects.FindByID(targetObj.ID)
+					return f && !o.Selectable
+				})
+
+				if err == nil {
+					successCount++
+					subBatchContainers = append(subBatchContainers, containerPosition{
+						pos: targetObj.Position,
+						obj: targetObj,
+					})
+					ctx.Logger.Debug("Successfully opened container",
+						slog.String("container", string(targetObj.Name)),
+					)
+				} else {
+					failCount++
+					ctx.Logger.Info("Failed to open container after moving to it",
+						slog.String("container", string(targetObj.Name)),
+						slog.Int("distanceAfterMove", distAfterMove),
+						slog.Any("error", err),
+					)
+				}
+			} else if !targetFound {
+				ctx.Logger.Debug("Target container disappeared after move",
+					slog.Int("objID", int(obj.ID)),
+				)
+			} else {
+				ctx.Logger.Debug("Target container no longer selectable after move",
+					slog.String("container", string(targetObj.Name)),
+				)
+			}
+			processedIDs[obj.ID] = true
+
+			// Also try to open any OTHER nearby containers we haven't processed yet
+			ctx.RefreshGameData()
+			newPlayerPos = ctx.Data.PlayerUnit.Position
+
+			for _, outObj := range containersOutOfRange {
+				if processedIDs[outObj.ID] {
+					continue
+				}
+
+				updatedObj, objFound := ctx.Data.Objects.FindByID(outObj.ID)
+				if !objFound || !updatedObj.Selectable {
+					processedIDs[outObj.ID] = true
+					continue
+				}
+
+				dist := pather.DistanceFromPoint(newPlayerPos, updatedObj.Position)
+
+				// Only try containers within reasonable range (TK range or close click range)
+				if dist <= telekinesisRange+5 || dist <= 15 {
+					err := step.InteractObject(updatedObj, func() bool {
+						o, f := ctx.Data.Objects.FindByID(updatedObj.ID)
+						return f && !o.Selectable
+					})
+
+					if err == nil {
+						successCount++
+						subBatchContainers = append(subBatchContainers, containerPosition{
+							pos: updatedObj.Position,
+							obj: updatedObj,
+						})
+					}
+					processedIDs[outObj.ID] = true
+				}
+			}
+
+			// Wait for items from all containers opened in this sub-batch
+			if len(subBatchContainers) > 0 {
+				openedContainers = append(openedContainers, subBatchContainers...)
+				WaitForItemsAfterMultipleContainers(subBatchContainers)
+			}
+		}
+	}
+
+	totalBatchDuration := time.Since(batchStartTime)
+
+	// Log final results
 	if len(openedContainers) > 0 {
-		waitStartTime := time.Now()
-		ctx.Logger.Debug("All containers opened rapidly, now waiting for items from all",
-			"containersCount", len(openedContainers),
-			"timeSinceFirstOpen", time.Since(openStartTime),
+		avgDuration := totalBatchDuration / time.Duration(len(openedContainers))
+		ctx.Logger.Info("Batch container opening finished",
+			slog.Int("containersOpened", len(openedContainers)),
+			slog.Int("failed", failCount),
+			slog.Int("inRangeProcessed", len(containersInRange)),
+			slog.Int("outOfRangeProcessed", len(containersOutOfRange)),
+			slog.Duration("totalDuration", totalBatchDuration),
+			slog.Duration("avgPerContainer", avgDuration),
 		)
-		WaitForItemsAfterMultipleContainers(openedContainers)
-		ctx.Logger.Debug("Finished waiting for items from batch",
-			"containersCount", len(openedContainers),
-			"waitDuration", time.Since(waitStartTime),
-			"totalBatchDuration", time.Since(openStartTime),
-		)
+
+		// Log warning if batch opening is slow (>1s avg per container when multiple)
+		if len(openedContainers) > 1 && avgDuration > 1*time.Second {
+			ctx.Logger.Warn("Slow batch container opening",
+				slog.Duration("avgPerContainer", avgDuration),
+				slog.Int("containersCount", len(openedContainers)),
+			)
+		}
 	} else {
-		ctx.Logger.Debug("No containers were opened in batch",
-			"totalContainers", len(containers),
-			"containersInRange", len(containersInRange),
+		ctx.Logger.Info("No containers opened in batch",
+			slog.Int("totalContainers", len(containers)),
+			slog.Int("inRange", len(containersInRange)),
+			slog.Int("outOfRange", len(containersOutOfRange)),
 		)
 	}
 
