@@ -71,7 +71,7 @@ func InteractObjectPacket(obj data.Object, isCompletedFn func() bool) error {
 	}
 
 	for !isCompletedFn() {
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		if interactionAttempts >= maxPacketInteractionAttempts {
 			return fmt.Errorf("[%s] failed interacting with object via packet [%v] in Area: [%s]", ctx.Name, obj.Name, ctx.Data.PlayerUnit.Area.Area().Name)

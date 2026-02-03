@@ -3508,9 +3508,9 @@ func calculateAreaLevel(areaID area.ID, diff difficulty.Difficulty) int {
 	}
 }
 
-// getActiveBuffs returns a map of active buff names to their skill levels and a map indicating which buffs were applied via Memory
-func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *data.PlayerUnit, memoryBuffs map[skill.ID]bool) (map[string]int, map[string]bool) {
-	buffs := make(map[string]int)
+// getActiveBuffs returns a map of active buff names to their skill levels and skill IDs, and a map indicating which buffs were applied via Memory
+func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *data.PlayerUnit, memoryBuffs map[skill.ID]bool) (map[string]bot.BuffInfo, map[string]bool) {
+	buffs := make(map[string]bot.BuffInfo)
 	memoryBuffsMap := make(map[string]bool)
 
 	// Reverse map from skillToState in buff.go - maps state to skill ID
@@ -3599,8 +3599,14 @@ func getActiveBuffs(states interface{ HasState(state.State) bool }, playerUnit *
 				}
 			}
 
-			// Only show level if we have a skill ID mapping and the skill exists
-			buffs[name] = skillLevel
+			// Create buff info with level and skill ID
+			buffInfo := bot.BuffInfo{
+				Level: skillLevel,
+			}
+			if hasSkillID {
+				buffInfo.SkillID = int(skillID)
+			}
+			buffs[name] = buffInfo
 
 			// Check if this buff was applied via Memory
 			if hasSkillID && memoryBuffs != nil && memoryBuffs[skillID] {

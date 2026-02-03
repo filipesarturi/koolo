@@ -465,6 +465,12 @@ func (d Drop) dropInventoryDropperables(ctx *context.Status, reopenTab int, quot
 			continue
 		}
 
+		// PROTECAO CRITICA
+		if !action.CanSafelyDrop(it) {
+			ctx.Logger.Error("Skipping unsafe drop", "item", it.Name, "location", it.Location.LocationType)
+			continue
+		}
+
 		if action.IsDropProtected(it) {
 			continue
 		}

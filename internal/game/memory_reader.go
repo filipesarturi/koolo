@@ -68,6 +68,7 @@ func (gd *MemoryReader) FetchMapData() error {
 	gd.mapDataMu.Lock()
 	gd.cachedMapData = nil
 	gd.mapDataMu.Unlock()
+
 	d := gd.GameReader.GetData()
 	gd.mapSeed, _ = gd.getMapSeed(d.PlayerUnit.Address)
 	t := time.Now()

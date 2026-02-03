@@ -42,7 +42,7 @@ func SwapToSlot(targetSlot int) error {
 
 		// Pause the execution if the priority is not the same as the execution priority
 		// The timeout check above ensures we don't block indefinitely
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(3 * time.Second)
 
 		// Refresh game data to get current slot
 		ctx.RefreshGameData()
@@ -99,7 +99,7 @@ func swapWeapon(toCTA bool) error {
 
 		// Pause the execution if the priority is not the same as the execution priority
 		// The timeout check above ensures we don't block indefinitely
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(3 * time.Second)
 
 		// Refresh game data to get current skill state
 		ctx.RefreshGameData()
@@ -132,10 +132,25 @@ func swapWeapon(toCTA bool) error {
 		// Refresh data after swap
 		ctx.RefreshGameData()
 
-		// Check again after swap
-		_, found = ctx.Data.PlayerUnit.Skills[skill.BattleOrders]
-		if (toCTA && found) || (!toCTA && !found) {
-			return nil
+		// Check again after swap using ActiveWeaponSlot
+		// CTA geralmente está no slot 1 (0-indexed = 1)
+		targetSlot := 1
+		if toCTA {
+			if ctx.Data.ActiveWeaponSlot == targetSlot {
+				time.Sleep(50 * time.Millisecond)
+				ctx.RefreshGameData()
+				if ctx.Data.ActiveWeaponSlot == targetSlot {
+					return nil
+				}
+			}
+		} else {
+			if ctx.Data.ActiveWeaponSlot == 0 {
+				time.Sleep(50 * time.Millisecond)
+				ctx.RefreshGameData()
+				if ctx.Data.ActiveWeaponSlot == 0 {
+					return nil
+				}
+			}
 		}
 
 		// Small delay before next attempt

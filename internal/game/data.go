@@ -139,7 +139,7 @@ func (d Data) HasPotionInInventory(potionType data.PotionType) bool {
 }
 
 func (d Data) PotionsInInventory(potionType data.PotionType) []data.Item {
-	items := d.Data.Inventory.ByLocation(item.LocationInventory)
+	items := d.Inventory.ByLocation(item.LocationInventory)
 	potions := make([]data.Item, 0)
 
 	for _, i := range items {

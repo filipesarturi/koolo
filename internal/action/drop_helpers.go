@@ -2,6 +2,7 @@ package action
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -19,8 +20,64 @@ import (
 	"github.com/lxn/win"
 )
 
+// CanSafelyDrop verifica se um item pode ser dropado com seguranca.
+// Retorna false para itens equipados, de mercenario, ou em transicao.
+// ESTA FUNCAO DEVE SER CHAMADA EM TODA OPERACAO DE DROP.
+func CanSafelyDrop(i data.Item) bool {
+	ctx := context.Get()
+
+	// CRITICO: NUNCA dropar itens equipados
+	if i.Location.LocationType == item.LocationEquipped {
+		ctx.Logger.Error("BLOCKED: Attempted to drop equipped item",
+			slog.String("item", string(i.Name)),
+			slog.Int("unitID", int(i.UnitID)),
+			slog.String("bodyLoc", string(i.Location.BodyLocation)))
+		return false
+	}
+
+	// CRITICO: NUNCA dropar itens do mercenario
+	if i.Location.LocationType == item.LocationMercenary {
+		ctx.Logger.Error("BLOCKED: Attempted to drop mercenary item",
+			slog.String("item", string(i.Name)),
+			slog.Int("unitID", int(i.UnitID)))
+		return false
+	}
+
+	// CRITICO: NUNCA dropar itens no cursor (em transicao)
+	if i.Location.LocationType == item.LocationCursor {
+		ctx.Logger.Warn("BLOCKED: Attempted to drop cursor item",
+			slog.String("item", string(i.Name)),
+			slog.Int("unitID", int(i.UnitID)))
+		return false
+	}
+
+	// CRITICO: NUNCA dropar itens no chao
+	if i.Location.LocationType == item.LocationGround {
+		ctx.Logger.Warn("BLOCKED: Attempted to drop ground item",
+			slog.String("item", string(i.Name)),
+			slog.Int("unitID", int(i.UnitID)))
+		return false
+	}
+
+	// So permitir drop de itens explicitamente no inventario
+	if i.Location.LocationType != item.LocationInventory {
+		ctx.Logger.Error("BLOCKED: Attempted to drop item from non-inventory location",
+			slog.String("item", string(i.Name)),
+			slog.Int("unitID", int(i.UnitID)),
+			slog.String("location", string(i.Location.LocationType)))
+		return false
+	}
+
+	return true
+}
+
 // IsDropProtected determines which items must NOT be dropped
 func IsDropProtected(i data.Item) bool {
+	// PROTECAO CRITICA: Verificar seguranca primeiro
+	if !CanSafelyDrop(i) {
+		return true // Protegido = nao pode dropar
+	}
+
 	ctx := context.Get()
 	selected := false
 	DropperOnly := false

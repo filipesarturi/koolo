@@ -515,3 +515,34 @@ func (pf *PathFinder) GetClosestChest(position data.Position, losCheck bool) (*d
 
 	return nil, false
 }
+
+func (pf *PathFinder) GetClosestSuperChest(position data.Position, losCheck bool) (*data.Object, bool) {
+	var closestObject *data.Object
+	minDistance := 20.0
+
+	for _, o := range pf.data.Objects {
+		if !o.Selectable {
+			continue
+		}
+
+		// Rely on d2go classification for super chests.
+		// NOTE: This intentionally includes racks/stands if d2go marks them as SuperChest.
+		if !o.IsSuperChest() {
+			continue
+		}
+
+		distanceToObj := utils.CalculateDistance(position, o.Position)
+		if distanceToObj < minDistance {
+			if !losCheck || pf.LineOfSight(position, o.Position) {
+				minDistance = distanceToObj
+				closestObject = &o
+			}
+		}
+	}
+
+	if closestObject != nil {
+		return closestObject, true
+	}
+
+	return nil, false
+}

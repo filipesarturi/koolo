@@ -42,7 +42,7 @@ func OpenPortal() error {
 		}
 
 		// Pause the execution if the priority is not the same as the execution priority
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		_, found := ctx.Data.Objects.FindOne(object.TownPortal)
 		if found {

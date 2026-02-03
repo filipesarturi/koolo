@@ -551,6 +551,14 @@ func dropExcessItems() {
 			continue
 		}
 
+		// PROTECAO: Verificar se pode dropar
+		if !CanSafelyDrop(i) {
+			ctx.Logger.Warn("Skipping item that cannot be safely dropped",
+				slog.String("item", string(i.Name)),
+				slog.String("location", string(i.Location.LocationType)))
+			continue
+		}
+
 		_, dropIt, _, _ := shouldStashIt(i, false) // Re-evaluate if it should be dropped (not firstRun)
 		if dropIt {
 			itemsToDrop = append(itemsToDrop, i)
@@ -578,6 +586,11 @@ func blacklistItem(i data.Item) {
 func DropItem(i data.Item) {
 	ctx := context.Get()
 	ctx.SetLastAction("DropItem")
+
+	// PROTEÇÃO CRÍTICA: Verificar se pode dropar
+	if !CanSafelyDrop(i) {
+		return
+	}
 
 	// Never drop HoradricCube
 	if i.Name == "HoradricCube" {

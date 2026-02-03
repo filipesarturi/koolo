@@ -124,6 +124,12 @@ type RunStats struct {
 	UsedPotions []event.UsedPotionEvent
 }
 
+// BuffInfo holds information about an active buff
+type BuffInfo struct {
+	Level   int `json:"level"`
+	SkillID int `json:"skillID"`
+}
+
 // CharacterOverview is a compact summary of useful live stats for the UI
 type CharacterOverview struct {
 	Class           string
@@ -151,7 +157,7 @@ type CharacterOverview struct {
 	AvailableGold   int            // Inventory + personal stash (available for use)
 	TotalGold       int            // Inventory + all stash tabs (total gold)
 	GameName        string         // Current game name
-	ActiveBuffs     map[string]int // Map of active buff names to their levels
+	ActiveBuffs     map[string]BuffInfo // Map of active buff names to their info (level and skill ID)
 	MemoryBuffs     map[string]bool // Map of buff names that were applied via Memory staff (key = buff name, value = true if via Memory)
 	FPS             int            // Game FPS (from GameData.Game.FPS)
 }

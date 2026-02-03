@@ -48,7 +48,19 @@ func DropMouseItem() {
 	ctx := context.Get()
 	ctx.SetLastAction("DropMouseItem")
 
-	if len(ctx.Data.Inventory.ByLocation(item.LocationCursor)) > 0 {
+	cursorItems := ctx.Data.Inventory.ByLocation(item.LocationCursor)
+	if len(cursorItems) > 0 {
+		// CRITICAL: Verificar se o item no cursor pode ser dropado com seguranca
+		cursorItem := cursorItems[0]
+		if !CanSafelyDrop(cursorItem) {
+			// Se nao for seguro (equipado, mercenario, etc), apenas logar e nao dropar
+			ctx.Logger.Error("BLOCKED: Attempted to drop cursor item that is not safe to drop",
+				slog.String("item", string(cursorItem.Name)),
+				slog.Int("unitID", int(cursorItem.UnitID)),
+				slog.String("location", string(cursorItem.Location.LocationType)))
+			return
+		}
+
 		ctx.HID.Click(game.LeftButton, 500, 500)
 		WaitForCursorEmpty(2000)
 	}
@@ -57,6 +69,12 @@ func DropMouseItem() {
 func DropInventoryItem(i data.Item) error {
 	ctx := context.Get()
 	ctx.SetLastAction("DropInventoryItem")
+
+	// PROTEÇÃO CRÍTICA: Verificar se pode dropar PRIMEIRO
+	if !CanSafelyDrop(i) {
+		return fmt.Errorf("item cannot be safely dropped: %s (location: %s)",
+			i.Name, i.Location.LocationType)
+	}
 
 	// Never drop HoradricCube
 	if i.Name == "HoradricCube" {

@@ -2,6 +2,7 @@ package step
 
 import (
 	"errors"
+	"time"
 
 	"github.com/hectorgimenez/koolo/internal/context"
 	"github.com/hectorgimenez/koolo/internal/utils"
@@ -14,7 +15,7 @@ func OpenInventory() error {
 	attempts := 0
 	for !ctx.Data.OpenMenus.Inventory {
 		// Pause the execution if the priority is not the same as the execution priority
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 		ctx.RefreshGameData()
 		if attempts > 10 {
 			return errors.New("failed opening inventory")

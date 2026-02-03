@@ -56,6 +56,8 @@ func InteractEntranceMouse(targetArea area.ID) error {
 	waitingForInteraction := false
 	currentMouseCoords := data.Position{}
 	lastRun := time.Time{}
+	startTime := time.Now()
+	const maxEntranceDuration = 10 * time.Second
 
 	// If we move the mouse to interact with an entrance, we will set this variable.
 	var lastEntranceLevel data.Level
@@ -63,7 +65,12 @@ func InteractEntranceMouse(targetArea area.ID) error {
 	ctx := context.Get()
 
 	for {
-		ctx.PauseIfNotPriority()
+		// Safety timeout to prevent infinite loops
+		if time.Since(startTime) > maxEntranceDuration {
+			return fmt.Errorf("entrance interaction timeout after %v for area %s", maxEntranceDuration, targetArea.Area().Name)
+		}
+
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		if ctx.Data.AreaData.Area == targetArea && time.Since(lastRun) > time.Millisecond*500 && ctx.Data.AreaData.IsInside(ctx.Data.PlayerUnit.Position) {
 			return nil

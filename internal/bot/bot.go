@@ -105,6 +105,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 	// This routine is in charge of refreshing the game data and handling cancellation, will work in parallel with any other execution
 	g.Go(func() error {
 		b.ctx.AttachRoutine(botCtx.PriorityBackground)
+		b.ctx.Logger.Debug("Background data refresh loop attached", slog.Int("priority", int(botCtx.PriorityBackground)))
 		ticker := time.NewTicker(100 * time.Millisecond)
 		for {
 			select {
@@ -126,6 +127,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 	// This routine is in charge of handling the health/chicken of the bot, will work in parallel with any other execution
 	g.Go(func() error {
 		b.ctx.AttachRoutine(botCtx.PriorityBackground)
+		b.ctx.Logger.Debug("Health manager loop attached", slog.Int("priority", int(botCtx.PriorityBackground)))
 		ticker := time.NewTicker(100 * time.Millisecond)
 
 		const globalLongTermIdleThreshold = 2 * time.Minute // From move.go example
@@ -211,7 +213,9 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 		}()
 
 		b.ctx.AttachRoutine(botCtx.PriorityHigh)
+		b.ctx.Logger.Debug("High priority loop attached", slog.Int("priority", int(botCtx.PriorityHigh)))
 		ticker := time.NewTicker(time.Millisecond * 100)
+		loopIterationStart := time.Now()
 		for {
 			select {
 			case <-ctx.Done():
@@ -229,10 +233,24 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 				// Update activity for high-priority actions as they indicate bot is processing.
 				b.updateActivityAndPosition()
 
+				// Check if a single loop iteration is taking too long (stall detection)
+				if time.Since(loopIterationStart) > 30*time.Second {
+					b.ctx.Logger.Error("High priority loop iteration taking too long, resetting timer",
+						slog.Duration("elapsed", time.Since(loopIterationStart)))
+					loopIterationStart = time.Now()
+				}
+
 				// Sometimes when we switch areas, monsters are not loaded yet, and we don't properly detect the Merc
 				// let's add some small delay (just few ms) when this happens, and recheck the merc status
 				if b.ctx.CharacterCfg.BackToTown.MercDied && b.ctx.Data.MercHPPercent() <= 0 && b.ctx.CharacterCfg.Character.UseMerc {
-					time.Sleep(200 * time.Millisecond)
+					// Primeira verificação: aguardar 500ms para o jogo carregar o mercenário
+					time.Sleep(500 * time.Millisecond)
+					// Segunda verificação: atualizar dados e verificar novamente
+					b.ctx.RefreshGameData()
+					if b.ctx.Data.MercHPPercent() > 0 {
+						// Mercenário está vivo, era falso positivo
+						b.ctx.Logger.Debug("Mercenary detected as alive after delay - false positive avoided")
+					}
 				}
 
 				// extra RefreshGameData not needed for Legacygraphics/Portraits since Background loop will automatically refresh after 100ms
@@ -479,9 +497,12 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 					}
 				} // This closing brace was misplaced. It should be here, closing the outer 'if'.
 				b.ctx.SwitchPriority(botCtx.PriorityNormal)
+	
+				// Reset loop iteration timer at end of iteration
+				loopIterationStart = time.Now()
+				}
 			}
-		}
-	})
+		})
 
 	// Low priority loop, this will keep executing main run scripts
 	g.Go(func() error {
@@ -492,6 +513,7 @@ func (b *Bot) Run(ctx context.Context, firstRun bool, runs []run.Run) error {
 		}()
 
 		b.ctx.AttachRoutine(botCtx.PriorityNormal)
+		b.ctx.Logger.Debug("Low priority run loop attached", slog.Int("priority", int(botCtx.PriorityNormal)))
 		for _, r := range runs {
 			select {
 			case <-ctx.Done():

@@ -1109,8 +1109,8 @@ func (s NovaSorceress) BuffSkills() []skill.ID {
 		skillsList = append(skillsList, skill.ThunderStorm)
 	}
 
-	// Add one of the armor skills.
-	for _, armor := range []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor} {
+	// Add one of the armor skills - prioritize FrozenArmor first
+	for _, armor := range []skill.ID{skill.FrozenArmor, skill.ShiverArmor, skill.ChillingArmor} {
 		if _, found := s.Data.KeyBindings.KeyBindingForSkill(armor); found {
 			skillsList = append(skillsList, armor)
 			break

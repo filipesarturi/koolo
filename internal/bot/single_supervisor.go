@@ -569,14 +569,14 @@ func (s *SinglePlayerSupervisor) Start() error {
 								slog.String("lastStep", lastStep),
 							)
 							// Press ESC to close any open menus
-							s.bot.ctx.HID.PressKey(win.VK_ESCAPE)
-							time.Sleep(100 * time.Millisecond)
-							// Click to drop any item that might be stuck on cursor
-							s.bot.ctx.HID.Click(game.LeftButton, 500, 500)
-							time.Sleep(100 * time.Millisecond)
-							// Try one more escape attempt
-							s.bot.ctx.PathFinder.RandomMovement()
-							droppedMouseItem = true
+								s.bot.ctx.HID.PressKey(win.VK_ESCAPE)
+								time.Sleep(100 * time.Millisecond)
+								// Tentar dropar item do cursor com seguranca
+								action.DropMouseItem()
+								time.Sleep(100 * time.Millisecond)
+								// Try one more escape attempt
+								s.bot.ctx.PathFinder.RandomMovement()
+								droppedMouseItem = true
 						}
 
 						// After max stuck duration, force restart

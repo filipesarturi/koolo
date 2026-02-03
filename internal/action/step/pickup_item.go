@@ -284,7 +284,7 @@ func PickupItemTelekinesis(it data.Item, itemPickupAttempt int) error {
 		utils.Sleep(60) // Slightly longer delay to ensure skill is selected
 
 		// Pause if not priority - the timeout check above ensures we don't block indefinitely
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(3 * time.Second)
 		ctx.RefreshGameData()
 
 		// Check if item still exists (early exit)
@@ -481,7 +481,7 @@ func PickupItemMouse(it data.Item, itemPickupAttempt int) error {
 		}
 
 		// Pause if not priority - the timeout check above ensures we don't block indefinitely
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(3 * time.Second)
 
 		// Adaptive delay: switch to fallback delay after threshold attempts
 		if spiralAttempt >= spiralDelayAdaptiveThreshold && currentSpiralDelay == spiralDelayInitial {

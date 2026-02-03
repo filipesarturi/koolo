@@ -323,9 +323,21 @@ func OptimizeInventory(location item.LocationType) error {
 	// if something is left on cursor, drop it and pick it up again
 	ctx.RefreshInventory()
 	if len(ctx.Data.Inventory.ByLocation(item.LocationCursor)) > 0 {
-		DropMouseItem()
-		utils.PingSleep(utils.Light, 200)
-		ItemPickup(-1)
+		cursorItems := ctx.Data.Inventory.ByLocation(item.LocationCursor)
+		if len(cursorItems) > 0 {
+			cursorItem := cursorItems[0]
+			// CRITICAL: Verificar se o item no cursor pode ser dropado com seguranca
+			if CanSafelyDrop(cursorItem) {
+				DropMouseItem()
+				utils.PingSleep(utils.Light, 200)
+				ItemPickup(-1)
+			} else {
+				// Se nao for seguro, apenas logar e tentar voltar para o inventario
+				ctx.Logger.Error("BLOCKED: Cannot drop cursor item during inventory optimization",
+					"item", cursorItem.Name,
+					"location", cursorItem.Location.LocationType)
+			}
+		}
 	}
 
 	return nil

@@ -27,7 +27,7 @@ func InteractNPC(npcID npc.ID) error {
 
 	for attempts := 0; attempts < maxAttempts; attempts++ {
 		// Pause the execution if the priority is not the same as the execution priority
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		// Check if interaction succeeded and menu is open
 		if ctx.Data.OpenMenus.NPCInteract || ctx.Data.OpenMenus.NPCShop {

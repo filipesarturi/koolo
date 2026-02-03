@@ -134,7 +134,31 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 		// Go through the path killing monsters, heading towards star
 		err := action.MoveToCoords(chaosNavToPosition, step.WithClearPathOverride(30), step.WithMonsterFilter(d.getMonsterFilter()))
 		if err != nil {
-			return err
+			// Check if it's a pathfinding timeout - try to continue with alternative approach
+			if err.Error() == "pathfinding timeout exceeded after 20s" {
+				d.ctx.Logger.Warn("Pathfinding timeout moving to chaos nav position, attempting alternative approach")
+				// Try to teleport closer if possible
+				if d.ctx.Data.CanTeleport() {
+					currentDist := d.ctx.PathFinder.DistanceFromMe(chaosNavToPosition)
+					if currentDist > 15 {
+						d.ctx.Logger.Debug("Attempting to teleport closer after timeout")
+						for i := 0; i < 5; i++ {
+							step.MoveTo(chaosNavToPosition, step.WithIgnoreMonsters(), step.WithDistanceToFinish(15))
+							d.ctx.RefreshGameData()
+							newDist := d.ctx.PathFinder.DistanceFromMe(chaosNavToPosition)
+							if newDist <= 15 {
+								break
+							}
+							utils.Sleep(200)
+						}
+					}
+				} else {
+					// For non-teleport chars, return error as this is critical path
+					return err
+				}
+			} else {
+				return err
+			}
 		}
 
 		// Now move to star and open TP there if leader
@@ -176,7 +200,32 @@ func (d *DiabloPublic) Run(parameters *RunParameters) error {
 
 			err := action.MoveToCoords(seal.Position, step.WithClearPathOverride(20), step.WithMonsterFilter(d.getMonsterFilter()))
 			if err != nil {
-				return err
+				// Check if it's a pathfinding timeout - if so, try to continue anyway
+				// as seals might be accessible via alternative routes
+				if err.Error() == "pathfinding timeout exceeded after 20s" {
+					d.ctx.Logger.Warn(fmt.Sprintf("Pathfinding timeout moving to seal %d, attempting to continue (sealX: %d, sealY: %d)", sealID, seal.Position.X, seal.Position.Y))
+					// Try to get closer using teleport if available
+					if d.ctx.Data.CanTeleport() {
+						// Try to teleport closer to seal position
+						currentDist := d.ctx.PathFinder.DistanceFromMe(seal.Position)
+						if currentDist > 10 {
+							d.ctx.Logger.Debug("Attempting to teleport closer to seal after timeout")
+							// Try a few teleport attempts to get closer
+							for i := 0; i < 3; i++ {
+								step.MoveTo(seal.Position, step.WithIgnoreMonsters(), step.WithDistanceToFinish(10))
+								d.ctx.RefreshGameData()
+								newDist := d.ctx.PathFinder.DistanceFromMe(seal.Position)
+								if newDist <= 10 {
+									break
+								}
+								utils.Sleep(200)
+							}
+						}
+					}
+					// Continue with seal interaction even if movement wasn't perfect
+				} else {
+					return err
+				}
 			}
 
 			// Handle the special case for DiabloSeal3

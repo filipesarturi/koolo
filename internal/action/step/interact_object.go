@@ -140,6 +140,8 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 	interactionAttempts := 0
 	mouseOverAttempts := 0
 	currentMouseCoords := data.Position{}
+	startTime := time.Now()
+	const maxTKDuration = 5 * time.Second // Maximum time to spend on TK interaction
 
 	// If there is no completion check, assume completed after successful interaction
 	waitingForInteraction := false
@@ -203,10 +205,21 @@ func InteractObjectTelekinesis(obj data.Object, isCompletedFn func() bool) error
 	const maxMouseOverAttempts = 20
 
 	for !isCompletedFn() {
+		// Safety timeout to prevent infinite loops
+		if time.Since(startTime) > maxTKDuration {
+			ctx.Logger.Warn("Telekinesis interaction timeout, falling back to mouse",
+				slog.String("object", string(obj.Name)),
+				slog.Duration("elapsed", time.Since(startTime)),
+				slog.Int("interactionAttempts", interactionAttempts),
+				slog.Int("mouseOverAttempts", mouseOverAttempts),
+			)
+			return InteractObjectMouse(obj, isCompletedFn)
+		}
+
 		// For batch opening, skip priority pause to open containers rapidly
 		// Only pause if we haven't clicked yet (still trying to hover)
 		if interactionAttempts == 0 {
-			ctx.PauseIfNotPriority()
+			ctx.PauseIfNotPriorityWithTimeout(3 * time.Second)
 		}
 
 		ctx.RefreshGameData()
@@ -496,8 +509,15 @@ func InteractObjectMouse(obj data.Object, isCompletedFn func() bool) error {
 		}
 	}
 
+	startTime := time.Now()
+	const maxMouseInteractionDuration = 10 * time.Second // Safety timeout
+
 	for !isCompletedFn() {
-		ctx.PauseIfNotPriority()
+		// Safety timeout to prevent infinite blocking
+		if time.Since(startTime) > maxMouseInteractionDuration {
+			return fmt.Errorf("[%s] object interaction timeout after %v", ctx.Name, maxMouseInteractionDuration)
+		}
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		if interactionAttempts >= maxInteractionAttempts || mouseOverAttempts >= 20 {
 			return fmt.Errorf("[%s] failed interacting with object [%v] in Area: [%s]", ctx.Name, obj.Name, ctx.Data.PlayerUnit.Area.Area().Name)

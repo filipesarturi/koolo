@@ -419,8 +419,20 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 	var pathFound bool
 	var pathErrors int
 	var stuck bool
+	pathfindingStartTime := time.Now()
+	const maxPathfindingTime = 20 * time.Second // Increased from 10s to 20s for runs that may need more time
+	const maxPathErrors = 3 // Reduced from 5 to avoid infinite loops
+	const maxMoveToDuration = 5 * time.Minute // Maximum duration for MoveTo to prevent infinite loops
+	lastProgressPosition := ctx.Data.PlayerUnit.Position
+	lastProgressTime := time.Now()
+	const progressResetInterval = 3 * time.Second // Reset timeout if we make progress every 3s
 	blacklistedInteractions := map[data.UnitID]bool{}
 	adjustMinDist := false
+	moveToStartTime := time.Now() // Track total MoveTo duration
+
+	// Clean up blacklisted maps periodically to prevent memory leaks
+	lastMapCleanupTime := time.Now()
+	const mapCleanupInterval = 30 * time.Second
 
 	//Arcane sanctuary portal navigation
 	var tpPad data.Object
@@ -432,7 +444,24 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 	}
 
 	for {
-		ctx.PauseIfNotPriority()
+		// Check timeout first (fast path)
+		if time.Since(moveToStartTime) > maxMoveToDuration {
+			return fmt.Errorf("moveTo timeout after %v", maxMoveToDuration)
+		}
+
+		// Clean up blacklisted maps periodically to prevent memory leaks
+		if time.Since(lastMapCleanupTime) > mapCleanupInterval {
+			lastMapCleanupTime = time.Now()
+			if len(blacklistedInteractions) > 50 {
+				blacklistedInteractions = map[data.UnitID]bool{}
+			}
+			if len(blacklistedPads) > 20 {
+				blacklistedPads = []data.Object{}
+			}
+		}
+
+		// Use shorter timeout during movement to avoid long blocks
+		ctx.PauseIfNotPriorityWithTimeout(10 * time.Second)
 		ctx.RefreshGameData()
 		// Check for death after refreshing game data in the loop
 		if err := checkPlayerDeath(ctx); err != nil {
@@ -526,6 +555,36 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 			pathOffsetX, pathOffsetY = getPathOffsets(targetPosition)
 		}
 
+		// Check pathfinding timeout to prevent infinite loops
+		// Reset timeout if we're making progress (moving closer to target or changing position)
+		currentDist := ctx.PathFinder.DistanceFromMe(targetPosition)
+		hasProgress := false
+		if !utils.IsSamePosition(lastProgressPosition, ctx.Data.PlayerUnit.Position) {
+			// Player moved, reset progress timer
+			lastProgressPosition = ctx.Data.PlayerUnit.Position
+			lastProgressTime = time.Now()
+			hasProgress = true
+		} else if time.Since(lastProgressTime) < progressResetInterval {
+			// Recent progress, don't count this time against timeout
+			hasProgress = true
+		}
+
+		// Only check timeout if we're not making progress
+		if !hasProgress && time.Since(pathfindingStartTime) > maxPathfindingTime {
+			ctx.Logger.Warn("Pathfinding timeout exceeded, aborting movement",
+				slog.Duration("elapsed", time.Since(pathfindingStartTime)),
+				slog.String("area", ctx.Data.PlayerUnit.Area.Area().Name),
+				slog.Int("targetX", targetPosition.X),
+				slog.Int("targetY", targetPosition.Y),
+				slog.Int("currentDistance", currentDist))
+			return errors.New("pathfinding timeout exceeded after " + maxPathfindingTime.String())
+		}
+
+		// Reset timeout if we made significant progress
+		if hasProgress && time.Since(pathfindingStartTime) > progressResetInterval {
+			pathfindingStartTime = time.Now()
+		}
+
 		distanceToTarget = ctx.PathFinder.DistanceFromMe(targetPosition)
 		//We didn't find a path, try to handle the case
 		if !pathFound {
@@ -544,18 +603,57 @@ func MoveTo(toFunc func() (data.Position, bool), options ...step.MoveOption) err
 				continue
 			} else {
 				pathErrors++
-				// Try smart escape movement to help pathfinding
-				if pathErrors < 5 {
-					ctx.Logger.Warn("No path found, trying smart escape movement to fix")
+				// Try smart escape movement to help pathfinding (reduced attempts)
+				if pathErrors < maxPathErrors {
+					ctx.Logger.Warn("No path found, trying smart escape movement to fix",
+						slog.Int("attempt", pathErrors),
+						slog.Int("maxAttempts", maxPathErrors))
 					ctx.PathFinder.SmartEscapeMovement()
 					utils.Sleep(200)
 					continue
 				} else {
-					return errors.New("path could not be calculated. Current area: [" + ctx.Data.PlayerUnit.Area.Area().Name + "]. Trying to path to Destination: [" + fmt.Sprintf("%d,%d", to.X, to.Y) + "]")
+					// After max attempts, try to find a nearby walkable position as fallback
+					if ctx.Data.CanTeleport() {
+						ctx.Logger.Warn("Pathfinding failed after max attempts, trying to find nearby walkable position")
+						// Try to find a walkable position near target using pathfinder's internal method
+						// We'll try to get path to a slightly different position
+						for offset := 5; offset <= 20; offset += 5 {
+							testPositions := []data.Position{
+								{X: targetPosition.X + offset, Y: targetPosition.Y},
+								{X: targetPosition.X - offset, Y: targetPosition.Y},
+								{X: targetPosition.X, Y: targetPosition.Y + offset},
+								{X: targetPosition.X, Y: targetPosition.Y - offset},
+							}
+							for _, testPos := range testPositions {
+								if testPath, _, found := ctx.PathFinder.GetPath(testPos); found && len(testPath) > 0 {
+									ctx.Logger.Debug("Found alternative path via offset position",
+										slog.Int("offsetX", testPos.X),
+										slog.Int("offsetY", testPos.Y))
+									// Reset path errors and continue from new position
+									pathErrors = 0
+									pathfindingStartTime = time.Now()
+									targetPosition = testPos
+									pathFound = true
+									path = testPath
+									break
+								}
+							}
+							if pathFound {
+								break
+							}
+						}
+						if !pathFound {
+							return errors.New("path could not be calculated. Current area: [" + ctx.Data.PlayerUnit.Area.Area().Name + "]. Trying to path to Destination: [" + fmt.Sprintf("%d,%d", to.X, to.Y) + "]")
+						}
+					} else {
+						return errors.New("path could not be calculated. Current area: [" + ctx.Data.PlayerUnit.Area.Area().Name + "]. Trying to path to Destination: [" + fmt.Sprintf("%d,%d", to.X, to.Y) + "]")
+					}
 				}
 			}
 		} else {
 			pathErrors = 0
+			pathfindingStartTime = time.Now() // Reset timeout when path is found
+			lastProgressTime = time.Now()     // Reset progress tracking
 		}
 
 		//Handle Distance to finish movement

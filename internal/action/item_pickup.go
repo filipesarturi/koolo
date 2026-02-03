@@ -308,20 +308,30 @@ func ItemPickup(maxDistance int) error {
 	// Track items currently being processed to avoid multiple simultaneous pickup attempts
 	itemsInProcess := map[data.UnitID]bool{}
 
+	// Clean up maps periodically to prevent memory leaks
+	lastMapCleanupTime := time.Now()
+	const mapCleanupInterval = 10 * time.Second
+
 outer:
 	for {
-		// Check global timeout to prevent infinite loops
+		// Check timeout first (fast path)
 		if time.Since(globalStartTime) > globalPickupTimeout {
-			ctx.Logger.Warn("ItemPickup global timeout reached, aborting pickup cycle",
-				"elapsed", time.Since(globalStartTime),
-			)
 			return fmt.Errorf("item pickup timeout after %v", globalPickupTimeout)
 		}
 
-		// Pause if not priority - the global timeout check above ensures we don't block indefinitely
-		ctx.PauseIfNotPriority()
+		// Clean up maps periodically to prevent memory leaks
+		if time.Since(lastMapCleanupTime) > mapCleanupInterval {
+			lastMapCleanupTime = time.Now()
+			if len(townCleanupByUnitID) > 50 {
+				townCleanupByUnitID = map[data.UnitID]int{}
+			}
+			if len(itemsInProcess) > 50 {
+				itemsInProcess = map[data.UnitID]bool{}
+			}
+		}
 
-		// Refresh inventory once at the start of each outer loop iteration
+		// Pause and refresh
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 		ctx.RefreshInventory()
 
 		ctx.SetLastAction("ItemPickup_scanning")

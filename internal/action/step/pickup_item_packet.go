@@ -3,6 +3,7 @@ package step
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -33,7 +34,7 @@ func PickupItemPacket(it data.Item, itemPickupAttempt int) error {
 
 	targetItem := it
 
-	ctx.PauseIfNotPriority()
+	ctx.PauseIfNotPriorityWithTimeout(3 * time.Second)
 	ctx.RefreshGameData()
 
 	if hasHostileMonstersNearby(it.Position) {

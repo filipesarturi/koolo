@@ -226,7 +226,7 @@ function setupEventListeners(card, key) {
       e.stopPropagation();
       if (
         confirm(
-          `Are you sure you want to reset the muling progress for ${key}? This should only be done if you have manually emptied the mules.`
+          `Are you sure you want to reset the muling progress for ${key}? This should only be done if you have manually emptied the mules.`,
         )
       ) {
         fetch("/reset-muling?characterName=" + key, {
@@ -246,7 +246,7 @@ function setupEventListeners(card, key) {
     toggleDetailsBtn.addEventListener("click", function () {
       card.classList.toggle("expanded");
       this.querySelector("i").style.transform = card.classList.contains(
-        "expanded"
+        "expanded",
       )
         ? "rotate(180deg)"
         : "rotate(0deg)";
@@ -260,11 +260,11 @@ function setupEventListeners(card, key) {
       const enabled = autoStartCheckbox.checked;
       fetch(
         `/autostart/toggle?characterName=${encodeURIComponent(
-          key
+          key,
         )}&enabled=${enabled}`,
         {
           method: "POST",
-        }
+        },
       ).catch((err) => {
         console.error("Failed to toggle auto start", err);
       });
@@ -328,7 +328,7 @@ function updateStatusPosition(card, isExpanded) {
   if (isExpanded) {
     detailsStatusContainer.insertBefore(
       statusBadge,
-      detailsStatusContainer.firstChild
+      detailsStatusContainer.firstChild,
     );
   } else {
     headerStatusContainer.appendChild(statusBadge);
@@ -356,7 +356,14 @@ function updateCharacterCard(card, key, value, dropCount) {
   }
 
   if (startPauseBtn && stopBtn && attachBtn && manualPlayBtn) {
-    updateButtons(startPauseBtn, stopBtn, attachBtn, manualPlayBtn, value.SupervisorStatus, value.manualModeActive);
+    updateButtons(
+      startPauseBtn,
+      stopBtn,
+      attachBtn,
+      manualPlayBtn,
+      value.SupervisorStatus,
+      value.manualModeActive,
+    );
   }
 
   // Update companion join button visibility
@@ -439,14 +446,14 @@ function updateStartedTime(statusDetails, startedAt, games) {
   }
 
   // Find the current game (last game without FinishedAt)
-  const currentGame = games && games.length > 0
-    ? games[games.length - 1]
-    : null;
+  const currentGame =
+    games && games.length > 0 ? games[games.length - 1] : null;
 
   if (currentGame && currentGame.StartedAt) {
     const gameStartTime = new Date(currentGame.StartedAt);
     const finishedAtStr = currentGame.FinishedAt || "";
-    const isGameFinished = finishedAtStr !== "" && finishedAtStr !== "0001-01-01T00:00:00Z";
+    const isGameFinished =
+      finishedAtStr !== "" && finishedAtStr !== "0001-01-01T00:00:00Z";
 
     // Only show if game is still running (not finished)
     if (!isGameFinished) {
@@ -598,7 +605,14 @@ function triggerAutoStartOnce() {
     });
 }
 
-function updateButtons(startPauseBtn, stopBtn, attachBtn, manualPlayBtn, status, manualModeActive) {
+function updateButtons(
+  startPauseBtn,
+  stopBtn,
+  attachBtn,
+  manualPlayBtn,
+  status,
+  manualModeActive,
+) {
   // Manual mode active - show yellow M button
   if (manualModeActive) {
     startPauseBtn.style.display = "none";
@@ -650,7 +664,8 @@ function updateStats(card, key, games, dropCount) {
   // Update average game time
   const avgGameTimeEl = card.querySelector(".avg-game-time");
   if (avgGameTimeEl) {
-    avgGameTimeEl.textContent = stats.avgGameTime > 0 ? formatDuration(stats.avgGameTime) : "N/A";
+    avgGameTimeEl.textContent =
+      stats.avgGameTime > 0 ? formatDuration(stats.avgGameTime) : "N/A";
   }
 
   // Update inline stats
@@ -659,7 +674,8 @@ function updateStats(card, key, games, dropCount) {
   const dropsBtn = card.querySelector(".btn-drops");
 
   if (gamesCountEl) gamesCountEl.textContent = stats.totalGames;
-  if (dropsCountEl && dropCount !== undefined) dropsCountEl.textContent = dropCount;
+  if (dropsCountEl && dropCount !== undefined)
+    dropsCountEl.textContent = dropCount;
   if (dropsBtn) {
     dropsBtn.onclick = (e) => {
       e.stopPropagation();
@@ -686,7 +702,8 @@ function updateCharacterOverview(card, ui, status) {
 
   // Update game FPS if available
   if (ui && ui.FPS !== undefined && ui.FPS > 0) {
-    const isActive = status === "In game" || status === "Paused" || status === "Starting";
+    const isActive =
+      status === "In game" || status === "Paused" || status === "Starting";
     if (isActive) {
       currentGameFPS = ui.FPS;
       updateGameFPS();
@@ -920,11 +937,11 @@ function updateCharacterOverview(card, ui, status) {
   if (classLevelEl) {
     classLevelEl.textContent = `${cls ? `${cls} | ` : ""}lvl: ${lvl}`;
     classLevelEl.title = `XP: ${formatNumber(exp)} / Next: ${formatNumber(
-      nextThreshold
+      nextThreshold,
     )} (Gained: ${formatNumber(gained)} | To Next: ${formatNumber(
-      toNext
+      toNext,
     )})\nRaw: LastExp=${formatNumber(lastExp)}, NextExp=${formatNumber(
-      nextExp
+      nextExp,
     )}`;
   }
   const xpFill = card.querySelector(".xp-bar-fill");
@@ -942,7 +959,8 @@ function updateCharacterOverview(card, ui, status) {
     }
   }
   if (pingEl) pingEl.textContent = `${ping}ms`;
-  if (playersEl) playersEl.textContent = `Players: ${playerCount}/${maxPlayers}`;
+  if (playersEl)
+    playersEl.textContent = `Players: ${playerCount}/${maxPlayers}`;
   if (gameNameEl) {
     const gameName = ui.GameName || "";
     gameNameEl.textContent = gameName ? `Game: ${gameName}` : "—";
@@ -960,7 +978,7 @@ function updateCharacterOverview(card, ui, status) {
   if (resEl)
     resEl.innerHTML = `<span class="res-fr">FR: ${fr}</span> | <span class="res-cr">CR: ${cr}</span> | <span class="res-lr">LR: ${lr}</span> | <span class="res-pr">PR: ${pr}</span>`;
 
-  // Update active buffs with levels
+  // Update active buffs with levels and skill IDs
   if (buffsListEl && buffsLineEl) {
     const activeBuffs = ui.ActiveBuffs || {};
     const memoryBuffs = ui.MemoryBuffs || {};
@@ -968,14 +986,24 @@ function updateCharacterOverview(card, ui, status) {
     if (buffEntries.length > 0) {
       // Sort by name for consistent display
       buffEntries.sort((a, b) => a[0].localeCompare(b[0]));
-      // Format as "Buff Name (lvl X) [Memory], ..." - only show level if > 0, add [Memory] if applied via Memory
-      const buffText = buffEntries.map(([name, level]) => {
-        let buffStr = level > 0 ? `${name} (lvl ${level})` : name;
-        if (memoryBuffs[name]) {
-          buffStr += " [Memory]";
-        }
-        return buffStr;
-      }).join(", ");
+      // Format as "Buff Name (ID: X) - Level Y [Memory], ..." - only show level if > 0, add [Memory] if applied via Memory
+      const buffText = buffEntries
+        .map(([name, buffInfo]) => {
+          const level = buffInfo.level || 0;
+          const skillID = buffInfo.skillID || 0;
+          let buffStr = name;
+          if (skillID > 0) {
+            buffStr += ` (ID: ${skillID})`;
+          }
+          if (level > 0) {
+            buffStr += ` - Level ${level}`;
+          }
+          if (memoryBuffs[name]) {
+            buffStr += " [Memory]";
+          }
+          return buffStr;
+        })
+        .join(", ");
       buffsListEl.textContent = buffText;
       buffsLineEl.style.display = "block";
     } else {
@@ -1048,25 +1076,26 @@ function updateRunStats(card, games) {
       runElement.classList.add("current-run");
     }
     runElement.innerHTML = `
-            <h4>${runName}${stats.isCurrentRun
-        ? ' <span class="current-run-indicator">Current</span>'
-        : ""
-      }</h4>
+            <h4>${runName}${
+              stats.isCurrentRun
+                ? ' <span class="current-run-indicator">Current</span>'
+                : ""
+            }</h4>
             <div class="run-stat-content">
                 <div class="run-stat-item" title="Fastest Run">
                     <span class="stat-label">Fastest:</span> ${formatDuration(
-        stats.shortestTime
-      )}
+                      stats.shortestTime,
+                    )}
                 </div>
                 <div class="run-stat-item" title="Slowest Run">
                     <span class="stat-label">Slowest:</span> ${formatDuration(
-        stats.longestTime
-      )}
+                      stats.longestTime,
+                    )}
                 </div>
                 <div class="run-stat-item" title="Average Run">
                     <span class="stat-label">Average:</span> ${formatDuration(
-        stats.averageTime
-      )}
+                      stats.averageTime,
+                    )}
                 </div>
                 <div class="run-stat-item" title="Total Runs">
                     <span class="stat-label">Total:</span> ${stats.runCount}
@@ -1075,8 +1104,9 @@ function updateRunStats(card, games) {
                     <span class="stat-label">Errors:</span> ${stats.errorCount}
                 </div>
                 <div class="run-stat-item" title="Chickens">
-                    <span class="stat-label">Chickens:</span> ${stats.runChickens
-      }
+                    <span class="stat-label">Chickens:</span> ${
+                      stats.runChickens
+                    }
                 </div>
                 <div class="run-stat-item" title="Deaths">
                     <span class="stat-label">Deaths:</span> ${stats.runDeaths}
@@ -1120,11 +1150,11 @@ function calculateRunStats(games) {
           if (run.Reason === "ok") {
             runStats[run.Name].shortestTime = Math.min(
               runStats[run.Name].shortestTime,
-              runTime
+              runTime,
             );
             runStats[run.Name].longestTime = Math.max(
               runStats[run.Name].longestTime,
-              runTime
+              runTime,
             );
             runStats[run.Name].totalTime += runTime;
             runStats[run.Name].successfulRunCount++;
@@ -1163,7 +1193,10 @@ function calculateRunStats(games) {
     if (lastGame.Runs && lastGame.Runs.length > 0) {
       const lastRun = lastGame.Runs[lastGame.Runs.length - 1];
       // Check if this run is still in progress (no reason and no finish time)
-      if (lastRun.Reason === "" && lastRun.FinishedAt === "0001-01-01T00:00:00Z") {
+      if (
+        lastRun.Reason === "" &&
+        lastRun.FinishedAt === "0001-01-01T00:00:00Z"
+      ) {
         if (runStats[lastRun.Name]) {
           runStats[lastRun.Name].isCurrentRun = true;
         }
@@ -1176,7 +1209,13 @@ function calculateRunStats(games) {
 
 function calculateStats(games) {
   if (!games || games.length === 0) {
-    return { totalGames: 0, totalChickens: 0, totalDeaths: 0, totalErrors: 0, avgGameTime: 0 };
+    return {
+      totalGames: 0,
+      totalChickens: 0,
+      totalDeaths: 0,
+      totalErrors: 0,
+      avgGameTime: 0,
+    };
   }
 
   const result = games.reduce(
@@ -1196,11 +1235,19 @@ function calculateStats(games) {
       }
       return acc;
     },
-    { totalGames: 0, totalChickens: 0, totalDeaths: 0, totalErrors: 0, totalGameTime: 0, finishedGames: 0 }
+    {
+      totalGames: 0,
+      totalChickens: 0,
+      totalDeaths: 0,
+      totalErrors: 0,
+      totalGameTime: 0,
+      finishedGames: 0,
+    },
   );
 
   // Calculate average game time
-  result.avgGameTime = result.finishedGames > 0 ? result.totalGameTime / result.finishedGames : 0;
+  result.avgGameTime =
+    result.finishedGames > 0 ? result.totalGameTime / result.finishedGames : 0;
 
   return result;
 }
@@ -1222,7 +1269,7 @@ function formatDuration(ms) {
 
 function saveExpandedState() {
   const expandedCards = Array.from(
-    document.querySelectorAll(".character-card.expanded")
+    document.querySelectorAll(".character-card.expanded"),
   ).map((card) => card.id);
   localStorage.setItem("expandedCards", JSON.stringify(expandedCards));
 }
@@ -1516,8 +1563,9 @@ function requestCompanionJoin(supervisor, gameName, password) {
         // Show error message
         popup.innerHTML = `
                     <h3>Error</h3>
-                    <p>Failed to send join request: ${data.error || "Unknown error"
-          }</p>
+                    <p>Failed to send join request: ${
+                      data.error || "Unknown error"
+                    }</p>
                     <button onclick="closeCompanionJoinPopup()" class="btn btn-primary">Close</button>
                 `;
       }
@@ -1560,8 +1608,11 @@ function updateGameFPS() {
     let foundFPS = false;
 
     for (const card of cards) {
-      const status = card.querySelector(".status-badge .status-value")?.textContent;
-      const isActive = status === "In game" || status === "Paused" || status === "Starting";
+      const status = card.querySelector(
+        ".status-badge .status-value",
+      )?.textContent;
+      const isActive =
+        status === "In game" || status === "Paused" || status === "Starting";
 
       if (isActive) {
         // Try to get FPS from the character overview data

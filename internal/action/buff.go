@@ -74,6 +74,15 @@ var skillToState = map[skill.ID]state.State{
 	skill.ThunderStorm:  state.Thunderstorm,
 }
 
+// needsCTABuff checks if CTA (Battle Orders/Battle Command) buffs are needed
+func needsCTABuff(ctx *context.Status) bool {
+	if !ctaFound(*ctx.Data) {
+		return false
+	}
+	return !ctx.Data.PlayerUnit.States.HasState(state.Battleorders) ||
+		!ctx.Data.PlayerUnit.States.HasState(state.Battlecommand)
+}
+
 // castBuffWithVerify casts a buff skill and verifies it was applied by checking the player state.
 // Returns true if the buff was successfully applied, false otherwise.
 func castBuffWithVerify(ctx *context.Status, kb data.KeyBinding, buffSkill skill.ID, expectedState state.State, maxRetries int) bool {
@@ -81,6 +90,17 @@ func castBuffWithVerify(ctx *context.Status, kb data.KeyBinding, buffSkill skill
 	skillName := buffSkill.Desc().Name
 	if skillName == "" {
 		skillName = fmt.Sprintf("SkillID(%d)", buffSkill)
+	}
+
+	// Safety check: if expectedState is zero/empty, this skill shouldn't use verification
+	// This prevents bugs where skills not in skillToState map are passed here
+	// state.State is a uint type, so zero value is 0
+	if expectedState == 0 {
+		ctx.Logger.Warn("castBuffWithVerify called with zero expectedState, using simple cast instead",
+			slog.String("skill", skillName),
+			slog.Int("skillID", int(buffSkill)))
+		castBuff(ctx, kb)
+		return true // Assume success for non-verifiable skills
 	}
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -224,6 +244,83 @@ func BuffIfRequired() {
 		// If Memory is disabled, continue with normal buff flow (don't return here)
 	}
 
+	// Check CTA immediately without cooldown - if CTA is needed, buff immediately
+	// BUT first check if it's safe to buff (no monsters nearby and not stuck)
+	if needsCTABuff(ctx) {
+		// Check if bot is stuck - don't try to buff if stuck
+		if ctx.CurrentGame.IsStuck {
+			ctx.Logger.Debug("CTA buffs needed but bot is stuck, skipping buff")
+			return
+		}
+
+		// Check if MoveToSafePositionForBuff is enabled in config
+		moveToSafePosition := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.MoveToSafePositionForBuff
+
+		// Check if there are monsters close to the character
+		const safeDistanceForBuff = 35
+		closeMonsters := 0
+		for _, m := range ctx.Data.Monsters {
+			if ctx.PathFinder.DistanceFromMe(m.Position) < safeDistanceForBuff {
+				closeMonsters++
+			}
+			if closeMonsters >= 1 {
+				break
+			}
+		}
+
+		// Add cooldown check for CTA buff attempts to prevent infinite loop when can't find safe position
+		if time.Since(ctx.LastBuffAt) < time.Second*10 {
+			ctx.Logger.Debug("Skipping CTA buff check - last buff attempt too recent",
+				slog.Duration("timeSinceLastBuff", time.Since(ctx.LastBuffAt)))
+			return
+		}
+
+		// If monsters are nearby and feature is enabled, try to find and move to a safe position first
+		if closeMonsters > 0 && moveToSafePosition && !ctx.CurrentGame.IsStuck {
+			ctx.Logger.Debug("CTA buffs needed and monsters nearby, searching for safe position to buff...")
+
+			const maxSearchDistance = 55
+			safePos, found := FindSafePositionForBuff(safeDistanceForBuff, maxSearchDistance)
+			if found && safePos != ctx.Data.PlayerUnit.Position {
+				ctx.Logger.Debug("Moving to safe position for CTA buffing",
+					slog.Int("x", safePos.X),
+					slog.Int("y", safePos.Y))
+
+				// Move to the safe position before buffing
+				err := MoveToCoords(safePos)
+				if err != nil {
+					ctx.Logger.Debug("Failed to move to safe CTA buff position, will try to buff anyway",
+						slog.String("error", err.Error()))
+				}
+
+				// Refresh data after moving
+				ctx.RefreshGameData()
+
+				// Verify that the position is still safe after movement
+				closestMonsterDist := GetDistanceFromClosestEnemy(ctx.Data.PlayerUnit.Position, ctx.Data.Monsters)
+				if closestMonsterDist < float64(safeDistanceForBuff) {
+					ctx.Logger.Debug("Safe position no longer safe after movement (monsters may have moved), aborting CTA buff",
+						slog.Float64("closestMonsterDistance", closestMonsterDist),
+						slog.Int("requiredDistance", safeDistanceForBuff))
+					return
+				}
+			} else if !found {
+				ctx.Logger.Debug("No safe position found for CTA buffing, skipping buff this time")
+				return
+			}
+		} else if closeMonsters > 0 && !moveToSafePosition {
+			// Feature disabled, use old behavior: don't buff if 2+ monsters nearby
+			if closeMonsters >= 2 {
+				ctx.Logger.Debug("CTA buffs needed but monsters nearby and MoveToSafePositionForBuff disabled, skipping for safety")
+				return
+			}
+		}
+
+		ctx.Logger.Debug("CTA buffs (BO/BC) missing in BuffIfRequired, calling Buff immediately")
+		Buff()
+		return
+	}
+
 	if !IsRebuffRequired() {
 		return
 	}
@@ -249,6 +346,7 @@ func BuffIfRequired() {
 
 	// If monsters are nearby and feature is enabled, try to find and move to a safe position first
 	// Skip movement if bot is stuck to avoid infinite loops
+	// Also skip if we're in combat (attacking) - wait for safe moment
 	if closeMonsters > 0 && moveToSafePosition && !ctx.CurrentGame.IsStuck {
 		ctx.Logger.Debug("Monsters nearby, searching for safe position to buff...")
 
@@ -288,6 +386,13 @@ func BuffIfRequired() {
 		}
 	}
 
+	// Final safety check: if monsters are still too close and we're not in town, skip buffing
+	// This prevents buffing in the middle of combat
+	if closeMonsters > 0 && !ctx.Data.PlayerUnit.Area.IsTown() {
+		ctx.Logger.Debug("Monsters still nearby before buffing, skipping buff for safety")
+		return
+	}
+
 	Buff()
 }
 
@@ -311,55 +416,323 @@ func Buff() {
 		return
 	}
 
-	// Special case: Check Energy Shield immediately without cooldown
-	buffSkills := ctx.Char.BuffSkills()
-	needsEnergyShield := false
-	var energyShieldKb data.KeyBinding
-	energyShieldFound := false
-
-	for _, buff := range buffSkills {
-		if buff == skill.EnergyShield {
-			skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
-			hasSkill := skillExists && skillData.Level > 0
-			if hasSkill && !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
-				needsEnergyShield = true
-				if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff); found {
-					energyShieldKb = kb
-					energyShieldFound = true
-				}
+	// Check if we're in loading screen - wait if so
+	if ctx.Data.OpenMenus.LoadingScreen {
+		ctx.Logger.Debug("Loading screen detected. Waiting for game to load before buffing...")
+		ctx.WaitForGameToLoad()
+		// After loading screen, verify game is ready by checking player state
+		waitStart := time.Now()
+		for time.Since(waitStart) < 2*time.Second {
+			ctx.RefreshGameData()
+			if !ctx.Data.OpenMenus.LoadingScreen && ctx.Data.PlayerUnit.Area != 0 {
 				break
 			}
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
-	// If Energy Shield is missing, apply it immediately (bypass cooldown)
-	if needsEnergyShield && energyShieldFound {
-		ctx.Logger.Info("Energy Shield expired, applying immediately")
-		if expectedState, canVerify := skillToState[skill.EnergyShield]; canVerify {
-			if castBuffWithVerify(ctx, energyShieldKb, skill.EnergyShield, expectedState, 3) {
-				ctx.Logger.Debug("Energy Shield applied immediately")
-				ctx.LastBuffAt = time.Now() // Update timestamp
-				return // Exit early, only applied Energy Shield
+	// Check if we just changed areas - verify player is ready before buffing
+	// We detect area transition by checking if LastBuffAt is zero (just started)
+	// Instead of fixed delay, we verify the game state is stable
+	if ctx.LastBuffAt.IsZero() {
+		ctx.Logger.Debug("First buff check, verifying game state is ready...")
+		// Verify player position is valid and game is responsive
+		waitStart := time.Now()
+		for time.Since(waitStart) < 1*time.Second {
+			ctx.RefreshGameData()
+			// Check if player has valid position and area is loaded
+			if ctx.Data.PlayerUnit.Position.X != 0 && ctx.Data.PlayerUnit.Position.Y != 0 &&
+				ctx.Data.PlayerUnit.Area != 0 && !ctx.Data.OpenMenus.LoadingScreen {
+				ctx.Logger.Debug("Game state verified, proceeding with buffs")
+				break
 			}
-		} else {
-			castBuff(ctx, energyShieldKb)
-			ctx.Logger.Debug("Energy Shield cast immediately (no verification)")
-			ctx.LastBuffAt = time.Now() // Update timestamp
-			return // Exit early, only applied Energy Shield
+			time.Sleep(50 * time.Millisecond)
 		}
+	}
+
+	// Check if buffs are allowed in town (only with Memory staff for ES/Armor)
+	// CTA buffs should NOT be applied in town - wait until leaving town
+	if ctx.Data.PlayerUnit.Area.IsTown() {
+		// Check if we need Memory buffs (Energy Shield/Armor) - those can be done in town
+		useMemoryBuff := ctx.CharacterCfg != nil && ctx.CharacterCfg.Character.UseMemoryBuff
+		if useMemoryBuff {
+			// Let the Memory buff logic handle this
+			// Return here to avoid trying to apply CTA in town
+			return
+		}
+		// If no Memory buff needed, just return - no buffs in town
+		return
+	}
+
+	// First priority: Check CTA immediately (bypass cooldown if BO/BC missing)
+	if needsCTABuff(ctx) {
+		ctx.Logger.Info("CTA buffs (BO/BC) missing, applying immediately")
+		
+		// Apply CTA buffs (this will swap to CTA weapon and cast BO/BC)
+		ctaBuffsApplied := buffCTA(true) // true = swap back to main weapon after
+		
+		if ctaBuffsApplied {
+			ctx.Logger.Debug("CTA buffs applied successfully")
+			ctx.LastBuffAt = time.Now() // Update timestamp
+			
+			// After CTA, apply buffs in specific order:
+			// 1. Energy Shield
+			// 2. Armor (Frozen/Shiver/Chilling)
+			// 3. Thunder Storm
+			buffSkills := ctx.Char.BuffSkills()
+			
+			// DEBUG: Log all buff skills from character
+			ctx.Logger.Debug("DEBUG: BuffSkills from character",
+				slog.Int("count", len(buffSkills)))
+			for _, buff := range buffSkills {
+				ctx.Logger.Debug("DEBUG: Available buff skill",
+					slog.String("skill", buff.Desc().Name),
+					slog.Int("skillID", int(buff)))
+			}
+			
+			// DEBUG: Log current buff states
+			ctx.Logger.Debug("DEBUG: Current buff states",
+				slog.Bool("Frozenarmor", ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor)),
+				slog.Bool("Shiverarmor", ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor)),
+				slog.Bool("Chillingarmor", ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor)),
+				slog.Bool("Energyshield", ctx.Data.PlayerUnit.States.HasState(state.Energyshield)),
+				slog.Bool("Thunderstorm", ctx.Data.PlayerUnit.States.HasState(state.Thunderstorm)))
+			
+			// Define the desired buff order
+			desiredBuffOrder := []skill.ID{
+				skill.EnergyShield,
+				skill.FrozenArmor,
+				skill.ShiverArmor,
+				skill.ChillingArmor,
+				skill.ThunderStorm,
+			}
+			
+			// Create a map of available buffs from BuffSkills
+			availableBuffs := make(map[skill.ID]bool)
+			for _, buff := range buffSkills {
+				availableBuffs[buff] = true
+			}
+			
+			// Apply buffs in the desired order
+			for _, buff := range desiredBuffOrder {
+				// Skip if this buff is not in the character's BuffSkills
+				if !availableBuffs[buff] {
+					continue
+				}
+				
+				// Check if skill exists on character
+				skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+				hasSkill := skillExists && skillData.Level > 0
+				if !hasSkill {
+					continue
+				}
+				
+				// Check if already active (skip)
+				switch buff {
+				case skill.EnergyShield:
+					if ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+						continue
+					}
+				case skill.FrozenArmor:
+					if ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) {
+						continue
+					}
+				case skill.ShiverArmor:
+					if ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) {
+						continue
+					}
+				case skill.ChillingArmor:
+					if ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+						continue
+					}
+				case skill.ThunderStorm:
+					if ctx.Data.PlayerUnit.States.HasState(state.Thunderstorm) {
+						continue
+					}
+				}
+				
+				if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff); found {
+					skillName := buff.Desc().Name
+					if skillName == "" {
+						skillName = fmt.Sprintf("SkillID(%d)", buff)
+					}
+					ctx.Logger.Info("Applying buff after CTA", slog.String("skill", skillName))
+					if expectedState, canVerify := skillToState[buff]; canVerify {
+						castBuffWithVerify(ctx, kb, buff, expectedState, 3)
+					} else {
+						castBuff(ctx, kb)
+					}
+					// Add delay between buffs to ensure they are applied correctly
+					utils.Sleep(200)
+				} else {
+					// DEBUG: Log when keybinding is not found
+					skillName := buff.Desc().Name
+					if skillName == "" {
+						skillName = fmt.Sprintf("SkillID(%d)", buff)
+					}
+					ctx.Logger.Warn("DEBUG: Keybinding not found for buff",
+						slog.String("skill", skillName),
+						slog.Int("skillID", int(buff)))
+				}
+				
+				// For armor skills, only apply the first available one
+				// But DON'T break if Thunder Storm is still pending
+				if buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor {
+					// Check if Thunder Storm is in available buffs and not yet applied
+					if availableBuffs[skill.ThunderStorm] {
+						// Thunder Storm is pending, don't break - let it process
+						ctx.Logger.Debug("Armor applied, continuing to Thunder Storm")
+					} else {
+						break // No Thunder Storm pending, safe to stop
+					}
+				}
+			}
+			
+			// After CTA, continue with other buffs if needed (don't return early)
+			// Fall through to normal buff logic
+		}
+	}
+
+	// Second priority: Check Energy Shield and other buffs immediately without cooldown
+	// Apply in specific order: Energy Shield -> Armor -> Thunder Storm
+	buffSkills := ctx.Char.BuffSkills()
+	
+	// Define the desired buff order
+	desiredBuffOrder := []skill.ID{
+		skill.EnergyShield,
+		skill.FrozenArmor,
+		skill.ShiverArmor,
+		skill.ChillingArmor,
+		skill.ThunderStorm,
+	}
+	
+	// Create a map of available buffs from BuffSkills
+	availableBuffs := make(map[skill.ID]bool)
+	for _, buff := range buffSkills {
+		availableBuffs[buff] = true
+	}
+	
+	// Check if any buff needs to be applied
+	needsBuff := false
+	for _, buff := range desiredBuffOrder {
+		if !availableBuffs[buff] {
+			continue
+		}
+		
+		skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+		hasSkill := skillExists && skillData.Level > 0
+		if !hasSkill {
+			continue
+		}
+		
+		switch buff {
+		case skill.EnergyShield:
+			if !ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+				needsBuff = true
+			}
+		case skill.FrozenArmor:
+			if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
+			   !ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
+			   !ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+				needsBuff = true
+			}
+		case skill.ShiverArmor:
+			if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
+			   !ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
+			   !ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+				needsBuff = true
+			}
+		case skill.ChillingArmor:
+			if !ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) &&
+			   !ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) &&
+			   !ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+				needsBuff = true
+			}
+		case skill.ThunderStorm:
+			if !ctx.Data.PlayerUnit.States.HasState(state.Thunderstorm) {
+				needsBuff = true
+			}
+		}
+		
+		// For armor skills, only check the first one
+		if buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor {
+			break
+		}
+	}
+	
+	// If any buff is missing, apply all in order (bypass cooldown)
+	if needsBuff {
+		ctx.Logger.Info("Buffs missing, applying immediately in order")
+		
+		armorApplied := false
+		for _, buff := range desiredBuffOrder {
+			if !availableBuffs[buff] {
+				continue
+			}
+			
+			skillData, skillExists := ctx.Data.PlayerUnit.Skills[buff]
+			hasSkill := skillExists && skillData.Level > 0
+			if !hasSkill {
+				continue
+			}
+			
+			// Check if already active (skip)
+			switch buff {
+			case skill.EnergyShield:
+				if ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
+					continue
+				}
+			case skill.FrozenArmor:
+				if ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) || armorApplied {
+					continue
+				}
+			case skill.ShiverArmor:
+				if ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) || armorApplied {
+					continue
+				}
+			case skill.ChillingArmor:
+				if ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) || armorApplied {
+					continue
+				}
+			case skill.ThunderStorm:
+				if ctx.Data.PlayerUnit.States.HasState(state.Thunderstorm) {
+					continue
+				}
+			}
+			
+			if kb, found := ctx.Data.KeyBindings.KeyBindingForSkill(buff); found {
+				skillName := buff.Desc().Name
+				if skillName == "" {
+					skillName = fmt.Sprintf("SkillID(%d)", buff)
+				}
+				ctx.Logger.Info("Applying buff", slog.String("skill", skillName))
+				if expectedState, canVerify := skillToState[buff]; canVerify {
+					if castBuffWithVerify(ctx, kb, buff, expectedState, 3) {
+						ctx.Logger.Debug("Buff applied", slog.String("skill", skillName))
+					}
+				} else {
+					castBuff(ctx, kb)
+					ctx.Logger.Debug("Buff cast (no verification)", slog.String("skill", skillName))
+				}
+				
+				// Add delay between buffs
+				utils.Sleep(200)
+				
+				// Mark armor as applied
+				if buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor {
+					armorApplied = true
+				}
+			}
+		}
+		
+		ctx.LastBuffAt = time.Now() // Update timestamp
+		return // Exit early, only applied missing buffs
 	}
 
 	// Allow buffing in town if Memory is disabled (Memory handles buffing in town when enabled)
 	allowTownBuffing := ctx.CharacterCfg != nil && !ctx.CharacterCfg.Character.UseMemoryBuff
 	if (!allowTownBuffing && ctx.Data.PlayerUnit.Area.IsTown()) || time.Since(ctx.LastBuffAt) < time.Second*30 {
 		return
-	}
-
-	// Check if we're in loading screen
-	if ctx.Data.OpenMenus.LoadingScreen {
-		ctx.Logger.Debug("Loading screen detected. Waiting for game to load before buffing...")
-		ctx.WaitForGameToLoad()
-		utils.PingSleep(utils.Light, 400)
 	}
 
 	// --- Pre-CTA buffs (unchanged) ---
@@ -393,16 +766,38 @@ func Buff() {
 	// --- Post-CTA class buffs (with optional weapon swap) ---
 
 	// Collect post-CTA buff skills and their keybindings
+	// Apply in specific order: Energy Shield -> Armor -> Thunder Storm
 	type buffEntry struct {
 		skill skill.ID
 		kb    data.KeyBinding
 	}
 	postBuffs := make([]buffEntry, 0)
 
+	// Define the desired buff order for post-CTA buffs
+	desiredPostCTABuffOrder := []skill.ID{
+		skill.EnergyShield,
+		skill.FrozenArmor,
+		skill.ShiverArmor,
+		skill.ChillingArmor,
+		skill.ThunderStorm,
+	}
+	
+	// Create a map of available buffs from BuffSkills
+	postCTAAvailableBuffs := make(map[skill.ID]bool)
+	for _, buff := range ctx.Char.BuffSkills() {
+		postCTAAvailableBuffs[buff] = true
+	}
+	
 	armorSkillAdded := false
 	armorSkills := []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor}
 
-	for _, buff := range ctx.Char.BuffSkills() {
+	// Process buffs in the desired order
+	for _, buff := range desiredPostCTABuffOrder {
+		// Skip if this buff is not in the character's BuffSkills
+		if !postCTAAvailableBuffs[buff] {
+			continue
+		}
+		
 		// Check if this is an armor skill
 		isArmorSkill := buff == skill.FrozenArmor || buff == skill.ShiverArmor || buff == skill.ChillingArmor
 
@@ -410,6 +805,17 @@ func Buff() {
 		if buff == skill.EnergyShield {
 			if ctx.Data.PlayerUnit.States.HasState(state.Energyshield) {
 				ctx.Logger.Debug("Energy Shield already active (from Memory), skipping from rebuff list")
+				continue
+			}
+		}
+		
+		// Skip armor if any armor buff is already active
+		if isArmorSkill {
+			if ctx.Data.PlayerUnit.States.HasState(state.Frozenarmor) ||
+			   ctx.Data.PlayerUnit.States.HasState(state.Shiverarmor) ||
+			   ctx.Data.PlayerUnit.States.HasState(state.Chillingarmor) {
+				ctx.Logger.Debug("Armor buff already active, skipping from rebuff list")
+				armorSkillAdded = true
 				continue
 			}
 		}
@@ -555,11 +961,11 @@ func Buff() {
 				}
 			} else {
 				// Use simple cast for skills without verifiable states (summons, etc.)
-				castBuff(ctx, entry.kb)
-				buffSuccess = true // Assume success for non-verifiable skills
-				ctx.Logger.Debug("Buff cast (no verification)",
+				ctx.Logger.Debug("Buff cast (no verification - skill not in skillToState map)",
 					slog.String("skill", skillName),
 					slog.Int("skillID", int(entry.skill)))
+				castBuff(ctx, entry.kb)
+				buffSuccess = true // Assume success for non-verifiable skills
 			}
 
 			// If buff was successfully applied normally (not via Memory), clear Memory flag
@@ -639,6 +1045,9 @@ func Buff() {
 			} else if isArmorSkill && buffSuccess {
 				armorApplied = true
 			}
+			
+			// Add delay between buffs
+			utils.Sleep(200)
 		}
 		ctx.Logger.Debug("Post CTA Buffing completed")
 
@@ -691,7 +1100,13 @@ func IsRebuffRequired() bool {
 	ctx := context.Get()
 	ctx.SetLastAction("IsRebuffRequired")
 
-	// Special case: Energy Shield should be checked immediately without cooldown
+	// First priority: Check CTA immediately (bypass cooldown if BO/BC missing)
+	if needsCTABuff(ctx) {
+		ctx.Logger.Debug("CTA buffs (BO/BC) missing, immediate rebuff required")
+		return true // Return immediately, bypassing cooldown
+	}
+
+	// Second priority: Energy Shield should be checked immediately without cooldown
 	buffSkills := ctx.Char.BuffSkills()
 	for _, buff := range buffSkills {
 		if buff == skill.EnergyShield {
@@ -838,7 +1253,15 @@ func buffCTA(shouldSwapBack bool) bool {
 			recordSwapFailure(ctx.Name)
 			return false
 		}
-		utils.PingSleep(utils.Light, 150)
+		// Aguardar até BattleCommand estar disponível (com timeout)
+		waitStart := time.Now()
+		for time.Since(waitStart) < 2*time.Second {
+			ctx.RefreshGameData()
+			if _, hasBC := ctx.Data.PlayerUnit.Skills[skill.BattleCommand]; hasBC {
+				break // Arma trocada com sucesso
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	// Refresh data after swap to ensure we have current keybindings
@@ -919,6 +1342,10 @@ func buffWithMemory() error {
 	ctx := context.Get()
 	ctx.SetLastAction("buffWithMemory")
 
+	// Safety timeout for entire Memory buff operation
+	buffStartTime := time.Now()
+	const maxMemoryBuffDuration = 60 * time.Second
+
 	// Check if we're in town - need to be in town to access stash
 	if !ctx.Data.PlayerUnit.Area.IsTown() {
 		ctx.Logger.Debug("Not in town, skipping Memory buff")
@@ -981,6 +1408,11 @@ func buffWithMemory() error {
 	}
 
 	ctx.Logger.Info("Found Memory staff in stash, starting buff sequence")
+
+	// Check timeout before starting
+	if time.Since(buffStartTime) > maxMemoryBuffDuration {
+		return fmt.Errorf("Memory buff timeout before starting stash operations")
+	}
 
 	// Step 1: Go to stash and open it
 	bank, found := ctx.Data.Objects.FindOne(object.Bank)
@@ -1089,6 +1521,12 @@ func buffWithMemory() error {
 	}
 	ctx.Logger.Info("Memory staff successfully equipped")
 
+	// Check timeout before proceeding
+	if time.Since(buffStartTime) > maxMemoryBuffDuration {
+		step.CloseAllMenus()
+		return fmt.Errorf("Memory buff timeout after equipping")
+	}
+
 	// Step 6: Close stash
 	step.CloseAllMenus()
 	// No delay needed - stash is closed immediately
@@ -1135,6 +1573,7 @@ func buffWithMemory() error {
 					energyShieldApplied = true
 				}
 			} else {
+				ctx.Logger.Debug("Energy Shield not in skillToState map, using simple cast")
 				castBuff(ctx, kb)
 				energyShieldApplied = true
 			}
@@ -1161,6 +1600,8 @@ func buffWithMemory() error {
 					appliedArmorSkill = preferredArmorSkill
 				}
 			} else {
+				ctx.Logger.Debug("Preferred armor skill not in skillToState map, using simple cast",
+					slog.String("skill", skillName))
 				castBuff(ctx, kb)
 				armorApplied = true
 				appliedArmorSkill = preferredArmorSkill
@@ -1192,6 +1633,8 @@ func buffWithMemory() error {
 					break
 				}
 			} else {
+				ctx.Logger.Debug("Armor skill not in skillToState map, using simple cast",
+					slog.String("skill", armorSkill.Desc().Name))
 				castBuff(ctx, kb)
 				armorApplied = true
 				appliedArmorSkill = armorSkill
@@ -1216,6 +1659,12 @@ func buffWithMemory() error {
 		memoryBuffsBySkill[ctx.Name][appliedArmorSkill] = true
 	}
 	memoryBuffAppliedMu.Unlock()
+
+	// Check timeout before proceeding
+	if time.Since(buffStartTime) > maxMemoryBuffDuration {
+		step.CloseAllMenus()
+		return fmt.Errorf("Memory buff timeout after casting buffs")
+	}
 
 	// Step 8: Open stash again to restore original weapon
 	// No delay needed before opening stash
@@ -1534,10 +1983,17 @@ func buffWithMemory() error {
 		}
 	}
 
+	// Check final timeout
+	if time.Since(buffStartTime) > maxMemoryBuffDuration {
+		ctx.Logger.Warn("Memory buff completed but exceeded timeout",
+			slog.Duration("duration", time.Since(buffStartTime)))
+	}
+
 	// Close stash
 	step.CloseAllMenus()
 
-	ctx.Logger.Info("Memory buff sequence completed successfully")
+	ctx.Logger.Info("Memory buff sequence completed successfully",
+		slog.Duration("duration", time.Since(buffStartTime)))
 	return nil
 }
 
@@ -1583,6 +2039,7 @@ func buffWithMemoryAlreadyEquipped() error {
 						energyShieldApplied = true
 					}
 				} else {
+					ctx.Logger.Debug("Energy Shield not in skillToState map, using simple cast")
 					castBuff(ctx, kb)
 					energyShieldApplied = true
 				}
@@ -1602,6 +2059,7 @@ func buffWithMemoryAlreadyEquipped() error {
 					appliedArmorSkill = preferredArmorSkill
 				}
 			} else {
+				ctx.Logger.Debug("Preferred armor skill not in skillToState map, using simple cast")
 				castBuff(ctx, kb)
 				armorApplied = true
 				appliedArmorSkill = preferredArmorSkill
@@ -1623,6 +2081,7 @@ func buffWithMemoryAlreadyEquipped() error {
 						break
 					}
 				} else {
+					ctx.Logger.Debug("Armor skill not in skillToState map, using simple cast")
 					castBuff(ctx, kb)
 					armorApplied = true
 					appliedArmorSkill = armorSkill

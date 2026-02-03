@@ -267,23 +267,96 @@ func (ctx *Context) CheckItemsAfterDeath() bool {
 }
 
 func (s *Status) PauseIfNotPriority() {
+	s.PauseIfNotPriorityWithTimeout(30 * time.Second)
+}
+
+// PauseIfNotPriorityWithTimeout pauses execution if priority doesn't match, with a custom timeout
+func (s *Status) PauseIfNotPriorityWithTimeout(maxWait time.Duration) {
+	// DEBUG: Log function entry for diagnosis
+	s.Logger.Debug("[DEBUG] PauseIfNotPriorityWithTimeout called",
+		slog.Duration("maxWait", maxWait),
+		slog.Int("currentPriority", int(s.Priority)),
+		slog.Int("executionPriority", int(s.ExecutionPriority)),
+		slog.Bool("loadingScreen", s.Data.OpenMenus.LoadingScreen),
+		slog.String("area", s.Data.PlayerUnit.Area.Area().Name),
+	)
+
 	// This prevents bot from trying to move when loading screen is shown.
 	if s.Data.OpenMenus.LoadingScreen {
 		time.Sleep(time.Millisecond * 5)
 	}
 
 	if s.Priority == s.ExecutionPriority {
+		// DEBUG: Fast path - no pause needed
+		s.Logger.Debug("[DEBUG] PauseIfNotPriorityWithTimeout: fast path, priorities match")
 		return // Fast path: no pause needed
 	}
 
 	// Track how long we've been waiting
 	pauseStart := time.Now()
-	const maxPauseWait = 30 * time.Second
 	loggedOnce := false
+	loggedTwice := false
+	lastAction := ""
+	lastStep := ""
+	if debug, ok := s.ContextDebug[s.Priority]; ok && debug != nil {
+		lastAction = debug.LastAction
+		lastStep = debug.LastStep
+	}
+
+	// DEBUG: Log initial wait state
+	s.Logger.Debug("[DEBUG] PauseIfNotPriorityWithTimeout: starting wait",
+		slog.String("lastAction", lastAction),
+		slog.String("lastStep", lastStep),
+		slog.Int("posX", s.Data.PlayerUnit.Position.X),
+		slog.Int("posY", s.Data.PlayerUnit.Position.Y),
+	)
+
+	// Track priority state changes to detect potential deadlocks
+	lastExecutionPriority := s.ExecutionPriority
+	priorityChangeCount := 0
+	const maxPriorityChanges = 5 // Maximum number of priority changes before forcing continue
 
 	for s.Priority != s.ExecutionPriority {
+		// DEBUG: Log each iteration of the wait loop (every 500ms)
+		if time.Since(pauseStart)%500*time.Millisecond < 50*time.Millisecond {
+			s.Logger.Debug("[DEBUG] PauseIfNotPriorityWithTimeout: still waiting",
+				slog.Duration("elapsed", time.Since(pauseStart)),
+				slog.Int("priority", int(s.Priority)),
+				slog.Int("executionPriority", int(s.ExecutionPriority)),
+			)
+		}
+
 		if s.ExecutionPriority == PriorityStop {
+			s.Logger.Error("[DEBUG] Panic: Bot is stopped during PauseIfNotPriorityWithTimeout")
 			panic("Bot is stopped")
+		}
+
+		// Detect priority changes to identify potential deadlocks
+		if s.ExecutionPriority != lastExecutionPriority {
+			priorityChangeCount++
+			lastExecutionPriority = s.ExecutionPriority
+			s.Logger.Debug("Priority changed during PauseIfNotPriority",
+				slog.Int("changeCount", priorityChangeCount),
+				slog.Int("oldPriority", int(lastExecutionPriority)),
+				slog.Int("newPriority", int(s.ExecutionPriority)),
+				slog.Int("waitingPriority", int(s.Priority)),
+			)
+		}
+
+		// Force continue if priority is changing too frequently (indicates deadlock)
+		if priorityChangeCount > maxPriorityChanges {
+			s.Logger.Error("Priority deadlock detected - forcing continue to prevent infinite loop",
+				slog.Int("priorityChangeCount", priorityChangeCount),
+				slog.Int("maxPriorityChanges", maxPriorityChanges),
+				slog.Int("priority", int(s.Priority)),
+				slog.Int("executionPriority", int(s.ExecutionPriority)),
+				slog.Duration("elapsed", time.Since(pauseStart)),
+				slog.String("lastAction", lastAction),
+				slog.String("lastStep", lastStep),
+				slog.Int("posX", s.Data.PlayerUnit.Position.X),
+				slog.Int("posY", s.Data.PlayerUnit.Position.Y),
+			)
+			return
 		}
 
 		// Log warning if paused for too long
@@ -293,22 +366,72 @@ func (s *Status) PauseIfNotPriority() {
 				slog.Duration("duration", pauseDuration),
 				slog.Int("priority", int(s.Priority)),
 				slog.Int("executionPriority", int(s.ExecutionPriority)),
+				slog.String("lastAction", lastAction),
+				slog.String("lastStep", lastStep),
+				slog.Int("posX", s.Data.PlayerUnit.Position.X),
+				slog.Int("posY", s.Data.PlayerUnit.Position.Y),
+				slog.String("area", s.Data.PlayerUnit.Area.Area().Name),
+				slog.Bool("inventoryOpen", s.Data.OpenMenus.Inventory),
+				slog.Bool("stashOpen", s.Data.OpenMenus.Stash),
+				slog.Bool("merchantOpen", s.Data.OpenMenus.NPCShop),
+				slog.Int("priorityChanges", priorityChangeCount),
 			)
 			loggedOnce = true
 		}
 
-		// Safety timeout to prevent infinite blocking
-		if pauseDuration > maxPauseWait {
-			s.Logger.Error("PauseIfNotPriority timeout - forcing continue",
+		// Log error if paused for very long time (indicates serious issue)
+		if pauseDuration > 15*time.Second && !loggedTwice {
+			s.Logger.Error("PauseIfNotPriority blocking for very long time - possible deadlock",
 				slog.Duration("duration", pauseDuration),
 				slog.Int("priority", int(s.Priority)),
 				slog.Int("executionPriority", int(s.ExecutionPriority)),
+				slog.String("lastAction", lastAction),
+				slog.String("lastStep", lastStep),
+				slog.Int("posX", s.Data.PlayerUnit.Position.X),
+				slog.Int("posY", s.Data.PlayerUnit.Position.Y),
+				slog.String("area", s.Data.PlayerUnit.Area.Area().Name),
+				slog.Bool("inventoryOpen", s.Data.OpenMenus.Inventory),
+				slog.Bool("stashOpen", s.Data.OpenMenus.Stash),
+				slog.Bool("merchantOpen", s.Data.OpenMenus.NPCShop),
+				slog.Int("priorityChanges", priorityChangeCount),
+			)
+			loggedTwice = true
+		}
+
+		// Safety timeout to prevent infinite blocking
+		if pauseDuration > maxWait {
+			// Reset priority to PriorityNormal to prevent deadlock after timeout
+			// This ensures subsequent PauseIfNotPriority calls don't get stuck
+			if s.ExecutionPriority == PriorityHigh {
+				s.ExecutionPriority = PriorityNormal
+				s.Logger.Debug("[DEBUG] Resetting ExecutionPriority to PriorityNormal after timeout",
+					slog.Duration("timeoutDuration", pauseDuration))
+			}
+			s.Logger.Error("PauseIfNotPriority timeout - forcing continue",
+				slog.Duration("duration", pauseDuration),
+				slog.Duration("maxWait", maxWait),
+				slog.Int("priority", int(s.Priority)),
+				slog.Int("executionPriority", int(s.ExecutionPriority)),
+				slog.String("lastAction", lastAction),
+				slog.String("lastStep", lastStep),
+				slog.Int("posX", s.Data.PlayerUnit.Position.X),
+				slog.Int("posY", s.Data.PlayerUnit.Position.Y),
+				slog.String("area", s.Data.PlayerUnit.Area.Area().Name),
+				slog.Bool("inventoryOpen", s.Data.OpenMenus.Inventory),
+				slog.Bool("stashOpen", s.Data.OpenMenus.Stash),
+				slog.Bool("merchantOpen", s.Data.OpenMenus.NPCShop),
+				slog.Int("priorityChanges", priorityChangeCount),
 			)
 			return // Force continue instead of blocking forever
 		}
 
 		time.Sleep(time.Millisecond * 10)
 	}
+
+	// DEBUG: Log successful exit
+	s.Logger.Debug("[DEBUG] PauseIfNotPriorityWithTimeout: completed",
+		slog.Duration("totalWait", time.Since(pauseStart)),
+	)
 }
 
 func (ctx *Context) WaitForGameToLoad() {

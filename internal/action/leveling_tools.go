@@ -132,6 +132,11 @@ func getEquippedSlotCoords(bodyLoc item.LocationType, legacyGraphics bool) (data
 func dropItemFromInventoryUI(i data.Item) error {
 	ctx := context.Get()
 
+	// PROTECAO CRITICA: Verificar se pode dropar
+	if !CanSafelyDrop(i) {
+		return fmt.Errorf("item cannot be safely dropped: %s", i.Name)
+	}
+
 	// Define a list of item types to exclude from dropping.
 	var excludedTypes = []string{
 		"jave", "tkni", "taxe", "spea", "pole", "mace",
@@ -499,8 +504,22 @@ func ResetStats() error {
 				ctx.Logger.Debug(fmt.Sprintf("Skipping locked item %s in inventory", invItem.Name))
 				continue
 			}
+
+			// PROTECAO: Verificar se ainda eh seguro dropar
+			ctx.RefreshGameData()
+			currentItem, found := ctx.Data.Inventory.FindByID(invItem.UnitID)
+			if !found {
+				continue // Item ja foi movido
+			}
+
+			if !CanSafelyDrop(currentItem) {
+				ctx.Logger.Warn("Skipping item that is no longer safe to drop",
+					slog.String("item", string(currentItem.Name)))
+				continue
+			}
+
 			ctx.Logger.Debug(fmt.Sprintf("Dropping remaining inventory item: %s", invItem.Name))
-			if err := dropItemFromInventoryUI(invItem); err != nil {
+			if err := dropItemFromInventoryUI(currentItem); err != nil {
 				ctx.Logger.Error(fmt.Sprintf("Failed to drop inventory item %s: %v", invItem.Name, err))
 			}
 			utils.Sleep(300)

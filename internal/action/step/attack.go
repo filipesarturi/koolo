@@ -209,7 +209,7 @@ func attack(settings attackSettings) error {
 	const logThrottleInterval = 2 * time.Second // Throttle debug logs to avoid spam
 
 	for {
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		if numOfAttacksRemaining <= 0 {
 			ctx.Logger.Debug("Attack sequence completed",
@@ -402,7 +402,7 @@ func burstAttack(settings attackSettings) error {
 	const logThrottleInterval = 2 * time.Second
 
 	for {
-		ctx.PauseIfNotPriority()
+		ctx.PauseIfNotPriorityWithTimeout(5 * time.Second)
 
 		if !startedAt.IsZero() && time.Since(startedAt) > settings.timeout {
 			ctx.Logger.Debug("Burst attack timeout reached",

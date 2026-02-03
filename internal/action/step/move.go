@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/state"
 	"github.com/hectorgimenez/koolo/internal/context"
@@ -170,8 +171,14 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 	roundTripReferencePosition := ctx.Data.PlayerUnit.Position
 	roundTripCheckStartTime := time.Now()
-	const roundTripThreshold = 5 * time.Second // Reduced from 10s for faster detection
-	const roundTripMaxRadius = 8
+	roundTripThreshold := 5 * time.Second
+	roundTripMaxRadius := 8
+
+	// Ajustar para Arcane Sanctuary
+	if ctx.Data.PlayerUnit.Area == area.ArcaneSanctuary {
+		roundTripThreshold = 10 * time.Second
+		roundTripMaxRadius = 15
+	}
 	var previousDistanceToDest float64 = -1 // Track previous distance to destination for progress check
 
 	// Adaptive movement refresh intervals based on ping
@@ -222,21 +229,41 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			return ErrPlayerStuck
 		}
 
-		// Update last step periodically with current movement state
+		// Early exit: check if we're already close enough to destination before computing path
 		currentDist := ctx.PathFinder.DistanceFromMe(dest)
+		if currentDist <= minDistanceToFinishMoving {
+			ctx.Logger.Debug("Already at destination, early exit",
+				slog.Int("distance", currentDist),
+				slog.Int("requiredDistance", minDistanceToFinishMoving))
+			return nil
+		}
+
+		// Update last step periodically with current movement state
 		ctx.SetLastStep(fmt.Sprintf("MoveTo_dist%d", currentDist))
 
 		// Log if we're about to pause (priority mismatch)
 		if ctx.Priority != ctx.ExecutionPriority {
-			ctx.Logger.Debug("Movement paused - priority mismatch",
+			ctx.Logger.Info("Movement paused - priority mismatch",
 				slog.Int("priority", int(ctx.Priority)),
-				slog.Int("executionPriority", int(ctx.ExecutionPriority)),
-				slog.Duration("elapsed", elapsed),
-			)
+			slog.Int("executionPriority", int(ctx.ExecutionPriority)),
+			slog.Duration("elapsed", elapsed),
+			slog.Int("currentX", ctx.Data.PlayerUnit.Position.X),
+			slog.Int("currentY", ctx.Data.PlayerUnit.Position.Y),
+			slog.Int("destX", dest.X),
+			slog.Int("destY", dest.Y),
+			slog.String("lastAction", ctx.ContextDebug[ctx.Priority].LastAction),
+			slog.String("lastStep", ctx.ContextDebug[ctx.Priority].LastStep),
+			// Additional diagnostic info for debugging
+			slog.Bool("inventoryOpen", ctx.Data.OpenMenus.Inventory),
+			slog.Bool("stashOpen", ctx.Data.OpenMenus.Stash),
+			slog.Bool("merchantOpen", ctx.Data.OpenMenus.NPCShop),
+			slog.String("playerMode", fmt.Sprintf("%q", ctx.Data.PlayerUnit.Mode)),
+			slog.Duration("totalMovementDuration", time.Since(movementStartTime)),
+		)
 		}
 
-		// Pause if not priority - the timeout check above ensures we don't block indefinitely
-		ctx.PauseIfNotPriority()
+		// Pause if not priority - use shorter timeout during movement to avoid long blocks
+		ctx.PauseIfNotPriorityWithTimeout(10 * time.Second)
 
 		// Check if a Drop request is pending and interrupt
 		// the current movement early so the Drop flow can take over
@@ -279,6 +306,16 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 
 		//Compute distance to destination
 		currentDistanceToDest := ctx.PathFinder.DistanceFromMe(currentDest)
+
+		// Early exit optimization: if we're already close enough, skip path computation
+		if currentDistanceToDest <= minDistanceToFinishMoving {
+			moveDuration := time.Since(movementStartTime)
+			ctx.Logger.Debug("Early exit - already at destination",
+				slog.Int("distance", currentDistanceToDest),
+				slog.Int("requiredDistance", minDistanceToFinishMoving),
+				slog.Duration("duration", moveDuration))
+			return nil
+		}
 
 		//We've reached the destination, stop movement
 		if currentDistanceToDest <= minDistanceToFinishMoving {
@@ -662,6 +699,10 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 					slog.Duration("elapsed", elapsedTime),
 					slog.Int("escapeAttempts", escapeAttempts),
 					slog.String("playerMode", string(ctx.Data.PlayerUnit.Mode)),
+					// Additional diagnostic info
+					slog.Bool("inventoryOpen", ctx.Data.OpenMenus.Inventory),
+					slog.Bool("stashOpen", ctx.Data.OpenMenus.Stash),
+					slog.Bool("merchantOpen", ctx.Data.OpenMenus.NPCShop),
 				)
 			} else {
 				ctx.Logger.Debug("Pathfinding update",
@@ -680,11 +721,16 @@ func MoveTo(dest data.Position, options ...MoveOption) error {
 			lastLogTime = time.Now()
 		}
 
-		//Update values
-		lastRun = time.Now()
+		//Update values before movement
 		previousPosition = ctx.Data.PlayerUnit.Position
+		lastRun = time.Now()
 
 		//Perform the movement
 		ctx.PathFinder.MoveThroughPath(path, walkDuration)
+		
+		// Optimize: only refresh game data if we haven't moved much or if significant time has passed
+		// This reduces unnecessary refreshes during normal movement
+		// Note: We refresh at the start of next loop iteration, so this is just for optimization
+		// The refresh at line 247 ensures we always have current data when needed
 	}
 }
